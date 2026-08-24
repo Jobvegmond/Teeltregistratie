@@ -52,9 +52,16 @@ def init_db():
             datum_oogst TEXT,
             lengte_eind REAL,
             oogstgewicht REAL,
+            rijpheid TEXT,
             FOREIGN KEY (teeltvak_id) REFERENCES teeltvakken (id)
         )
     """)
+
+    # Migratie: voeg de rijpheid-kolom toe aan bestaande databases die hem nog missen.
+    cursor.execute("PRAGMA table_info(teelten)")
+    bestaande_kolommen = [rij[1] for rij in cursor.fetchall()]
+    if "rijpheid" not in bestaande_kolommen:
+        cursor.execute("ALTER TABLE teelten ADD COLUMN rijpheid TEXT")
 
     conn.commit()
     conn.close()
@@ -151,15 +158,15 @@ def update_halverwege(teelt_id, datum_half, lengte_half):
     conn.close()
 
 
-def update_oogst(teelt_id, datum_oogst, lengte_eind, oogstgewicht):
+def update_oogst(teelt_id, datum_oogst, lengte_eind, oogstgewicht, rijpheid=None):
     """Slaat de oogstgegevens op voor een specifieke teelt."""
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("""
         UPDATE teelten
-        SET datum_oogst = ?, lengte_eind = ?, oogstgewicht = ?
+        SET datum_oogst = ?, lengte_eind = ?, oogstgewicht = ?, rijpheid = ?
         WHERE id = ?
-    """, (str(datum_oogst), lengte_eind, oogstgewicht, teelt_id))
+    """, (str(datum_oogst), lengte_eind, oogstgewicht, rijpheid, teelt_id))
     conn.commit()
     conn.close()
 
@@ -195,7 +202,7 @@ def get_teelt_by_id(teelt_id):
     cursor = conn.cursor()
     cursor.execute("""
         SELECT t.id, v.naam, t.datum_teelt_start, t.datum_half, t.lengte_half,
-               t.datum_oogst, t.lengte_eind, t.oogstgewicht
+               t.datum_oogst, t.lengte_eind, t.oogstgewicht, t.rijpheid
         FROM teelten t
         JOIN teeltvakken v ON t.teeltvak_id = v.id
         WHERE t.id = ?
@@ -215,18 +222,19 @@ def get_teelt_by_id(teelt_id):
         "datum_oogst": rij[5],
         "lengte_eind": rij[6],
         "oogstgewicht": rij[7],
+        "rijpheid": rij[8],
     }
 
 
 def update_teelt_volledig(teelt_id, datum_teelt_start, datum_half, lengte_half,
-                           datum_oogst, lengte_eind, oogstgewicht):
+                           datum_oogst, lengte_eind, oogstgewicht, rijpheid=None):
     """Overschrijft alle velden van een bestaande teelt (gebruikt bij handmatige correctie)."""
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("""
         UPDATE teelten
         SET datum_teelt_start = ?, datum_half = ?, lengte_half = ?,
-            datum_oogst = ?, lengte_eind = ?, oogstgewicht = ?
+            datum_oogst = ?, lengte_eind = ?, oogstgewicht = ?, rijpheid = ?
         WHERE id = ?
     """, (
         str(datum_teelt_start) if datum_teelt_start else None,
@@ -235,6 +243,7 @@ def update_teelt_volledig(teelt_id, datum_teelt_start, datum_half, lengte_half,
         str(datum_oogst) if datum_oogst else None,
         lengte_eind,
         oogstgewicht,
+        rijpheid,
         teelt_id
     ))
     conn.commit()
@@ -265,19 +274,20 @@ def get_overzicht_dataframe():
             t.lengte_half,
             t.datum_oogst,
             t.lengte_eind,
-            t.oogstgewicht
+            t.oogstgewicht,
+            t.rijpheid
         FROM teelten t
         JOIN teeltvakken v ON t.teeltvak_id = v.id
         ORDER BY v.naam, t.datum_teelt_start DESC
     """)
-    
+
     rijen_uitgebreid = []
     for row in cursor.fetchall():
-        teelt_id, naam, start, half_datum, half_lengte, oogst_datum, eind_lengte, gewicht = row
-        
+        teelt_id, naam, start, half_datum, half_lengte, oogst_datum, eind_lengte, gewicht, rijpheid = row
+
         start_week = get_weeknummer(start) if start else "-"
         teeltduur = get_teeltduur(start, oogst_datum) if (start and oogst_datum) else "-"
-        
+
         rijen_uitgebreid.append((
             teelt_id,
             naam,
@@ -287,11 +297,13 @@ def get_overzicht_dataframe():
             f"{oogst_datum} (week {get_weeknummer(oogst_datum)})" if oogst_datum else "-",
             eind_lengte if eind_lengte else "-",
             gewicht if gewicht else "-",
+            rijpheid if rijpheid else "-",
             teeltduur
         ))
-    
+
     conn.close()
-    
+
     kolommen = ["ID", "Teeltvak", "Start (week)", "Halverwege (week)",
-                "Lengte Half (cm)", "Oogst (week)", "Lengte Einde (cm)", "Gewicht (kg)", "Teeltduur (dagen)"]
+                "Lengte Half (cm)", "Oogst (week)", "Lengte Einde (cm)", "Gewicht (kg)",
+                "Rijpheid", "Teeltduur (dagen)"]
     return kolommen, rijen_uitgebreid

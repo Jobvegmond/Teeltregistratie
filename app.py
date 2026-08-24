@@ -19,6 +19,30 @@ from database import (
 # --- INITIALISATIE ---
 init_db()
 
+RIJPHEID_OPTIES = [1, 2, 3, 4]
+
+
+def rijpheid_bereik_naar_tekst(bereik):
+    """Zet een (min, max) rijpheid-bereik om naar tekst, bijv. (1, 1) -> '1', (1, 3) -> '1-3'."""
+    laag, hoog = bereik
+    if laag == hoog:
+        return str(laag)
+    return f"{laag}-{hoog}"
+
+
+def rijpheid_tekst_naar_bereik(tekst):
+    """Zet opgeslagen rijpheid-tekst om naar een (min, max)-tuple voor de slider."""
+    if not tekst:
+        return (1, 4)
+    try:
+        if "-" in tekst:
+            laag, hoog = tekst.split("-", 1)
+            return (int(laag), int(hoog))
+        waarde = int(tekst)
+        return (waarde, waarde)
+    except ValueError:
+        return (1, 4)
+
 st.title("🌱 Teeltregistratie & Dashboard")
 st.write("Beheer je teeltvakken en volg de groei van start tot oogst.")
 
@@ -157,17 +181,24 @@ elif actie == "3. Eindstand / Oogst toevoegen":
 
             lengte_eind = st.number_input("Lengte aan het einde (cm)", min_value=0.0, format="%.1f")
             oogstgewicht = st.number_input("Oogstgewicht per teelt (kg)", min_value=0.0, format="%.1f")
-            
+            rijpheid_bereik = st.select_slider(
+                "Rijpheidsstadium (1 = rauw, 4 = rijp)",
+                options=RIJPHEID_OPTIES,
+                value=(1, 4),
+                help="Sleep beide punten naar dezelfde waarde voor één stadium (bijv. '3'), of laat ze uit elkaar staan voor een bereik (bijv. '1-3')"
+            )
+
             submit_oogst = st.form_submit_button("Eindstand opslaan")
-            
+
             if submit_oogst and geselecteerde_labels:
                 successen = []
                 fouten = []
-                
+                rijpheid_tekst = rijpheid_bereik_naar_tekst(rijpheid_bereik)
+
                 for label in geselecteerde_labels:
                     geselecteerd_id = keuzes[label]
                     try:
-                        update_oogst(geselecteerd_id, datum_oogst, lengte_eind, oogstgewicht)
+                        update_oogst(geselecteerd_id, datum_oogst, lengte_eind, oogstgewicht, rijpheid_tekst)
                         successen.append(f"✅ {label}")
                     except Exception as e:
                         fouten.append(f"❌ {label}: {e}")
@@ -252,6 +283,12 @@ elif actie == "4. Registratie wijzigen / verwijderen":
                 value=float(huidige["oogstgewicht"]) if huidige["oogstgewicht"] else 0.0,
                 disabled=not oogst_ingevuld
             )
+            nieuwe_rijpheid_bereik = st.select_slider(
+                "Rijpheidsstadium (1 = rauw, 4 = rijp)",
+                options=RIJPHEID_OPTIES,
+                value=rijpheid_tekst_naar_bereik(huidige["rijpheid"]),
+                disabled=not oogst_ingevuld
+            )
 
             opslaan = st.form_submit_button("💾 Wijzigingen opslaan")
 
@@ -265,6 +302,7 @@ elif actie == "4. Registratie wijzigen / verwijderen":
                         nieuwe_datum_oogst if oogst_ingevuld else None,
                         nieuwe_lengte_eind if oogst_ingevuld else None,
                         nieuw_gewicht if oogst_ingevuld else None,
+                        rijpheid_bereik_naar_tekst(nieuwe_rijpheid_bereik) if oogst_ingevuld else None,
                     )
                     st.sidebar.success(f"✅ '{huidige['teeltvak_naam']}' bijgewerkt!")
                     st.rerun()
@@ -331,7 +369,9 @@ with st.expander("ℹ️ Hoe dit werkt"):
     
     **Stap 3: Eindstand/Oogst**
     - Je selecteert één of meer teelten
-    - Je vult de oogstdatum, eindlengte en gewicht in
+    - Je vult de oogstdatum, eindlengte, gewicht en rijpheidsstadium in
+    - Rijpheid loopt van 1 (rauw) tot 4 (rijp); sleep de slider naar één punt voor een enkel
+      stadium (bijv. "3") of laat een bereik staan voor bijv. "1-3" of "2-3"
     - Deze gegevens worden voor alle gekozen teelten opgeslagen
     
     **Weeknummers**
