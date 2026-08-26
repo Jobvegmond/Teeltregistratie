@@ -58,7 +58,6 @@ actie = st.sidebar.radio("Wat wil je doen?", [
     "2. Lengte halverwege toevoegen",
     "3. Eindstand / Oogst toevoegen",
     "4. Registratie wijzigen / verwijderen",
-    "5. Emmers oogst registreren",
 ])
 
 # --- ACTIE 1: MEERDERE TEELTVAKKEN STARTEN ---
@@ -169,16 +168,68 @@ elif actie == "2. Lengte halverwege toevoegen":
     else:
         st.sidebar.info("Er zijn nog geen teeltvakken gestart. Kies eerst optie 1.")
 
-# --- ACTIE 3: OOGST VOOR MEERDERE VAKKEN ---
+# --- ACTIE 3: EMMERS OOGST + EINDSTAND ---
 elif actie == "3. Eindstand / Oogst toevoegen":
-    st.sidebar.subheader("Eindstand / Oogst voor meeldere teelten")
-    
+    st.sidebar.subheader("Emmers oogst registreren (100 stelen per emmer)")
+
+    alle_teelten = get_alle_teelten_voor_selectie()
+
+    if alle_teelten:
+        keuzes = {label: teelt_id for teelt_id, label in alle_teelten}
+        geselecteerd_label = st.sidebar.selectbox(
+            "Kies de teelt waarvoor je een oogstmoment wilt registreren",
+            list(keuzes.keys()),
+            key="emmers_selectie"
+        )
+        geselecteerd_id = keuzes[geselecteerd_label]
+        huidige = get_teelt_by_id(geselecteerd_id)
+
+        with st.sidebar.form("emmers_form"):
+            datum_emmers = st.date_input("Datum oogstmoment", key="emmers_datum")
+            st.caption(f"📅 Weeknummer: {get_weeknummer(datum_emmers)}")
+            aantal_emmers = st.number_input("Aantal emmers", min_value=0.0, step=0.5, format="%.1f")
+
+            submit_emmers = st.form_submit_button("Oogstmoment registreren")
+
+            if submit_emmers:
+                if aantal_emmers > 0:
+                    voeg_oogstregistratie_toe(geselecteerd_id, datum_emmers, aantal_emmers)
+                    st.sidebar.success(f"✅ {aantal_emmers} emmers geregistreerd op {datum_emmers}.")
+                    st.rerun()
+                else:
+                    st.sidebar.warning("Vul een aantal emmers groter dan 0 in.")
+
+        # Overzicht van reeds geregistreerde oogstmomenten voor deze teelt
+        registraties = get_oogstregistraties_voor_teelt(geselecteerd_id)
+        if registraties:
+            totaal_emmers = sum(r[2] for r in registraties)
+            totaal_stelen = totaal_emmers * 100
+            st.sidebar.markdown(f"**Totaal tot nu toe:** {totaal_emmers:g} emmers ({totaal_stelen:g} stelen)")
+
+            if huidige["aantal_planten"]:
+                uitval = round((huidige["aantal_planten"] - totaal_stelen) / huidige["aantal_planten"] * 100, 1)
+                st.sidebar.markdown(f"**Uitval t.o.v. {huidige['aantal_planten']} planten:** {uitval}%")
+
+            for reg_id, reg_datum, reg_emmers in registraties:
+                col_a, col_b = st.sidebar.columns([3, 1])
+                col_a.write(f"{reg_datum}: {reg_emmers:g} emmers")
+                if col_b.button("🗑️", key=f"del_emmer_{reg_id}"):
+                    verwijder_oogstregistratie(reg_id)
+                    st.rerun()
+        else:
+            st.sidebar.info("Nog geen oogstmomenten geregistreerd voor deze teelt.")
+    else:
+        st.sidebar.info("Er zijn nog geen teeltvakken gestart. Kies eerst optie 1.")
+
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("Eindstand (lengte, gewicht, rijpheid)")
+
     lopende = get_lopende_teelten()
-    
+
     if lopende:
         # Maak lookup dict
-        keuzes = {label: teelt_id for teelt_id, label in lopende}
-        
+        keuzes_eind = {label: teelt_id for teelt_id, label in lopende}
+
         # Datum buiten het formulier: zo ververst het weeknummer meteen bij het kiezen
         datum_oogst = st.sidebar.date_input("Datum oogst / eindmeting", key="oogst_datum")
         week_oogst = get_weeknummer(datum_oogst)
@@ -188,7 +239,7 @@ elif actie == "3. Eindstand / Oogst toevoegen":
             # Multi-select voor meerdere teelten
             geselecteerde_labels = st.multiselect(
                 "Kies teelten (je kunt meerdere kiezen)",
-                list(keuzes.keys()),
+                list(keuzes_eind.keys()),
                 help="Selecteer één of meer teelten om de oogstgegevens in te voeren"
             )
 
@@ -209,13 +260,13 @@ elif actie == "3. Eindstand / Oogst toevoegen":
                 rijpheid_tekst = rijpheid_bereik_naar_tekst(rijpheid_bereik)
 
                 for label in geselecteerde_labels:
-                    geselecteerd_id = keuzes[label]
+                    geselecteerd_id_eind = keuzes_eind[label]
                     try:
-                        update_oogst(geselecteerd_id, datum_oogst, lengte_eind, oogstgewicht, rijpheid_tekst)
+                        update_oogst(geselecteerd_id_eind, datum_oogst, lengte_eind, oogstgewicht, rijpheid_tekst)
                         successen.append(f"✅ {label}")
                     except Exception as e:
                         fouten.append(f"❌ {label}: {e}")
-                
+
                 if successen:
                     st.sidebar.success(
                         f"Eindstanden opgeslagen op {datum_oogst} (week {week_oogst}):\n"
@@ -223,13 +274,13 @@ elif actie == "3. Eindstand / Oogst toevoegen":
                     )
                 if fouten:
                     st.sidebar.warning("Enkele updates mislukt:\n" + "\n".join(fouten))
-                
+
                 if successen:
                     st.rerun()
             elif submit_oogst and not geselecteerde_labels:
                 st.sidebar.warning("Selecteer alstublieft minstens één teelt.")
     else:
-        st.sidebar.info("Er zijn nog geen teeltvakken gestart. Kies eerst optie 1.")
+        st.sidebar.info("Er zijn nog geen lopende teeltvakken zonder eindstand.")
 
 # --- ACTIE 4: WIJZIGEN / VERWIJDEREN ---
 elif actie == "4. Registratie wijzigen / verwijderen":
@@ -344,59 +395,6 @@ elif actie == "4. Registratie wijzigen / verwijderen":
             st.rerun()
     else:
         st.sidebar.info("Er zijn nog geen registraties om te wijzigen.")
-
-# --- ACTIE 5: EMMERS OOGST REGISTREREN ---
-elif actie == "5. Emmers oogst registreren":
-    st.sidebar.subheader("Emmers oogst registreren (100 stelen per emmer)")
-
-    alle_teelten = get_alle_teelten_voor_selectie()
-
-    if alle_teelten:
-        keuzes = {label: teelt_id for teelt_id, label in alle_teelten}
-        geselecteerd_label = st.sidebar.selectbox(
-            "Kies de teelt waarvoor je een oogstmoment wilt registreren",
-            list(keuzes.keys()),
-            key="emmers_selectie"
-        )
-        geselecteerd_id = keuzes[geselecteerd_label]
-        huidige = get_teelt_by_id(geselecteerd_id)
-
-        with st.sidebar.form("emmers_form"):
-            datum_emmers = st.date_input("Datum oogstmoment", key="emmers_datum")
-            st.caption(f"📅 Weeknummer: {get_weeknummer(datum_emmers)}")
-            aantal_emmers = st.number_input("Aantal emmers", min_value=0.0, step=0.5, format="%.1f")
-
-            submit_emmers = st.form_submit_button("Oogstmoment registreren")
-
-            if submit_emmers:
-                if aantal_emmers > 0:
-                    voeg_oogstregistratie_toe(geselecteerd_id, datum_emmers, aantal_emmers)
-                    st.sidebar.success(f"✅ {aantal_emmers} emmers geregistreerd op {datum_emmers}.")
-                    st.rerun()
-                else:
-                    st.sidebar.warning("Vul een aantal emmers groter dan 0 in.")
-
-        # Overzicht van reeds geregistreerde oogstmomenten voor deze teelt
-        registraties = get_oogstregistraties_voor_teelt(geselecteerd_id)
-        if registraties:
-            totaal_emmers = sum(r[2] for r in registraties)
-            totaal_stelen = totaal_emmers * 100
-            st.sidebar.markdown(f"**Totaal tot nu toe:** {totaal_emmers:g} emmers ({totaal_stelen:g} stelen)")
-
-            if huidige["aantal_planten"]:
-                uitval = round((huidige["aantal_planten"] - totaal_stelen) / huidige["aantal_planten"] * 100, 1)
-                st.sidebar.markdown(f"**Uitval t.o.v. {huidige['aantal_planten']} planten:** {uitval}%")
-
-            for reg_id, reg_datum, reg_emmers in registraties:
-                col_a, col_b = st.sidebar.columns([3, 1])
-                col_a.write(f"{reg_datum}: {reg_emmers:g} emmers")
-                if col_b.button("🗑️", key=f"del_emmer_{reg_id}"):
-                    verwijder_oogstregistratie(reg_id)
-                    st.rerun()
-        else:
-            st.sidebar.info("Nog geen oogstmomenten geregistreerd voor deze teelt.")
-    else:
-        st.sidebar.info("Er zijn nog geen teeltvakken gestart. Kies eerst optie 1.")
 
 # --- OVERZICHT OP HET HOOFDSCHERM ---
 st.subheader("📊 Overzicht Teelten")

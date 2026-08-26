@@ -195,19 +195,20 @@ def get_lopende_teelten():
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("""
-        SELECT t.id, v.naam, t.datum_teelt_start, t.code
+        SELECT t.id, v.vaknummer, t.datum_teelt_start
         FROM teelten t
         JOIN teeltvakken v ON t.teeltvak_id = v.id
         WHERE t.datum_oogst IS NULL
-        ORDER BY v.naam, t.datum_teelt_start
+        ORDER BY v.vaknummer, t.datum_teelt_start
     """)
     rijen = cursor.fetchall()
     conn.close()
 
     resultaat = []
-    for teelt_id, vak_naam, start_datum, code in rijen:
-        code_deel = f"{code} - " if code else ""
-        label = f"{code_deel}{vak_naam} (gestart {start_datum})"
+    for teelt_id, vaknummer, start_datum in rijen:
+        plantweek = get_weeknummer(start_datum)
+        vak_deel = vaknummer if vaknummer is not None else "?"
+        label = f"Vak {vak_deel} - Teelt {teelt_id} - week {plantweek}"
         resultaat.append((teelt_id, label))
     return resultaat
 
@@ -247,19 +248,19 @@ def get_alle_teelten_voor_selectie():
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("""
-        SELECT t.id, v.naam, t.datum_teelt_start, t.datum_oogst, t.code
+        SELECT t.id, v.vaknummer, t.datum_teelt_start
         FROM teelten t
         JOIN teeltvakken v ON t.teeltvak_id = v.id
-        ORDER BY v.naam, t.datum_teelt_start DESC
+        ORDER BY v.vaknummer, t.datum_teelt_start DESC
     """)
     rijen = cursor.fetchall()
     conn.close()
 
     resultaat = []
-    for teelt_id, vak_naam, start_datum, oogst_datum, code in rijen:
-        status = "afgerond" if oogst_datum else "lopend"
-        code_deel = f"{code} - " if code else ""
-        label = f"{code_deel}{vak_naam} - gestart {start_datum} ({status})"
+    for teelt_id, vaknummer, start_datum in rijen:
+        plantweek = get_weeknummer(start_datum)
+        vak_deel = vaknummer if vaknummer is not None else "?"
+        label = f"Vak {vak_deel} - Teelt {teelt_id} - week {plantweek}"
         resultaat.append((teelt_id, label))
     return resultaat
 

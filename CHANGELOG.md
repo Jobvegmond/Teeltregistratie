@@ -5,6 +5,22 @@ inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
 ## [Niet uitgebracht] - 2026-08-26
 
+### Gewijzigd
+- Menu-opties "3. Eindstand / Oogst toevoegen" en "5. Emmers oogst
+  registreren" samengevoegd tot één actie "3. Eindstand / Oogst toevoegen".
+  Emmers registreren en de eindstand (lengte/gewicht/rijpheid) invullen
+  staan nu onder elkaar in dezelfde sidebar-sectie, maar blijven twee losse
+  formulieren. *Waarom:* het waren twee aparte, vergelijkbare menu-items;
+  door emmers en eindstand los van elkaar te houden kun je emmers zo vaak
+  registreren als nodig zonder steeds ook lengte, gewicht en rijpheid te
+  moeten invullen.
+- Teelt-keuzelijsten (dropdowns/multiselects) tonen nu alleen nog vak,
+  teelt-ID en plantweek (bijv. "Vak 4 - Teelt 12 - week 9"), in plaats van
+  ook code, startdatum en status. *Waarom:* de lijsten bevatten te veel
+  informatie om snel de juiste teelt te kunnen kiezen.
+
+## [e88e3c1] - 2026-08-26
+
 ### Toegevoegd
 - **Vaknummer + unieke teeltcode**: elk teeltvak heeft nu een vaknummer (1-39) in
   plaats van een vrije naam. Bij het starten van een teelt wordt automatisch een
