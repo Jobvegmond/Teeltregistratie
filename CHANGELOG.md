@@ -8,6 +8,12 @@ inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 ### Toegevoegd
 - Titel van het browsertabblad is nu "VEM teeltregistratie" (met 🌱-icoon) in
   plaats van "Streamlit", via `st.set_page_config`.
+- Bij "Oogst registeren" → tabblad 🪣 Uitval zijn nu **ook afgeronde teelten
+  kiesbaar**, zodat je het aantal geoogste emmers achteraf nog kunt corrigeren.
+  Elk oogstmoment heeft een 💾-knop om het aantal aan te passen (naast de
+  bestaande 🗑️ om het te verwijderen). Nieuwe functie
+  `wijzig_oogstregistratie()` in `database.py`. *Waarom:* correcties op de
+  emmer-telling waren na het afronden van een teelt niet meer mogelijk.
 - **Inlogscherm** (`streamlit-authenticator`). De app toont eerst een
   inlogformulier; pas na inloggen zijn de registratie-functies en het overzicht
   zichtbaar. In de zijbalk staat wie er is ingelogd en een "Uitloggen"-knop.
@@ -24,6 +30,9 @@ inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
   serverstart (met waarschuwing).
 
 ### Gewijzigd
+- Tabblad 📏 Oogstgewicht en lengte toont nog alleen teelten die **niet zijn
+  afgerond** bij de uitval (was: alle teelten). *Waarom:* lengte/gewicht/rijpheid
+  vul je in tijdens de teelt; na het afronden hoort die lijst leeg te zijn.
 - **Databaseverbinding wordt hergebruikt** in plaats van bij elke Streamlit-rerun
   opnieuw opgezet. `database.py` gebruikt nu één proces-brede
   `ThreadedConnectionPool`; `get_connection()` is een context manager

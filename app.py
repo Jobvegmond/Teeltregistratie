@@ -20,6 +20,7 @@ from database import (
     delete_teelt,
     voeg_oogstregistratie_toe,
     get_oogstregistraties_voor_teelt,
+    wijzig_oogstregistratie,
     verwijder_oogstregistratie,
     markeer_teelt_afgerond,
     get_gebruikers_credentials,
@@ -231,10 +232,17 @@ elif actie == "3. Oogst registeren":
 
     # --- TABBLAD: UITVAL (EMMERS, 100 STELEN PER EMMER) ---
     with tab_uitval:
-        lopende_teelten = get_lopende_teelten()
+        alle_teelten_uitval = get_alle_teelten_voor_selectie()
 
-        if lopende_teelten:
-            keuzes_uitval = {label: teelt_id for teelt_id, label in lopende_teelten}
+        if alle_teelten_uitval:
+            # Afgeronde teelten blijven kiesbaar zodat je de geoogste emmers
+            # ook achteraf nog handmatig kunt corrigeren.
+            lopende_ids = {teelt_id for teelt_id, _ in get_lopende_teelten()}
+            keuzes_uitval = {}
+            for teelt_id, label in alle_teelten_uitval:
+                weergave = label if teelt_id in lopende_ids else f"{label} · ✓ afgerond"
+                keuzes_uitval[weergave] = teelt_id
+
             uitval_label = st.selectbox(
                 "Kies de teelt",
                 list(keuzes_uitval.keys()),
@@ -242,10 +250,17 @@ elif actie == "3. Oogst registeren":
             )
             uitval_id = keuzes_uitval[uitval_label]
             huidige_uitval = get_teelt_by_id(uitval_id)
+            is_afgerond = huidige_uitval["datum_oogst"] is not None
+
             st.caption(
                 f"Vak {huidige_uitval['vaknummer']} · code {huidige_uitval['code'] or '-'}"
                 + (f" · {huidige_uitval['aantal_planten']} planten" if huidige_uitval["aantal_planten"] else "")
             )
+            if is_afgerond:
+                st.info(
+                    f"Deze teelt is afgerond op {format_datum(huidige_uitval['datum_oogst'])}. "
+                    "Je kunt de geoogste emmers hieronder nog toevoegen, aanpassen of verwijderen."
+                )
 
             with st.form("emmers_form"):
                 datum_emmers = st.date_input(
@@ -253,9 +268,14 @@ elif actie == "3. Oogst registeren":
                 )
                 st.caption(f"📅 Weeknummer: {get_weeknummer(datum_emmers)}")
                 aantal_emmers = st.number_input("Aantal emmers", min_value=0, step=1)
-                laatste_emmers = st.checkbox("Dit waren de laatste emmers van dit vak (teelt afronden)")
+                if is_afgerond:
+                    laatste_emmers = False
+                else:
+                    laatste_emmers = st.checkbox("Dit waren de laatste emmers van dit vak (teelt afronden)")
 
-                submit_emmers = st.form_submit_button("Oogstmoment registreren")
+                submit_emmers = st.form_submit_button(
+                    "Emmers toevoegen" if is_afgerond else "Oogstmoment registreren"
+                )
 
                 if submit_emmers:
                     if aantal_emmers > 0:
@@ -289,20 +309,31 @@ elif actie == "3. Oogst registeren":
                         f"**Uitval t.o.v. {huidige_uitval['aantal_planten']} planten:** {uitval_pct:.2f}%"
                     )
 
+                st.caption("Pas een oogstmoment aan met 💾, of verwijder het met 🗑️.")
                 for reg_id, reg_datum, reg_emmers in registraties:
-                    col_a, col_b = st.columns([3, 1])
-                    col_a.write(f"{format_datum(reg_datum)}: {reg_emmers:g} emmers")
-                    if col_b.button("🗑️", key=f"del_emmer_{reg_id}"):
+                    col_datum, col_aantal, col_opslaan, col_verwijder = st.columns([2, 2, 1, 1])
+                    col_datum.write(format_datum(reg_datum))
+                    nieuw_aantal = col_aantal.number_input(
+                        "Aantal emmers",
+                        min_value=0, step=1, value=int(reg_emmers),
+                        key=f"edit_emmer_{reg_id}",
+                        label_visibility="collapsed",
+                    )
+                    if col_opslaan.button("💾", key=f"save_emmer_{reg_id}", help="Wijziging opslaan"):
+                        wijzig_oogstregistratie(reg_id, reg_datum, nieuw_aantal)
+                        st.rerun()
+                    if col_verwijder.button("🗑️", key=f"del_emmer_{reg_id}", help="Oogstmoment verwijderen"):
                         verwijder_oogstregistratie(reg_id)
                         st.rerun()
             else:
                 st.info("Nog geen oogstmomenten geregistreerd voor deze teelt.")
         else:
-            st.info("Er zijn geen lopende teelten. Kies eerst optie 1.")
+            st.info("Er zijn nog geen teelten gestart. Kies eerst optie 1.")
 
     # --- TABBLAD: OOGSTGEWICHT EN LENGTE ---
     with tab_eind:
-        alle_teelten = get_alle_teelten_voor_selectie()
+        # Alleen teelten die nog niet zijn afgerond bij de uitval.
+        alle_teelten = get_lopende_teelten()
 
         if alle_teelten:
             keuzes_eind = {label: teelt_id for teelt_id, label in alle_teelten}
@@ -346,7 +377,7 @@ elif actie == "3. Oogst registeren":
                 elif submit_oogst and not geselecteerde_labels:
                     st.warning("Selecteer alstublieft minstens één teelt.")
         else:
-            st.info("Er zijn nog geen teeltvakken gestart. Kies eerst optie 1.")
+            st.info("Er zijn geen lopende teelten. Afgeronde teelten regel je via het tabblad 🪣 Uitval of optie 4.")
 
 # --- ACTIE 4: WIJZIGEN / VERWIJDEREN ---
 elif actie == "4. Registratie wijzigen of verwijderen":
@@ -508,8 +539,12 @@ with st.expander("ℹ️ Hoe dit werkt"):
     - Deze meting wordt voor alle gekozen teelten opgeslagen
 
     **Stap 3: Oogst registeren**
-    - Je selecteert één of meer teelten
-    - Je vult de oogstdatum, oogstlengte, oogstgewicht (in gram) en rijpheidsstadium in
+    - Tabblad 🪣 Uitval: registreer per oogstmoment het aantal emmers (100 stelen per emmer).
+      Vink "laatste emmers" aan om de teelt af te ronden. Ook afgeronde teelten blijven
+      hier kiesbaar, zodat je het aantal emmers achteraf nog kunt aanpassen (💾) of
+      verwijderen (🗑️).
+    - Tabblad 📏 Oogstgewicht en lengte: alleen voor teelten die nog niet zijn afgerond.
+      Je vult de oogstlengte, oogstgewicht (in gram) en rijpheidsstadium in.
     - Rijpheid loopt van 1 (rauw) tot 4 (rijp); sleep de slider naar één punt voor een enkel
       stadium (bijv. "3") of laat een bereik staan voor bijv. "1-3" of "2-3"
     - Deze gegevens worden voor alle gekozen teelten opgeslagen

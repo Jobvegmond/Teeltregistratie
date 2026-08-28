@@ -505,6 +505,17 @@ def get_oogstregistraties_voor_teelt(teelt_id):
         return cursor.fetchall()
 
 
+def wijzig_oogstregistratie(registratie_id, datum, aantal_emmers):
+    """Past de datum en het aantal emmers van een bestaand oogstmoment aan."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE oogstregistraties SET datum = %s, aantal_emmers = %s WHERE id = %s",
+            (str(datum), aantal_emmers, registratie_id)
+        )
+        conn.commit()
+
+
 def verwijder_oogstregistratie(registratie_id):
     """Verwijdert een enkel oogstmoment."""
     with get_connection() as conn:
