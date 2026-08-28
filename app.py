@@ -25,8 +25,20 @@ from database import (
     get_gebruikers_credentials,
 )
 
+# --- PAGINA-INSTELLINGEN ---
+# Moet de eerste Streamlit-aanroep zijn. Bepaalt o.a. de titel van het
+# browsertabblad.
+st.set_page_config(page_title="VEM teeltregistratie", page_icon="🌱")
+
+
 # --- INITIALISATIE ---
-init_db()
+@st.cache_resource
+def _database_klaarzetten():
+    """Draai init_db() één keer per serverstart in plaats van bij elke rerun."""
+    init_db()
+
+
+_database_klaarzetten()
 
 
 # --- INLOG ---

@@ -6,6 +6,8 @@ inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 ## [Niet uitgebracht] - 2026-08-28
 
 ### Toegevoegd
+- Titel van het browsertabblad is nu "VEM teeltregistratie" (met 🌱-icoon) in
+  plaats van "Streamlit", via `st.set_page_config`.
 - **Inlogscherm** (`streamlit-authenticator`). De app toont eerst een
   inlogformulier; pas na inloggen zijn de registratie-functies en het overzicht
   zichtbaar. In de zijbalk staat wie er is ingelogd en een "Uitloggen"-knop.
@@ -22,6 +24,16 @@ inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
   serverstart (met waarschuwing).
 
 ### Gewijzigd
+- **Databaseverbinding wordt hergebruikt** in plaats van bij elke Streamlit-rerun
+  opnieuw opgezet. `database.py` gebruikt nu één proces-brede
+  `ThreadedConnectionPool`; `get_connection()` is een context manager
+  (`with get_connection() as conn:`) die een verbinding uit de pool leent,
+  teruggeeft, en een door de server gesloten verbinding automatisch vervangt.
+  Alle functienamen en het gedrag blijven gelijk. *Waarom:* elke rerun deed
+  meerdere volledige connect-handshakes (TCP + TLS + auth) naar Supabase; dat
+  was merkbaar traag.
+- `init_db()` draait nog maar één keer per serverstart (via `@st.cache_resource`
+  in `app.py`) in plaats van bij elke rerun.
 - De opslag is overgezet van een lokaal SQLite-bestand (`teeltdata.db`) naar
   PostgreSQL (Supabase). `database.py` gebruikt nu `psycopg2` in plaats van
   `sqlite3`; alle functienamen en het gedrag zijn hetzelfde gebleven, dus
