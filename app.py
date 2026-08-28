@@ -125,6 +125,20 @@ def rijpheid_tekst_naar_bereik(tekst):
     except ValueError:
         return (1, 4)
 
+
+def standaard_aantal_stelen(vaknummer):
+    """
+    Vooringevuld aantal stelen per teeltvak (uitgangspunt ~60 stelen per meter).
+    Wordt bij het aanmaken van een nieuwe teelt als beginwaarde gebruikt; je kunt
+    het altijd handmatig overschrijven.
+    """
+    standaardwaarden = {1: 34000, 19: 15436, 20: 15436, 39: 31780}
+    if vaknummer in standaardwaarden:
+        return standaardwaarden[vaknummer]
+    if 2 <= vaknummer <= 38:
+        return 32688
+    return 0
+
 # Zijbalk voor invoer
 st.sidebar.header("Registratie bijwerken")
 
@@ -147,9 +161,20 @@ if actie == "1. Nieuwe teelt registreren":
     week_start = get_weeknummer(datum_teelt_start)
     st.sidebar.caption(f"📅 Weeknummer: {week_start}")
 
+    # Vaknummer buiten het formulier: zo wordt het aantal stelen meteen
+    # vooringevuld met de standaardwaarde voor dat vak.
+    vaknummer = st.sidebar.number_input(
+        "Vaknummer", min_value=1, max_value=39, step=1, value=1, key="start_vaknummer"
+    )
+    standaard_stelen = standaard_aantal_stelen(int(vaknummer))
+
     with st.sidebar.form("start_form"):
-        vaknummer = st.number_input("Vaknummer", min_value=1, max_value=39, step=1, value=1)
-        aantal_planten = st.number_input("Aantal geplante planten", min_value=0, step=1, value=0)
+        aantal_planten = st.number_input(
+            "Aantal geplante planten",
+            min_value=0, step=1, value=standaard_stelen,
+            key=f"start_aantal_{int(vaknummer)}",
+            help="Vooringevuld op basis van het vaknummer (± 60 stelen per meter); pas aan indien nodig.",
+        )
 
         submit_start = st.form_submit_button("Teelt aanmaken")
 
@@ -530,6 +555,9 @@ with st.expander("ℹ️ Hoe dit werkt"):
     st.write("""
     **Stap 1: Nieuwe teelt registreren**
     - Je vult het vaknummer (1-39) en het aantal geplante planten in
+    - Het aantal stelen wordt automatisch vooringevuld per vak (± 60 stelen per meter):
+      vak 1 → 34000, vak 2-18 en 21-38 → 32688, vak 19 en 20 → 15436, vak 39 → 31780.
+      Je kunt de waarde altijd handmatig aanpassen.
     - Er wordt automatisch een unieke code aangemaakt: jaar + plantweek + vaknummer
     - Wil je meerdere vakken op dezelfde dag starten? Vul het formulier gewoon opnieuw in per vak
 

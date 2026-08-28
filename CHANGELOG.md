@@ -6,6 +6,11 @@ inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 ## [Niet uitgebracht] - 2026-08-28
 
 ### Toegevoegd
+- Bij "Nieuwe teelt registreren" wordt het **aantal stelen automatisch
+  vooringevuld** op basis van het vaknummer (uitgangspunt ± 60 stelen per meter):
+  vak 1 → 34000, vak 2-18 en 21-38 → 32688, vak 19 en 20 → 15436, vak 39 → 31780.
+  Het vaknummer staat daarvoor nu buiten het formulier; de waarde blijft
+  handmatig aanpasbaar.
 - Titel van het browsertabblad is nu "VEM teeltregistratie" (met 🌱-icoon) in
   plaats van "Streamlit", via `st.set_page_config`.
 - Bij "Oogst registeren" → tabblad 🪣 Uitval zijn nu **ook afgeronde teelten
