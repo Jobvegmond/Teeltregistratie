@@ -1,7 +1,38 @@
-import sqlite3
+import os
 from datetime import datetime
+from pathlib import Path
 
-DB_NAAM = "teeltdata.db"
+import psycopg2
+
+
+def _laad_dotenv():
+    """
+    Leest een .env-bestand naast dit script in en zet de waarden in os.environ,
+    zodat je DATABASE_URL lokaal niet handmatig hoeft te exporteren. Bestaande
+    omgevingsvariabelen worden niet overschreven (die winnen altijd). Geen
+    externe dependency nodig.
+    """
+    env_pad = Path(__file__).with_name(".env")
+    if not env_pad.exists():
+        return
+    for regel in env_pad.read_text(encoding="utf-8").splitlines():
+        regel = regel.strip()
+        if not regel or regel.startswith("#") or "=" not in regel:
+            continue
+        sleutel, _, waarde = regel.partition("=")
+        sleutel = sleutel.strip()
+        waarde = waarde.strip().strip('"').strip("'")
+        os.environ.setdefault(sleutel, waarde)
+
+
+_laad_dotenv()
+
+# De connectiegegevens komen uit de omgevingsvariabele DATABASE_URL, bijvoorbeeld
+# de "Connection string" van je Supabase-project:
+#   postgresql://postgres:<wachtwoord>@db.<ref>.supabase.co:5432/postgres
+# Zet hem NOOIT letterlijk in de code. Lokaal komt hij uit het .env-bestand
+# (zie .env.example); op de server (bijv. Streamlit Cloud) als secret/omgevingsvariabele.
+DATABASE_URL = os.environ.get("DATABASE_URL")
 
 
 def get_weeknummer(datum):
@@ -23,6 +54,22 @@ def get_teeltduur(datum_start, datum_einde):
     return None
 
 
+def format_datum(datum):
+    """
+    Zet een datum om naar weergaveformaat dd-mm-jj (bijv. '27-08-26').
+    Accepteert een date-object of een string in ISO-formaat (zoals opgeslagen
+    in de database). Geeft een lege string terug bij een lege waarde.
+    """
+    if not datum:
+        return ""
+    if isinstance(datum, str):
+        try:
+            datum = datetime.strptime(datum, "%Y-%m-%d").date()
+        except ValueError:
+            return datum
+    return datum.strftime("%d-%m-%y")
+
+
 def genereer_teelt_code(datum_teelt_start, vaknummer):
     """
     Bouwt de unieke teelt-code: laatste 2 cijfers van het jaar + plantweek (2 cijfers)
@@ -37,10 +84,13 @@ def genereer_teelt_code(datum_teelt_start, vaknummer):
 
 
 def get_connection():
-    """Geeft een databaseverbinding terug."""
-    conn = sqlite3.connect(DB_NAAM)
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
+    """Geeft een databaseverbinding (PostgreSQL / Supabase) terug."""
+    if not DATABASE_URL:
+        raise RuntimeError(
+            "De omgevingsvariabele DATABASE_URL is niet gezet. Zet hem op de "
+            "PostgreSQL-connectiestring van je Supabase-project."
+        )
+    return psycopg2.connect(DATABASE_URL)
 
 
 def init_db():
@@ -50,14 +100,14 @@ def init_db():
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS teeltvakken (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             naam TEXT UNIQUE NOT NULL
         )
     """)
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS teelten (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             teeltvak_id INTEGER NOT NULL,
             datum_teelt_start TEXT NOT NULL,
             datum_half TEXT,
@@ -72,7 +122,7 @@ def init_db():
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS oogstregistraties (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             teelt_id INTEGER NOT NULL,
             datum TEXT NOT NULL,
             aantal_emmers REAL NOT NULL,
@@ -80,30 +130,38 @@ def init_db():
         )
     """)
 
-    # Migratie: voeg de rijpheid-kolom toe aan bestaande databases die hem nog missen.
-    cursor.execute("PRAGMA table_info(teelten)")
-    bestaande_kolommen = [rij[1] for rij in cursor.fetchall()]
-    if "rijpheid" not in bestaande_kolommen:
-        cursor.execute("ALTER TABLE teelten ADD COLUMN rijpheid TEXT")
-    if "aantal_planten" not in bestaande_kolommen:
-        cursor.execute("ALTER TABLE teelten ADD COLUMN aantal_planten INTEGER")
-    if "code" not in bestaande_kolommen:
-        cursor.execute("ALTER TABLE teelten ADD COLUMN code TEXT")
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS gebruikers (
+            username TEXT PRIMARY KEY,
+            naam TEXT NOT NULL,
+            wachtwoord_hash TEXT NOT NULL,
+            email TEXT
+        )
+    """)
+
+    # Migratie: voeg ontbrekende kolommen toe aan bestaande databases.
+    cursor.execute("ALTER TABLE teelten ADD COLUMN IF NOT EXISTS rijpheid TEXT")
+    cursor.execute("ALTER TABLE teelten ADD COLUMN IF NOT EXISTS aantal_planten INTEGER")
+    cursor.execute("ALTER TABLE teelten ADD COLUMN IF NOT EXISTS code TEXT")
 
     # Migratie: voeg het vaknummer toe aan teeltvakken.
-    cursor.execute("PRAGMA table_info(teeltvakken)")
-    vak_kolommen = [rij[1] for rij in cursor.fetchall()]
-    if "vaknummer" not in vak_kolommen:
-        cursor.execute("ALTER TABLE teeltvakken ADD COLUMN vaknummer INTEGER")
-        # Best-effort: bestaande vakken die al puur numeriek genoemd zijn
-        # (bijv. naam "19") krijgen dat getal meteen als vaknummer.
-        cursor.execute("SELECT id, naam FROM teeltvakken WHERE vaknummer IS NULL")
-        for vak_id, naam in cursor.fetchall():
-            if naam and naam.strip().isdigit():
-                cursor.execute(
-                    "UPDATE teeltvakken SET vaknummer = ? WHERE id = ?",
-                    (int(naam.strip()), vak_id)
-                )
+    cursor.execute("ALTER TABLE teeltvakken ADD COLUMN IF NOT EXISTS vaknummer INTEGER")
+    # Best-effort: bestaande vakken die al puur numeriek genoemd zijn
+    # (bijv. naam "19") krijgen dat getal meteen als vaknummer.
+    cursor.execute("SELECT id, naam FROM teeltvakken WHERE vaknummer IS NULL")
+    for vak_id, naam in cursor.fetchall():
+        if naam and naam.strip().isdigit():
+            cursor.execute(
+                "UPDATE teeltvakken SET vaknummer = %s WHERE id = %s",
+                (int(naam.strip()), vak_id)
+            )
+
+    # Migratie: teeltvakken die automatisch als "Vak {nummer}" benoemd zijn,
+    # krijgen alsnog gewoon het kale nummer als naam.
+    cursor.execute("SELECT id, naam, vaknummer FROM teeltvakken WHERE vaknummer IS NOT NULL")
+    for vak_id, naam, vaknummer in cursor.fetchall():
+        if naam == f"Vak {vaknummer}":
+            cursor.execute("UPDATE teeltvakken SET naam = %s WHERE id = %s", (str(vaknummer), vak_id))
 
     # Migratie: bestaande teelten krijgen alsnog een code als hun vak een vaknummer heeft.
     cursor.execute("""
@@ -114,7 +172,7 @@ def init_db():
     """)
     for teelt_id, datum_start, vaknummer in cursor.fetchall():
         code = genereer_teelt_code(datum_start, vaknummer)
-        cursor.execute("UPDATE teelten SET code = ? WHERE id = ?", (code, teelt_id))
+        cursor.execute("UPDATE teelten SET code = %s WHERE id = %s", (code, teelt_id))
 
     conn.commit()
     conn.close()
@@ -130,22 +188,22 @@ def get_of_maak_teeltvak(vaknummer, naam=None):
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute("SELECT id FROM teeltvakken WHERE vaknummer = ?", (vaknummer,))
+    cursor.execute("SELECT id FROM teeltvakken WHERE vaknummer = %s", (vaknummer,))
     resultaat = cursor.fetchone()
 
     if resultaat:
         teeltvak_id = resultaat[0]
         if naam:
-            cursor.execute("UPDATE teeltvakken SET naam = ? WHERE id = ?", (naam, teeltvak_id))
+            cursor.execute("UPDATE teeltvakken SET naam = %s WHERE id = %s", (naam, teeltvak_id))
             conn.commit()
     else:
-        vak_naam = naam or f"Vak {vaknummer}"
+        vak_naam = naam or str(vaknummer)
         cursor.execute(
-            "INSERT INTO teeltvakken (naam, vaknummer) VALUES (?, ?)",
+            "INSERT INTO teeltvakken (naam, vaknummer) VALUES (%s, %s) RETURNING id",
             (vak_naam, vaknummer)
         )
+        teeltvak_id = cursor.fetchone()[0]
         conn.commit()
-        teeltvak_id = cursor.lastrowid
 
     conn.close()
     return teeltvak_id
@@ -178,10 +236,11 @@ def start_nieuwe_teelt(vaknummer, datum_teelt_start, aantal_planten=None, naam=N
     cursor = conn.cursor()
     cursor.execute("""
         INSERT INTO teelten (teeltvak_id, datum_teelt_start, aantal_planten, code)
-        VALUES (?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s)
+        RETURNING id
     """, (teeltvak_id, str(datum_teelt_start), aantal_planten, code))
+    nieuwe_teelt_id = cursor.fetchone()[0]
     conn.commit()
-    nieuwe_teelt_id = cursor.lastrowid
     conn.close()
     return nieuwe_teelt_id, code
 
@@ -195,20 +254,21 @@ def get_lopende_teelten():
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("""
-        SELECT t.id, v.vaknummer, t.datum_teelt_start
+        SELECT t.id, v.vaknummer, t.datum_teelt_start, t.code
         FROM teelten t
         JOIN teeltvakken v ON t.teeltvak_id = v.id
         WHERE t.datum_oogst IS NULL
-        ORDER BY v.vaknummer, t.datum_teelt_start
+        ORDER BY t.datum_teelt_start, v.vaknummer
     """)
     rijen = cursor.fetchall()
     conn.close()
 
     resultaat = []
-    for teelt_id, vaknummer, start_datum in rijen:
+    for teelt_id, vaknummer, start_datum, code in rijen:
         plantweek = get_weeknummer(start_datum)
         vak_deel = vaknummer if vaknummer is not None else "?"
-        label = f"Vak {vak_deel} - Teelt {teelt_id} - week {plantweek}"
+        code_deel = code if code else f"ID{teelt_id}"
+        label = f"Week {plantweek} - Vak {vak_deel} - {code_deel}"
         resultaat.append((teelt_id, label))
     return resultaat
 
@@ -219,22 +279,41 @@ def update_halverwege(teelt_id, datum_half, lengte_half):
     cursor = conn.cursor()
     cursor.execute("""
         UPDATE teelten
-        SET datum_half = ?, lengte_half = ?
-        WHERE id = ?
+        SET datum_half = %s, lengte_half = %s
+        WHERE id = %s
     """, (str(datum_half), lengte_half, teelt_id))
     conn.commit()
     conn.close()
 
 
-def update_oogst(teelt_id, datum_oogst, lengte_eind, oogstgewicht, rijpheid=None):
-    """Slaat de oogstgegevens op voor een specifieke teelt."""
+def update_oogst(teelt_id, lengte_eind, oogstgewicht, rijpheid=None):
+    """
+    Slaat lengte, gewicht en rijpheid op voor een specifieke teelt.
+    Raakt bewust de oogstdatum niet aan: het afronden van een teelt gebeurt
+    los hiervan via markeer_teelt_afgerond (bijv. bij de laatste emmers).
+    """
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("""
         UPDATE teelten
-        SET datum_oogst = ?, lengte_eind = ?, oogstgewicht = ?, rijpheid = ?
-        WHERE id = ?
-    """, (str(datum_oogst), lengte_eind, oogstgewicht, rijpheid, teelt_id))
+        SET lengte_eind = %s, oogstgewicht = %s, rijpheid = %s
+        WHERE id = %s
+    """, (lengte_eind, oogstgewicht, rijpheid, teelt_id))
+    conn.commit()
+    conn.close()
+
+
+def markeer_teelt_afgerond(teelt_id, datum_oogst):
+    """
+    Markeert een teelt als afgerond door de oogstdatum te zetten, zonder de
+    (eventueel nog onbekende) eindstand-velden lengte/gewicht/rijpheid aan te passen.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE teelten SET datum_oogst = %s WHERE id = %s",
+        (str(datum_oogst), teelt_id)
+    )
     conn.commit()
     conn.close()
 
@@ -248,19 +327,20 @@ def get_alle_teelten_voor_selectie():
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("""
-        SELECT t.id, v.vaknummer, t.datum_teelt_start
+        SELECT t.id, v.vaknummer, t.datum_teelt_start, t.code
         FROM teelten t
         JOIN teeltvakken v ON t.teeltvak_id = v.id
-        ORDER BY v.vaknummer, t.datum_teelt_start DESC
+        ORDER BY t.datum_teelt_start, v.vaknummer
     """)
     rijen = cursor.fetchall()
     conn.close()
 
     resultaat = []
-    for teelt_id, vaknummer, start_datum in rijen:
+    for teelt_id, vaknummer, start_datum, code in rijen:
         plantweek = get_weeknummer(start_datum)
         vak_deel = vaknummer if vaknummer is not None else "?"
-        label = f"Vak {vak_deel} - Teelt {teelt_id} - week {plantweek}"
+        code_deel = code if code else f"ID{teelt_id}"
+        label = f"Week {plantweek} - Vak {vak_deel} - {code_deel}"
         resultaat.append((teelt_id, label))
     return resultaat
 
@@ -275,7 +355,7 @@ def get_teelt_by_id(teelt_id):
                t.aantal_planten, t.code
         FROM teelten t
         JOIN teeltvakken v ON t.teeltvak_id = v.id
-        WHERE t.id = ?
+        WHERE t.id = %s
     """, (teelt_id,))
     rij = cursor.fetchone()
     conn.close()
@@ -309,10 +389,10 @@ def update_teelt_volledig(teelt_id, datum_teelt_start, datum_half, lengte_half,
     cursor = conn.cursor()
     cursor.execute("""
         UPDATE teelten
-        SET datum_teelt_start = ?, datum_half = ?, lengte_half = ?,
-            datum_oogst = ?, lengte_eind = ?, oogstgewicht = ?, rijpheid = ?,
-            aantal_planten = ?, code = COALESCE(?, code)
-        WHERE id = ?
+        SET datum_teelt_start = %s, datum_half = %s, lengte_half = %s,
+            datum_oogst = %s, lengte_eind = %s, oogstgewicht = %s, rijpheid = %s,
+            aantal_planten = %s, code = COALESCE(%s, code)
+        WHERE id = %s
     """, (
         str(datum_teelt_start) if datum_teelt_start else None,
         str(datum_half) if datum_half else None,
@@ -333,8 +413,8 @@ def delete_teelt(teelt_id):
     """Verwijdert een teelt permanent, inclusief de bijbehorende oogstregistraties."""
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM oogstregistraties WHERE teelt_id = ?", (teelt_id,))
-    cursor.execute("DELETE FROM teelten WHERE id = ?", (teelt_id,))
+    cursor.execute("DELETE FROM oogstregistraties WHERE teelt_id = %s", (teelt_id,))
+    cursor.execute("DELETE FROM teelten WHERE id = %s", (teelt_id,))
     conn.commit()
     conn.close()
 
@@ -347,7 +427,7 @@ def voeg_oogstregistratie_toe(teelt_id, datum, aantal_emmers):
     cursor = conn.cursor()
     cursor.execute("""
         INSERT INTO oogstregistraties (teelt_id, datum, aantal_emmers)
-        VALUES (?, ?, ?)
+        VALUES (%s, %s, %s)
     """, (teelt_id, str(datum), aantal_emmers))
     conn.commit()
     conn.close()
@@ -360,7 +440,7 @@ def get_oogstregistraties_voor_teelt(teelt_id):
     cursor.execute("""
         SELECT id, datum, aantal_emmers
         FROM oogstregistraties
-        WHERE teelt_id = ?
+        WHERE teelt_id = %s
         ORDER BY datum
     """, (teelt_id,))
     rijen = cursor.fetchall()
@@ -372,7 +452,7 @@ def verwijder_oogstregistratie(registratie_id):
     """Verwijdert een enkel oogstmoment."""
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM oogstregistraties WHERE id = ?", (registratie_id,))
+    cursor.execute("DELETE FROM oogstregistraties WHERE id = %s", (registratie_id,))
     conn.commit()
     conn.close()
 
@@ -389,6 +469,72 @@ def get_totaal_emmers_per_teelt():
     resultaat = {teelt_id: totaal for teelt_id, totaal in cursor.fetchall()}
     conn.close()
     return resultaat
+
+
+# --- GEBRUIKERS (INLOG) ---
+
+def get_gebruikers_credentials():
+    """
+    Geeft alle gebruikers terug in het formaat dat streamlit-authenticator
+    verwacht:
+        {"usernames": {username: {"name": ..., "password": <hash>, "email": ...}}}
+    De wachtwoorden zijn de bcrypt-hashes zoals ze in de database staan.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT username, naam, wachtwoord_hash, email FROM gebruikers")
+    rijen = cursor.fetchall()
+    conn.close()
+
+    usernames = {}
+    for username, naam, wachtwoord_hash, email in rijen:
+        usernames[username] = {
+            "name": naam,
+            "password": wachtwoord_hash,
+            "email": email or "",
+        }
+    return {"usernames": usernames}
+
+
+def voeg_gebruiker_toe(username, naam, wachtwoord_hash, email=None):
+    """
+    Voegt een gebruiker toe of werkt een bestaande bij (op username).
+    Het wachtwoord moet al gehasht zijn, bijv. met
+    streamlit_authenticator.Hasher.hash(...). Er wordt nooit een wachtwoord in
+    platte tekst opgeslagen.
+    """
+    username = username.strip().lower()
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO gebruikers (username, naam, wachtwoord_hash, email)
+        VALUES (%s, %s, %s, %s)
+        ON CONFLICT (username)
+        DO UPDATE SET naam = EXCLUDED.naam,
+                      wachtwoord_hash = EXCLUDED.wachtwoord_hash,
+                      email = EXCLUDED.email
+    """, (username, naam, wachtwoord_hash, email))
+    conn.commit()
+    conn.close()
+
+
+def verwijder_gebruiker(username):
+    """Verwijdert een gebruiker."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM gebruikers WHERE username = %s", (username.strip().lower(),))
+    conn.commit()
+    conn.close()
+
+
+def get_alle_gebruikers():
+    """Geeft (username, naam, email) van alle gebruikers terug."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT username, naam, email FROM gebruikers ORDER BY username")
+    rijen = cursor.fetchall()
+    conn.close()
+    return rijen
 
 
 def get_overzicht_dataframe():
@@ -413,7 +559,7 @@ def get_overzicht_dataframe():
             t.rijpheid
         FROM teelten t
         JOIN teeltvakken v ON t.teeltvak_id = v.id
-        ORDER BY v.naam, t.datum_teelt_start DESC
+        ORDER BY (t.code IS NULL), t.code
     """)
     teelt_rijen = cursor.fetchall()
     conn.close()
@@ -432,30 +578,30 @@ def get_overzicht_dataframe():
         totaal_stelen = totaal_emmers * 100 if totaal_emmers else "-"
 
         if aantal_planten and totaal_emmers:
-            uitval_pct = round((aantal_planten - totaal_emmers * 100) / aantal_planten * 100, 1)
+            uitval_pct = f"{(aantal_planten - totaal_emmers * 100) / aantal_planten * 100:.2f}"
         else:
             uitval_pct = "-"
 
         rijen_uitgebreid.append((
             teelt_id,
-            code if code else "-",
+            f"{format_datum(start)} (week {start_week})" if start else "-",
             naam,
-            aantal_planten if aantal_planten else "-",
-            f"{start} (week {start_week})" if start else "-",
-            f"{half_datum} (week {get_weeknummer(half_datum)})" if half_datum else "-",
+            f"{format_datum(half_datum)} (week {get_weeknummer(half_datum)})" if half_datum else "-",
             half_lengte if half_lengte else "-",
-            f"{oogst_datum} (week {get_weeknummer(oogst_datum)})" if oogst_datum else "-",
-            eind_lengte if eind_lengte else "-",
-            gewicht if gewicht else "-",
-            rijpheid if rijpheid else "-",
+            f"{format_datum(oogst_datum)} (week {get_weeknummer(oogst_datum)})" if oogst_datum else "-",
             teeltduur,
+            eind_lengte if eind_lengte else "-",
+            round(gewicht) if gewicht else "-",
+            rijpheid if rijpheid else "-",
+            uitval_pct,
+            aantal_planten if aantal_planten else "-",
             totaal_emmers if totaal_emmers else "-",
             totaal_stelen,
-            uitval_pct
+            code if code else "-",
         ))
 
-    kolommen = ["ID", "Code", "Teeltvak", "Aantal Planten", "Start (week)", "Halverwege (week)",
-                "Lengte Half (cm)", "Oogst (week)", "Lengte Einde (cm)", "Gewicht (kg)",
-                "Rijpheid", "Teeltduur (dagen)", "Emmers Geoogst", "Stelen Geoogst",
-                "Uitval (%)"]
+    kolommen = ["ID", "Startdatum", "Teeltvak", "Datum Halverwege", "Lengte Half (cm)",
+                "Oogstdatum", "Teeltduur (dagen)", "Oogstlengte (cm)", "Oogstgewicht (gram)",
+                "Rijpheid", "Uitval (%)", "Aantal Planten", "Aantal Emmers", "Aantal Stelen",
+                "Code"]
     return kolommen, rijen_uitgebreid
