@@ -30,12 +30,24 @@ from database import (
     get_klimaatdata_weken_voor_periode,
     get_klimaat_voor_periode,
     get_teeltduur,
+    get_alle_teelten_detail,
+    get_isojaar_week,
 )
 
 # --- PAGINA-INSTELLINGEN ---
 # Moet de eerste Streamlit-aanroep zijn. Bepaalt o.a. de titel van het
 # browsertabblad.
 st.set_page_config(page_title="VEM teeltregistratie", page_icon="🌱")
+
+# Standaard rendert Streamlit st.metric-waarden in een erg groot lettertype;
+# hier wereldwijd verkleind zodat de kopgegevens (bijv. bij Teelt-detail)
+# leesbaar blijven zonder de pagina te domineren.
+st.markdown("""
+<style>
+[data-testid="stMetricValue"] { font-size: 1.25rem; }
+[data-testid="stMetricLabel"] { font-size: 0.8rem; }
+</style>
+""", unsafe_allow_html=True)
 
 
 # --- INITIALISATIE ---
@@ -568,118 +580,173 @@ with tab_overzicht:
 with tab_detail:
     st.subheader("🔍 Teelt-detail")
 
-    alle_teelten_detail = get_alle_teelten_voor_selectie()
+    alle_teelten_detail = get_alle_teelten_detail()
     if alle_teelten_detail:
-        keuzes_detail = {label: teelt_id for teelt_id, label in alle_teelten_detail}
-        detail_label = st.selectbox("Kies een teelt", list(keuzes_detail.keys()), key="detail_selectie")
-        detail_id = keuzes_detail[detail_label]
-        detail = get_teelt_by_id(detail_id)
-        is_afgerond_detail = detail["datum_oogst"] is not None
+        # Groepeer per plantweek (iso-jaar + weeknummer van de startdatum), zodat
+        # je alle vakken die in dezelfde week geplant zijn in één keer ziet,
+        # in plaats van per los vak.
+        groepen_detail = {}
+        for t in alle_teelten_detail:
+            sleutel = get_isojaar_week(t["datum_teelt_start"])
+            groepen_detail.setdefault(sleutel, []).append(t)
 
-        # Klimaat en teeltduur worden berekend over de exacte periode van
-        # déze planting (start tot oogst, of tot vandaag als nog lopend) —
-        # dus per teelt, niet als vast afdeling/vak-gemiddelde.
-        afdeling_detail = afdeling_van_vaknummer(detail["vaknummer"])
-        eind_detail = detail["datum_oogst"] or str(datetime.today().date())
-        klimaat_detail = (
-            get_klimaat_voor_periode(afdeling_detail, detail["datum_teelt_start"], eind_detail)
-            if afdeling_detail else None
-        )
+        def _label_plantweek(sleutel):
+            jaar, week = sleutel
+            teelten_groep = groepen_detail[sleutel]
+            vakken = sorted({t["vaknummer"] for t in teelten_groep if t["vaknummer"] is not None})
+            vakken_tekst = ", ".join(str(v) for v in vakken) if vakken else "?"
+            return f"Week {week} - {jaar} ({len(teelten_groep)} vak(ken): {vakken_tekst})"
 
-        dagen_detail = get_teeltduur(detail["datum_teelt_start"], eind_detail)
-        if dagen_detail is not None:
-            weken_detail = round(dagen_detail / 7 * 2) / 2
-            teeltduur_tekst = f"{weken_detail:g} weken ({dagen_detail} dagen)"
+        keuzes_weken = {_label_plantweek(sleutel): sleutel for sleutel in sorted(groepen_detail.keys())}
+        week_label = st.selectbox("Kies een plantweek", list(keuzes_weken.keys()), key="detail_week_selectie")
+        teelten_groep = groepen_detail[keuzes_weken[week_label]]
+
+        vandaag_detail = str(datetime.today().date())
+        aantal_afgerond = sum(1 for t in teelten_groep if t["datum_oogst"])
+        if aantal_afgerond == 0:
+            status_tekst = "🌱 Alle lopend"
+        elif aantal_afgerond == len(teelten_groep):
+            status_tekst = "✅ Alle afgerond"
+        else:
+            status_tekst = f"↔️ {aantal_afgerond} van de {len(teelten_groep)} afgerond"
+
+        start_datums = sorted(t["datum_teelt_start"] for t in teelten_groep)
+        vakken_groep = sorted({t["vaknummer"] for t in teelten_groep if t["vaknummer"] is not None})
+        st.caption(f"Vakken in deze plantweek: {', '.join(str(v) for v in vakken_groep) if vakken_groep else '-'}")
+
+        # Teeltduur en klimaat worden per teelt (dus per planting, op basis
+        # van de eigen afdeling en periode) berekend en pas daarna gemiddeld
+        # over de groep — niet als één vast afdeling/vak-gemiddelde.
+        dagen_lijst, temp_lijst, rv_lijst, straling_lijst = [], [], [], []
+        for t in teelten_groep:
+            eind_t = t["datum_oogst"] or vandaag_detail
+            dagen_t = get_teeltduur(t["datum_teelt_start"], eind_t)
+            if dagen_t is not None:
+                dagen_lijst.append(dagen_t)
+
+            afdeling_t = afdeling_van_vaknummer(t["vaknummer"])
+            if afdeling_t:
+                klimaat_t = get_klimaat_voor_periode(afdeling_t, t["datum_teelt_start"], eind_t)
+                if klimaat_t:
+                    if klimaat_t["gem_temperatuur"] is not None:
+                        temp_lijst.append(klimaat_t["gem_temperatuur"])
+                    if klimaat_t["gem_rv"] is not None:
+                        rv_lijst.append(klimaat_t["gem_rv"])
+                    if klimaat_t["gem_stralingssom_dag"] is not None:
+                        straling_lijst.append(klimaat_t["gem_stralingssom_dag"])
+
+        if dagen_lijst:
+            gem_dagen = sum(dagen_lijst) / len(dagen_lijst)
+            gem_weken = round(gem_dagen / 7 * 2) / 2
+            teeltduur_tekst = f"{gem_weken:g} weken ({gem_dagen:.0f} dagen)"
         else:
             teeltduur_tekst = "-"
 
-        st.caption(f"Vak {detail['vaknummer'] or '-'} · code {detail['code'] or '-'}")
-
         rij_data = st.columns(4)
-        rij_data[0].metric("Gestart", format_datum(detail["datum_teelt_start"]))
-        rij_data[1].metric("Afgerond", format_datum(detail["datum_oogst"]) if is_afgerond_detail else "Nog lopend")
-        rij_data[2].metric("Teeltduur", teeltduur_tekst)
-        rij_data[3].metric("Status", "✅ Afgerond" if is_afgerond_detail else "🌱 Lopend")
+        rij_data[0].metric("Eerste startdatum", format_datum(start_datums[0]))
+        rij_data[1].metric("Laatste startdatum", format_datum(start_datums[-1]))
+        rij_data[2].metric("Gem. teeltduur", teeltduur_tekst)
+        rij_data[3].metric("Status", status_tekst)
 
         rij_klimaat = st.columns(3)
         rij_klimaat[0].metric(
-            "Gem. temperatuur",
-            f"{klimaat_detail['gem_temperatuur']:.1f} °C"
-            if klimaat_detail and klimaat_detail["gem_temperatuur"] is not None else "-"
+            "Gem. temperatuur", f"{sum(temp_lijst) / len(temp_lijst):.1f} °C" if temp_lijst else "-"
         )
         rij_klimaat[1].metric(
-            "Gem. RV",
-            f"{klimaat_detail['gem_rv']:.0f} %"
-            if klimaat_detail and klimaat_detail["gem_rv"] is not None else "-"
+            "Gem. RV", f"{sum(rv_lijst) / len(rv_lijst):.0f} %" if rv_lijst else "-"
         )
         rij_klimaat[2].metric(
-            "Gem. lichtsom (per dag)",
-            f"{klimaat_detail['gem_stralingssom_dag']:.0f}"
-            if klimaat_detail and klimaat_detail["gem_stralingssom_dag"] is not None else "-"
+            "Gem. lichtsom (per dag)", f"{sum(straling_lijst) / len(straling_lijst):.0f}" if straling_lijst else "-"
         )
 
-        if is_afgerond_detail:
-            registraties_uitval_detail = get_oogstregistraties_voor_teelt(detail_id)
-            totaal_emmers_detail = sum(r[2] for r in registraties_uitval_detail) if registraties_uitval_detail else 0
-            totaal_stelen_detail = totaal_emmers_detail * 100
-            if detail["aantal_planten"]:
-                uitval_pct_detail = (
-                    (detail["aantal_planten"] - totaal_stelen_detail) / detail["aantal_planten"] * 100
-                )
-                uitval_tekst_detail = f"{uitval_pct_detail:.1f} %"
-            else:
-                uitval_tekst_detail = "-"
+        if aantal_afgerond > 0:
+            afgeronde_groep = [t for t in teelten_groep if t["datum_oogst"]]
+            lengtes = [t["lengte_eind"] for t in afgeronde_groep if t["lengte_eind"]]
+            gewichten = [t["oogstgewicht"] for t in afgeronde_groep if t["oogstgewicht"]]
+
+            uitval_lijst = []
+            for t in afgeronde_groep:
+                if t["aantal_planten"]:
+                    registraties_t = get_oogstregistraties_voor_teelt(t["id"])
+                    totaal_stelen_t = sum(r[2] for r in registraties_t) * 100 if registraties_t else 0
+                    uitval_lijst.append((t["aantal_planten"] - totaal_stelen_t) / t["aantal_planten"] * 100)
 
             rij_oogst = st.columns(3)
             rij_oogst[0].metric(
-                "Taklengte", f"{detail['lengte_eind']:.1f} cm" if detail["lengte_eind"] else "-"
+                "Gem. taklengte", f"{sum(lengtes) / len(lengtes):.1f} cm" if lengtes else "-"
             )
             rij_oogst[1].metric(
-                "Takgewicht", f"{round(detail['oogstgewicht'])} gram" if detail["oogstgewicht"] else "-"
+                "Gem. takgewicht", f"{round(sum(gewichten) / len(gewichten))} gram" if gewichten else "-"
             )
-            rij_oogst[2].metric("Uitval", uitval_tekst_detail)
+            rij_oogst[2].metric(
+                "Gem. uitval", f"{sum(uitval_lijst) / len(uitval_lijst):.1f} %" if uitval_lijst else "-"
+            )
 
         st.markdown("---")
 
-        st.write("**Lengtegroei**")
+        st.write("**Lengtegroei (gemiddeld over de plantweek)**")
+        halve_lengtes = [t["lengte_half"] for t in teelten_groep if t["lengte_half"]]
+        eind_lengtes = [t["lengte_eind"] for t in teelten_groep if t["lengte_eind"]]
         groei_data = {}
-        if detail["lengte_half"]:
-            groei_data["Florgib (halverwege)"] = detail["lengte_half"]
-        if detail["lengte_eind"]:
-            groei_data["Eindlengte (oogst)"] = detail["lengte_eind"]
+        if halve_lengtes:
+            groei_data["Florgib (halverwege)"] = sum(halve_lengtes) / len(halve_lengtes)
+        if eind_lengtes:
+            groei_data["Eindlengte (oogst)"] = sum(eind_lengtes) / len(eind_lengtes)
         if groei_data:
             st.bar_chart(pd.Series(groei_data, name="Lengte (cm)"))
         else:
-            st.caption("Nog geen lengtemetingen voor deze teelt.")
+            st.caption("Nog geen lengtemetingen voor deze plantweek.")
 
-        st.write("**Oogst per moment (emmers)**")
-        registraties_detail = get_oogstregistraties_voor_teelt(detail_id)
-        if registraties_detail:
-            df_oogst = pd.DataFrame(registraties_detail, columns=["id", "datum", "emmers"])
-            df_oogst["datum"] = df_oogst["datum"].apply(format_datum)
-            df_oogst = df_oogst.set_index("datum")
-            st.bar_chart(df_oogst["emmers"])
-            st.line_chart(df_oogst["emmers"].cumsum().rename("Cumulatief aantal emmers"))
+        st.write("**Oogst per moment (emmers, opgeteld over de plantweek)**")
+        alle_registraties = []
+        for t in teelten_groep:
+            alle_registraties.extend(get_oogstregistraties_voor_teelt(t["id"]))
+        if alle_registraties:
+            df_oogst = pd.DataFrame(alle_registraties, columns=["id", "datum", "emmers"])
+            df_oogst_som = df_oogst.groupby("datum", as_index=False)["emmers"].sum()
+            df_oogst_som["datum"] = df_oogst_som["datum"].apply(format_datum)
+            df_oogst_som = df_oogst_som.set_index("datum")
+            st.bar_chart(df_oogst_som["emmers"])
+            st.line_chart(df_oogst_som["emmers"].cumsum().rename("Cumulatief aantal emmers"))
         else:
-            st.caption("Nog geen oogstmomenten geregistreerd voor deze teelt.")
+            st.caption("Nog geen oogstmomenten geregistreerd voor deze plantweek.")
 
-        st.write("**Klimaat tijdens deze teelt**")
-        if afdeling_detail:
-            klimaat_weken = get_klimaatdata_weken_voor_periode(
-                afdeling_detail, detail["datum_teelt_start"], eind_detail
-            )
-            if klimaat_weken:
-                df_klimaat_detail = pd.DataFrame(
-                    klimaat_weken,
-                    columns=["Datum", "Gem. temperatuur (°C)", "Gem. RV (%)", "Stralingssom (per dag)"]
-                )
-                df_klimaat_detail["Datum"] = df_klimaat_detail["Datum"].apply(format_datum)
-                df_klimaat_detail = df_klimaat_detail.set_index("Datum")
-                st.line_chart(df_klimaat_detail[["Gem. temperatuur (°C)"]])
-                st.line_chart(df_klimaat_detail[["Gem. RV (%)"]])
-                st.line_chart(df_klimaat_detail[["Stralingssom (per dag)"]])
+        st.write("**Klimaat tijdens deze plantweek**")
+        afdelingen_groep = sorted({
+            afdeling_van_vaknummer(t["vaknummer"]) for t in teelten_groep
+            if afdeling_van_vaknummer(t["vaknummer"])
+        })
+        if afdelingen_groep:
+            eind_groep = max(t["datum_oogst"] or vandaag_detail for t in teelten_groep)
+            records_temp, records_rv, records_straling = [], [], []
+            for afdeling in afdelingen_groep:
+                weken = get_klimaatdata_weken_voor_periode(afdeling, start_datums[0], eind_groep)
+                for datum_van, temp, rv, straling in weken:
+                    kolom = f"Afd. {afdeling}"
+                    records_temp.append({"datum": datum_van, kolom: temp})
+                    records_rv.append({"datum": datum_van, kolom: rv})
+                    records_straling.append({"datum": datum_van, kolom: straling})
+
+            def _pivot_klimaat(records):
+                if not records:
+                    return None
+                df = pd.DataFrame(records).groupby("datum", as_index=True).first().sort_index()
+                df.index = [format_datum(d) for d in df.index]
+                return df
+
+            df_temp = _pivot_klimaat(records_temp)
+            df_rv = _pivot_klimaat(records_rv)
+            df_straling = _pivot_klimaat(records_straling)
+
+            if df_temp is not None:
+                st.caption("Temperatuur (°C)")
+                st.line_chart(df_temp)
+                st.caption("RV (%)")
+                st.line_chart(df_rv)
+                st.caption("Lichtsom (per dag)")
+                st.line_chart(df_straling)
             else:
-                st.caption("Nog geen klimaatdata gekoppeld aan deze teelt-periode.")
+                st.caption("Nog geen klimaatdata gekoppeld aan deze plantweek.")
         else:
             st.caption("Onbekend vaknummer; kan geen afdeling/klimaatdata bepalen.")
     else:

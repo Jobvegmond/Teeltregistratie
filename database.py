@@ -423,6 +423,49 @@ def get_alle_teelten_voor_selectie():
     return resultaat
 
 
+def get_isojaar_week(datum):
+    """Geeft (iso-jaar, iso-weeknummer) van een datum terug, voor groepering per plantweek."""
+    if isinstance(datum, str):
+        datum = datetime.strptime(datum, "%Y-%m-%d").date()
+    iso_jaar, week, _ = datum.isocalendar()
+    return iso_jaar, week
+
+
+def get_alle_teelten_detail():
+    """
+    Geeft alle teelten terug met de ruwe (onopgemaakte) velden, voor
+    client-side aggregatie in het dashboard (bijv. groeperen per plantweek).
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT t.id, t.code, v.vaknummer, t.datum_teelt_start, t.datum_half, t.lengte_half,
+                   t.datum_oogst, t.lengte_eind, t.oogstgewicht, t.rijpheid, t.aantal_planten
+            FROM teelten t
+            JOIN teeltvakken v ON t.teeltvak_id = v.id
+            ORDER BY t.datum_teelt_start, v.vaknummer
+        """)
+        rijen = cursor.fetchall()
+
+    resultaat = []
+    for (teelt_id, code, vaknummer, start, half_datum, half_lengte,
+         oogst_datum, eind_lengte, gewicht, rijpheid, aantal_planten) in rijen:
+        resultaat.append({
+            "id": teelt_id,
+            "code": code,
+            "vaknummer": vaknummer,
+            "datum_teelt_start": start,
+            "datum_half": half_datum,
+            "lengte_half": half_lengte,
+            "datum_oogst": oogst_datum,
+            "lengte_eind": eind_lengte,
+            "oogstgewicht": gewicht,
+            "rijpheid": rijpheid,
+            "aantal_planten": aantal_planten,
+        })
+    return resultaat
+
+
 def get_teelt_by_id(teelt_id):
     """Geeft alle gegevens van één teelt terug als dict, of None als niet gevonden."""
     with get_connection() as conn:
