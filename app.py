@@ -765,8 +765,14 @@ with tab_klimaat:
 
     if klimaat_csv is not None:
         try:
-            aantal_verwerkt = verwerk_klimaat_csv(klimaat_csv)
-            st.success(f"✅ {aantal_verwerkt} afdeling-weken verwerkt en opgeslagen.")
+            aantal_verwerkt, aantal_overgeslagen = verwerk_klimaat_csv(klimaat_csv)
+            melding = f"✅ {aantal_verwerkt} afdeling-weken verwerkt en opgeslagen."
+            if aantal_overgeslagen:
+                melding += (
+                    f" {aantal_overgeslagen} nog niet afgeronde afdeling-weken zijn overgeslagen "
+                    "(einddatum ligt nog niet in het verleden)."
+                )
+            st.success(melding)
         except Exception as e:
             st.error(f"❌ Kon de CSV niet verwerken: {e}")
 

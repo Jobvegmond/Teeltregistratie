@@ -789,7 +789,10 @@ def verwerk_klimaat_csv(bestand):
     """
     Leest een klimaatcomputer-CSV in (tab- of puntkomma-gescheiden, decimale
     komma) en zet de weekregels om naar rijen in klimaatdata_week, per
-    afdeling (1-4). Geeft het aantal verwerkte afdeling-weken terug.
+    afdeling (1-4). Weken die nog niet helemaal voorbij zijn (einddatum
+    vandaag of later) worden overgeslagen, want die staan al wel in de
+    export maar zijn nog niet compleet. Geeft (aantal verwerkte
+    afdeling-weken, aantal overgeslagen onvolledige afdeling-weken) terug.
     """
     try:
         df = pd.read_csv(bestand, sep=None, engine="python", decimal=",")
@@ -805,6 +808,11 @@ def verwerk_klimaat_csv(bestand):
     df["datum_van"] = pd.to_datetime(df["startdate"], dayfirst=True, format="mixed").dt.date
     df["datum_tot"] = pd.to_datetime(df["enddate"], dayfirst=True, format="mixed").dt.date
     df["value"] = pd.to_numeric(df["value"], errors="coerce")
+
+    alle_weken = df[["idx_1", "datum_van", "datum_tot"]].drop_duplicates()
+    df = df[df["datum_tot"] < date.today()]
+    volledige_weken = df[["idx_1", "datum_van", "datum_tot"]].drop_duplicates()
+    overgeslagen = len(alle_weken) - len(volledige_weken)
 
     relevante_labels = [KLIMAAT_TEMP_LABEL, KLIMAAT_RV_LABEL] + KLIMAAT_STRALING_LABELS
     df = df[df["label"].isin(relevante_labels)]
@@ -822,7 +830,7 @@ def verwerk_klimaat_csv(bestand):
         upsert_klimaatdata_week(int(afdeling), datum_van, datum_tot, gem_temperatuur, gem_rv, stralingssom_week)
         verwerkt += 1
 
-    return verwerkt
+    return verwerkt, overgeslagen
 
 
 def get_klimaat_voor_periode(afdeling, datum_start, datum_eind):
