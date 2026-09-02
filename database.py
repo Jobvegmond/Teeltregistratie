@@ -226,6 +226,18 @@ def init_db():
             )
         """)
 
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS wijzigingenlog (
+                id SERIAL PRIMARY KEY,
+                tijdstip TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                gebruiker TEXT,
+                actie TEXT NOT NULL,
+                entiteit TEXT NOT NULL,
+                entiteit_id TEXT,
+                omschrijving TEXT
+            )
+        """)
+
         # Migratie: voeg ontbrekende kolommen toe aan bestaande databases.
         cursor.execute("ALTER TABLE teelten ADD COLUMN IF NOT EXISTS rijpheid TEXT")
         cursor.execute("ALTER TABLE teelten ADD COLUMN IF NOT EXISTS aantal_planten INTEGER")
@@ -262,6 +274,45 @@ def init_db():
             cursor.execute("UPDATE teelten SET code = %s WHERE id = %s", (code, teelt_id))
 
         conn.commit()
+
+
+# --- WIJZIGINGENLOG ---
+
+def log_wijziging(gebruiker, actie, entiteit, entiteit_id=None, omschrijving=None):
+    """
+    Legt één regel vast in het logboek: wie (gebruiker) wat deed (actie,
+    bijv. 'aangemaakt'/'gewijzigd'/'verwijderd'/'geupload') op welk record
+    (entiteit + entiteit_id), met een leesbare omschrijving. Faalt een
+    logregel om wat voor reden dan ook, dan mag dat de eigenlijke
+    databasewijziging niet blokkeren.
+    """
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO wijzigingenlog (gebruiker, actie, entiteit, entiteit_id, omschrijving)
+                VALUES (%s, %s, %s, %s, %s)
+            """, (
+                gebruiker, actie, entiteit,
+                str(entiteit_id) if entiteit_id is not None else None,
+                omschrijving,
+            ))
+            conn.commit()
+    except psycopg2.Error:
+        pass
+
+
+def get_wijzigingenlog(limiet=300):
+    """Geeft de meest recente logregels terug (nieuwste eerst)."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT tijdstip, gebruiker, actie, entiteit, entiteit_id, omschrijving
+            FROM wijzigingenlog
+            ORDER BY tijdstip DESC
+            LIMIT %s
+        """, (limiet,))
+        return cursor.fetchall()
 
 
 # --- TEELTVAKKEN ---
@@ -304,7 +355,7 @@ def get_alle_teeltvakken():
 
 # --- TEELTEN ---
 
-def start_nieuwe_teelt(vaknummer, datum_teelt_start, aantal_planten=None, naam=None):
+def start_nieuwe_teelt(vaknummer, datum_teelt_start, aantal_planten=None, naam=None, gebruiker=None):
     """
     Start een nieuwe teelt in een teeltvak (op basis van vaknummer 1-39).
     Maakt het teeltvak aan indien het nog niet bestaat.
@@ -324,6 +375,12 @@ def start_nieuwe_teelt(vaknummer, datum_teelt_start, aantal_planten=None, naam=N
         """, (teeltvak_id, str(datum_teelt_start), aantal_planten, code))
         nieuwe_teelt_id = cursor.fetchone()[0]
         conn.commit()
+
+    log_wijziging(
+        gebruiker, "aangemaakt", "teelt", nieuwe_teelt_id,
+        f"Nieuwe teelt gestart in vak {vaknummer} op {datum_teelt_start} "
+        f"(code {code}, {aantal_planten or 0} planten)"
+    )
 
     return nieuwe_teelt_id, code
 
@@ -355,7 +412,7 @@ def get_lopende_teelten():
     return resultaat
 
 
-def update_halverwege(teelt_id, datum_half, lengte_half):
+def update_halverwege(teelt_id, datum_half, lengte_half, gebruiker=None):
     """Slaat de halverwege-meting op voor een specifieke teelt."""
     with get_connection() as conn:
         cursor = conn.cursor()
@@ -366,8 +423,13 @@ def update_halverwege(teelt_id, datum_half, lengte_half):
         """, (str(datum_half), lengte_half, teelt_id))
         conn.commit()
 
+    log_wijziging(
+        gebruiker, "gewijzigd", "teelt", teelt_id,
+        f"Florgib lengte {lengte_half} cm geregistreerd op {datum_half}"
+    )
 
-def update_oogst(teelt_id, lengte_eind, oogstgewicht, rijpheid=None):
+
+def update_oogst(teelt_id, lengte_eind, oogstgewicht, rijpheid=None, gebruiker=None):
     """
     Slaat lengte, gewicht en rijpheid op voor een specifieke teelt.
     Raakt bewust de oogstdatum niet aan: het afronden van een teelt gebeurt
@@ -382,8 +444,13 @@ def update_oogst(teelt_id, lengte_eind, oogstgewicht, rijpheid=None):
         """, (lengte_eind, oogstgewicht, rijpheid, teelt_id))
         conn.commit()
 
+    log_wijziging(
+        gebruiker, "gewijzigd", "teelt", teelt_id,
+        f"Oogstgegevens geregistreerd: lengte {lengte_eind} cm, gewicht {oogstgewicht} g, rijpheid {rijpheid}"
+    )
 
-def markeer_teelt_afgerond(teelt_id, datum_oogst):
+
+def markeer_teelt_afgerond(teelt_id, datum_oogst, gebruiker=None):
     """
     Markeert een teelt als afgerond door de oogstdatum te zetten, zonder de
     (eventueel nog onbekende) eindstand-velden lengte/gewicht/rijpheid aan te passen.
@@ -395,6 +462,8 @@ def markeer_teelt_afgerond(teelt_id, datum_oogst):
             (str(datum_oogst), teelt_id)
         )
         conn.commit()
+
+    log_wijziging(gebruiker, "gewijzigd", "teelt", teelt_id, f"Teelt afgerond op {datum_oogst}")
 
 
 def get_alle_teelten_voor_selectie():
@@ -501,7 +570,7 @@ def get_teelt_by_id(teelt_id):
 
 def update_teelt_volledig(teelt_id, datum_teelt_start, datum_half, lengte_half,
                            datum_oogst, lengte_eind, oogstgewicht, rijpheid=None,
-                           aantal_planten=None, vaknummer=None):
+                           aantal_planten=None, vaknummer=None, gebruiker=None):
     """Overschrijft alle velden van een bestaande teelt (gebruikt bij handmatige correctie)."""
     code = genereer_teelt_code(datum_teelt_start, vaknummer) if vaknummer else None
 
@@ -527,27 +596,49 @@ def update_teelt_volledig(teelt_id, datum_teelt_start, datum_half, lengte_half,
         ))
         conn.commit()
 
+    log_wijziging(
+        gebruiker, "gewijzigd", "teelt", teelt_id,
+        f"Volledige correctie: start {datum_teelt_start}, half {datum_half or '-'} "
+        f"({lengte_half or '-'} cm), oogst {datum_oogst or '-'} ({lengte_eind or '-'} cm, "
+        f"{oogstgewicht or '-'} g, rijpheid {rijpheid or '-'}), {aantal_planten or '-'} planten"
+    )
 
-def delete_teelt(teelt_id):
+
+def delete_teelt(teelt_id, gebruiker=None):
     """Verwijdert een teelt permanent, inclusief de bijbehorende oogstregistraties."""
+    teelt = get_teelt_by_id(teelt_id)
+
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("DELETE FROM oogstregistraties WHERE teelt_id = %s", (teelt_id,))
         cursor.execute("DELETE FROM teelten WHERE id = %s", (teelt_id,))
         conn.commit()
 
+    if teelt:
+        omschrijving = f"Teelt verwijderd: vak {teelt['vaknummer']}, code {teelt['code'] or '-'}"
+    else:
+        omschrijving = "Teelt verwijderd"
+    log_wijziging(gebruiker, "verwijderd", "teelt", teelt_id, omschrijving)
+
 
 # --- OOGSTREGISTRATIES (EMMERS) ---
 
-def voeg_oogstregistratie_toe(teelt_id, datum, aantal_emmers):
+def voeg_oogstregistratie_toe(teelt_id, datum, aantal_emmers, gebruiker=None):
     """Voegt een oogstmoment (aantal emmers, 100 stelen per emmer) toe aan een teelt."""
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
             INSERT INTO oogstregistraties (teelt_id, datum, aantal_emmers)
             VALUES (%s, %s, %s)
+            RETURNING id
         """, (teelt_id, str(datum), aantal_emmers))
+        registratie_id = cursor.fetchone()[0]
         conn.commit()
+
+    log_wijziging(
+        gebruiker, "aangemaakt", "oogstregistratie", registratie_id,
+        f"{aantal_emmers:g} emmers geregistreerd op {datum} voor teelt {teelt_id}"
+    )
 
 
 def get_oogstregistraties_voor_teelt(teelt_id):
@@ -563,7 +654,7 @@ def get_oogstregistraties_voor_teelt(teelt_id):
         return cursor.fetchall()
 
 
-def wijzig_oogstregistratie(registratie_id, datum, aantal_emmers):
+def wijzig_oogstregistratie(registratie_id, datum, aantal_emmers, gebruiker=None):
     """Past de datum en het aantal emmers van een bestaand oogstmoment aan."""
     with get_connection() as conn:
         cursor = conn.cursor()
@@ -573,13 +664,30 @@ def wijzig_oogstregistratie(registratie_id, datum, aantal_emmers):
         )
         conn.commit()
 
+    log_wijziging(
+        gebruiker, "gewijzigd", "oogstregistratie", registratie_id,
+        f"Aangepast naar {aantal_emmers:g} emmers op {datum}"
+    )
 
-def verwijder_oogstregistratie(registratie_id):
+
+def verwijder_oogstregistratie(registratie_id, gebruiker=None):
     """Verwijdert een enkel oogstmoment."""
     with get_connection() as conn:
         cursor = conn.cursor()
+        cursor.execute(
+            "SELECT teelt_id, datum, aantal_emmers FROM oogstregistraties WHERE id = %s",
+            (registratie_id,)
+        )
+        bestaand = cursor.fetchone()
         cursor.execute("DELETE FROM oogstregistraties WHERE id = %s", (registratie_id,))
         conn.commit()
+
+    if bestaand:
+        teelt_id, datum, aantal_emmers = bestaand
+        omschrijving = f"{aantal_emmers:g} emmers op {datum} verwijderd (teelt {teelt_id})"
+    else:
+        omschrijving = "Oogstregistratie verwijderd"
+    log_wijziging(gebruiker, "verwijderd", "oogstregistratie", registratie_id, omschrijving)
 
 
 def get_totaal_emmers_per_teelt():
@@ -618,12 +726,12 @@ def get_gebruikers_credentials():
     return {"usernames": usernames}
 
 
-def voeg_gebruiker_toe(username, naam, wachtwoord_hash, email=None):
+def voeg_gebruiker_toe(username, naam, wachtwoord_hash, email=None, gebruiker=None):
     """
     Voegt een gebruiker toe of werkt een bestaande bij (op username).
     Het wachtwoord moet al gehasht zijn, bijv. met
     streamlit_authenticator.Hasher.hash(...). Er wordt nooit een wachtwoord in
-    platte tekst opgeslagen.
+    platte tekst opgeslagen (ook niet in het wijzigingenlog).
     """
     username = username.strip().lower()
     with get_connection() as conn:
@@ -638,13 +746,21 @@ def voeg_gebruiker_toe(username, naam, wachtwoord_hash, email=None):
         """, (username, naam, wachtwoord_hash, email))
         conn.commit()
 
+    log_wijziging(
+        gebruiker, "aangemaakt/gewijzigd", "gebruiker", username,
+        f"Gebruiker '{username}' ({naam}) aangemaakt of bijgewerkt"
+    )
 
-def verwijder_gebruiker(username):
+
+def verwijder_gebruiker(username, gebruiker=None):
     """Verwijdert een gebruiker."""
+    username = username.strip().lower()
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM gebruikers WHERE username = %s", (username.strip().lower(),))
+        cursor.execute("DELETE FROM gebruikers WHERE username = %s", (username,))
         conn.commit()
+
+    log_wijziging(gebruiker, "verwijderd", "gebruiker", username, f"Gebruiker '{username}' verwijderd")
 
 
 def get_alle_gebruikers():
@@ -785,7 +901,7 @@ def upsert_klimaatdata_week(afdeling, datum_van, datum_tot, gem_temperatuur, gem
         conn.commit()
 
 
-def verwerk_klimaat_csv(bestand):
+def verwerk_klimaat_csv(bestand, gebruiker=None):
     """
     Leest een klimaatcomputer-CSV in (tab- of puntkomma-gescheiden, decimale
     komma) en zet de weekregels om naar rijen in klimaatdata_week, per
@@ -829,6 +945,11 @@ def verwerk_klimaat_csv(bestand):
 
         upsert_klimaatdata_week(int(afdeling), datum_van, datum_tot, gem_temperatuur, gem_rv, stralingssom_week)
         verwerkt += 1
+
+    log_wijziging(
+        gebruiker, "geupload", "klimaatdata_csv", None,
+        f"{verwerkt} afdeling-weken verwerkt, {overgeslagen} overgeslagen (nog niet afgerond)"
+    )
 
     return verwerkt, overgeslagen
 

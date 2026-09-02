@@ -32,6 +32,7 @@ from database import (
     get_teeltduur,
     get_alle_teelten_detail,
     get_isojaar_week,
+    get_wijzigingenlog,
 )
 
 # --- PAGINA-INSTELLINGEN ---
@@ -119,6 +120,12 @@ if _auth_status is None:
 st.sidebar.caption(f"👤 Ingelogd als {st.session_state.get('name')}")
 authenticator.logout("Uitloggen", location="sidebar")
 
+
+def huidige_gebruiker():
+    """Identificeert de ingelogde gebruiker voor het wijzigingenlog."""
+    return st.session_state.get("username") or st.session_state.get("name")
+
+
 RIJPHEID_OPTIES = [1, 2, 3, 4]
 
 
@@ -192,10 +199,10 @@ def toon_oogstregistraties_beheer(teelt_id, teelt_info):
             label_visibility="collapsed",
         )
         if col_opslaan.button("💾", key=f"save_emmer_{reg_id}", help="Wijziging opslaan"):
-            wijzig_oogstregistratie(reg_id, reg_datum, nieuw_aantal)
+            wijzig_oogstregistratie(reg_id, reg_datum, nieuw_aantal, gebruiker=huidige_gebruiker())
             st.rerun()
         if col_verwijder.button("🗑️", key=f"del_emmer_{reg_id}", help="Oogstmoment verwijderen"):
-            verwijder_oogstregistratie(reg_id)
+            verwijder_oogstregistratie(reg_id, gebruiker=huidige_gebruiker())
             st.rerun()
 
 # Zijbalk voor invoer
@@ -243,6 +250,7 @@ if actie == "1. Nieuwe teelt registreren":
                     int(vaknummer),
                     datum_teelt_start,
                     aantal_planten if aantal_planten else None,
+                    gebruiker=huidige_gebruiker(),
                 )
                 st.sidebar.success(
                     f"✅ Vak {int(vaknummer)} gestart op {format_datum(datum_teelt_start)} (week {week_start}) "
@@ -288,7 +296,7 @@ elif actie == "2. Florgib lengte registreren":
                 for label in geselecteerde_labels:
                     geselecteerd_id = keuzes[label]
                     try:
-                        update_halverwege(geselecteerd_id, datum_half, lengte_half)
+                        update_halverwege(geselecteerd_id, datum_half, lengte_half, gebruiker=huidige_gebruiker())
                         successen.append(f"✅ {label}")
                     except Exception as e:
                         fouten.append(f"❌ {label}: {e}")
@@ -346,9 +354,9 @@ elif actie == "3. Oogst registeren":
 
                 if submit_emmers:
                     if aantal_emmers > 0:
-                        voeg_oogstregistratie_toe(uitval_id, datum_emmers, aantal_emmers)
+                        voeg_oogstregistratie_toe(uitval_id, datum_emmers, aantal_emmers, gebruiker=huidige_gebruiker())
                         if laatste_emmers:
-                            markeer_teelt_afgerond(uitval_id, datum_emmers)
+                            markeer_teelt_afgerond(uitval_id, datum_emmers, gebruiker=huidige_gebruiker())
                             st.success(
                                 f"✅ {aantal_emmers} emmers geregistreerd op {format_datum(datum_emmers)} "
                                 "- teelt is gemarkeerd als afgerond."
@@ -401,7 +409,10 @@ elif actie == "3. Oogst registeren":
 
                     for label in geselecteerde_labels:
                         try:
-                            update_oogst(keuzes_eind[label], lengte_eind, oogstgewicht, rijpheid_tekst)
+                            update_oogst(
+                                keuzes_eind[label], lengte_eind, oogstgewicht, rijpheid_tekst,
+                                gebruiker=huidige_gebruiker(),
+                            )
                             successen.append(f"✅ {label}")
                         except Exception as e:
                             fouten.append(f"❌ {label}: {e}")
@@ -514,6 +525,7 @@ elif actie == "4. Registratie wijzigen of verwijderen":
                         rijpheid_bereik_naar_tekst(nieuwe_rijpheid_bereik) if oogst_ingevuld else None,
                         nieuw_aantal_planten if nieuw_aantal_planten else None,
                         huidige["vaknummer"],
+                        gebruiker=huidige_gebruiker(),
                     )
                     st.sidebar.success(f"✅ '{huidige['teeltvak_naam']}' bijgewerkt!")
                     st.rerun()
@@ -535,15 +547,15 @@ elif actie == "4. Registratie wijzigen of verwijderen":
             key="bevestig_verwijderen"
         )
         if st.sidebar.button("🗑️ Verwijder deze registratie", disabled=not bevestig_verwijderen):
-            delete_teelt(geselecteerd_id)
+            delete_teelt(geselecteerd_id, gebruiker=huidige_gebruiker())
             st.sidebar.success(f"🗑️ '{geselecteerd_label}' is verwijderd.")
             st.rerun()
     else:
         st.sidebar.info("Er zijn nog geen registraties om te wijzigen.")
 
 # --- HOOFDSCHERM: TABBLADEN ---
-tab_overzicht, tab_detail, tab_klimaat, tab_stats, tab_help = st.tabs([
-    "📊 Overzicht", "🔍 Teelt-detail", "🌡️ Klimaatdata", "📈 Statistieken", "ℹ️ Hoe dit werkt",
+tab_overzicht, tab_detail, tab_klimaat, tab_stats, tab_log, tab_help = st.tabs([
+    "📊 Overzicht", "🔍 Teelt-detail", "🌡️ Klimaatdata", "📈 Statistieken", "🧾 Logboek", "ℹ️ Hoe dit werkt",
 ])
 
 kolommen, rijen = get_overzicht_dataframe()
@@ -765,7 +777,7 @@ with tab_klimaat:
 
     if klimaat_csv is not None:
         try:
-            aantal_verwerkt, aantal_overgeslagen = verwerk_klimaat_csv(klimaat_csv)
+            aantal_verwerkt, aantal_overgeslagen = verwerk_klimaat_csv(klimaat_csv, gebruiker=huidige_gebruiker())
             melding = f"✅ {aantal_verwerkt} afdeling-weken verwerkt en opgeslagen."
             if aantal_overgeslagen:
                 melding += (
@@ -813,6 +825,39 @@ with tab_stats:
             col3.metric("Longest", f"{maximum:.0f} dagen")
     else:
         st.info("Geen data beschikbaar voor statistieken.")
+
+# --- LOGBOEK ---
+with tab_log:
+    st.subheader("🧾 Logboek")
+    st.caption("Wie wat wanneer heeft aangemaakt, gewijzigd of verwijderd — nieuwste bovenaan.")
+
+    limiet_log = st.number_input(
+        "Aantal regels tonen", min_value=25, max_value=2000, value=300, step=25, key="log_limiet"
+    )
+    log_rijen = get_wijzigingenlog(limiet=int(limiet_log))
+
+    if log_rijen:
+        df_log = pd.DataFrame(
+            log_rijen,
+            columns=["Tijdstip", "Gebruiker", "Actie", "Type", "ID", "Omschrijving"]
+        )
+        df_log["Tijdstip"] = df_log["Tijdstip"].apply(lambda t: t.strftime("%d-%m-%y %H:%M:%S"))
+        df_log["Gebruiker"] = df_log["Gebruiker"].fillna("onbekend")
+
+        gebruikers_log = ["Alle gebruikers"] + sorted(df_log["Gebruiker"].unique())
+        types_log = ["Alle types"] + sorted(df_log["Type"].unique())
+        col_filter1, col_filter2 = st.columns(2)
+        gekozen_gebruiker = col_filter1.selectbox("Filter op gebruiker", gebruikers_log, key="log_filter_gebruiker")
+        gekozen_type = col_filter2.selectbox("Filter op type", types_log, key="log_filter_type")
+
+        if gekozen_gebruiker != "Alle gebruikers":
+            df_log = df_log[df_log["Gebruiker"] == gekozen_gebruiker]
+        if gekozen_type != "Alle types":
+            df_log = df_log[df_log["Type"] == gekozen_type]
+
+        st.dataframe(df_log, use_container_width=True, hide_index=True)
+    else:
+        st.info("Nog geen logregels.")
 
 # --- EXTRA INFO ---
 with tab_help:

@@ -32,6 +32,11 @@ with contextlib.redirect_stderr(io.StringIO()):
 import database  # noqa: E402
 
 
+def _cli_gebruiker():
+    """Identificeert wie dit CLI-commando draait, voor het wijzigingenlog."""
+    return f"cli:{getpass.getuser()}"
+
+
 def _toevoegen(args):
     if len(args) < 2:
         print('Gebruik: python beheer_gebruikers.py toevoegen <gebruikersnaam> "<Volledige naam>" [email]')
@@ -49,7 +54,7 @@ def _toevoegen(args):
 
     database.init_db()
     wachtwoord_hash = stauth.Hasher.hash(wachtwoord)
-    database.voeg_gebruiker_toe(username, naam, wachtwoord_hash, email)
+    database.voeg_gebruiker_toe(username, naam, wachtwoord_hash, email, gebruiker=_cli_gebruiker())
     print(f"Gebruiker '{username.strip().lower()}' opgeslagen.")
 
 
@@ -68,7 +73,7 @@ def _verwijderen(args):
         print("Gebruik: python beheer_gebruikers.py verwijderen <gebruikersnaam>")
         return
     database.init_db()
-    database.verwijder_gebruiker(args[0])
+    database.verwijder_gebruiker(args[0], gebruiker=_cli_gebruiker())
     print(f"Gebruiker '{args[0].strip().lower()}' verwijderd (indien aanwezig).")
 
 
