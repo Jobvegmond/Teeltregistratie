@@ -802,6 +802,23 @@ def get_klimaat_voor_periode(afdeling, datum_start, datum_eind):
     return {"gem_temperatuur": rij[0], "gem_rv": rij[1], "gem_stralingssom_dag": rij[2]}
 
 
+def get_klimaatdata_weken_voor_periode(afdeling, datum_start, datum_eind):
+    """
+    Geeft de losse weekregels terug (voor grafieken) die overlappen met de
+    opgegeven periode, gesorteerd op datum. Retourneert een lijst van tuples
+    (datum_van, gem_temperatuur, gem_rv, stralingssom_dag).
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT datum_van, gem_temperatuur, gem_rv, stralingssom_dag
+            FROM klimaatdata_week
+            WHERE afdeling = %s AND datum_van <= %s AND datum_tot >= %s
+            ORDER BY datum_van
+        """, (afdeling, str(datum_eind), str(datum_start)))
+        return cursor.fetchall()
+
+
 def get_klimaat_overzicht_dataframe():
     """
     Koppelt de opgeslagen klimaatdata aan elke teelt (via vaknummer ->

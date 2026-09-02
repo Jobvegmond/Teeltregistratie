@@ -26,6 +26,8 @@ from database import (
     get_gebruikers_credentials,
     verwerk_klimaat_csv,
     get_klimaat_overzicht_dataframe,
+    afdeling_van_vaknummer,
+    get_klimaatdata_weken_voor_periode,
 )
 
 # --- PAGINA-INSTELLINGEN ---
@@ -140,6 +142,47 @@ def standaard_aantal_stelen(vaknummer):
     if 2 <= vaknummer <= 38:
         return 32688
     return 0
+
+
+def toon_oogstregistraties_beheer(teelt_id, teelt_info):
+    """
+    Toont de al geregistreerde oogstmomenten (emmers) voor een teelt: totaal,
+    uitvalpercentage en per moment de mogelijkheid om het aan te passen (💾)
+    of te verwijderen (🗑️). Wordt zowel gebruikt bij het registreren van
+    oogst (voor lopende teelten) als bij het wijzigen van een teelt (ook
+    voor afgeronde teelten, om het aantal emmers achteraf te corrigeren).
+    """
+    registraties = get_oogstregistraties_voor_teelt(teelt_id)
+    if not registraties:
+        st.info("Nog geen oogstmomenten geregistreerd voor deze teelt.")
+        return
+
+    totaal_emmers = sum(r[2] for r in registraties)
+    totaal_stelen = totaal_emmers * 100
+    st.markdown(f"**Totaal tot nu toe:** {totaal_emmers:g} emmers ({totaal_stelen:g} stelen)")
+
+    if teelt_info.get("aantal_planten"):
+        uitval_pct = (
+            (teelt_info["aantal_planten"] - totaal_stelen) / teelt_info["aantal_planten"] * 100
+        )
+        st.markdown(f"**Uitval t.o.v. {teelt_info['aantal_planten']} planten:** {uitval_pct:.2f}%")
+
+    st.caption("Pas een oogstmoment aan met 💾, of verwijder het met 🗑️.")
+    for reg_id, reg_datum, reg_emmers in registraties:
+        col_datum, col_aantal, col_opslaan, col_verwijder = st.columns([2, 2, 1, 1])
+        col_datum.write(format_datum(reg_datum))
+        nieuw_aantal = col_aantal.number_input(
+            "Aantal emmers",
+            min_value=0, step=1, value=int(reg_emmers),
+            key=f"edit_emmer_{reg_id}",
+            label_visibility="collapsed",
+        )
+        if col_opslaan.button("💾", key=f"save_emmer_{reg_id}", help="Wijziging opslaan"):
+            wijzig_oogstregistratie(reg_id, reg_datum, nieuw_aantal)
+            st.rerun()
+        if col_verwijder.button("🗑️", key=f"del_emmer_{reg_id}", help="Oogstmoment verwijderen"):
+            verwijder_oogstregistratie(reg_id)
+            st.rerun()
 
 # Zijbalk voor invoer
 st.sidebar.header("Registratie bijwerken")
@@ -259,16 +302,10 @@ elif actie == "3. Oogst registeren":
 
     # --- TABBLAD: UITVAL (EMMERS, 100 STELEN PER EMMER) ---
     with tab_uitval:
-        alle_teelten_uitval = get_alle_teelten_voor_selectie()
+        lopende_uitval = get_lopende_teelten()
 
-        if alle_teelten_uitval:
-            # Afgeronde teelten blijven kiesbaar zodat je de geoogste emmers
-            # ook achteraf nog handmatig kunt corrigeren.
-            lopende_ids = {teelt_id for teelt_id, _ in get_lopende_teelten()}
-            keuzes_uitval = {}
-            for teelt_id, label in alle_teelten_uitval:
-                weergave = label if teelt_id in lopende_ids else f"{label} · ✓ afgerond"
-                keuzes_uitval[weergave] = teelt_id
+        if lopende_uitval:
+            keuzes_uitval = {label: teelt_id for teelt_id, label in lopende_uitval}
 
             uitval_label = st.selectbox(
                 "Kies de teelt",
@@ -277,17 +314,11 @@ elif actie == "3. Oogst registeren":
             )
             uitval_id = keuzes_uitval[uitval_label]
             huidige_uitval = get_teelt_by_id(uitval_id)
-            is_afgerond = huidige_uitval["datum_oogst"] is not None
 
             st.caption(
                 f"Vak {huidige_uitval['vaknummer']} · code {huidige_uitval['code'] or '-'}"
                 + (f" · {huidige_uitval['aantal_planten']} planten" if huidige_uitval["aantal_planten"] else "")
             )
-            if is_afgerond:
-                st.info(
-                    f"Deze teelt is afgerond op {format_datum(huidige_uitval['datum_oogst'])}. "
-                    "Je kunt de geoogste emmers hieronder nog toevoegen, aanpassen of verwijderen."
-                )
 
             with st.form("emmers_form"):
                 datum_emmers = st.date_input(
@@ -295,14 +326,9 @@ elif actie == "3. Oogst registeren":
                 )
                 st.caption(f"📅 Weeknummer: {get_weeknummer(datum_emmers)}")
                 aantal_emmers = st.number_input("Aantal emmers", min_value=0, step=1)
-                if is_afgerond:
-                    laatste_emmers = False
-                else:
-                    laatste_emmers = st.checkbox("Dit waren de laatste emmers van dit vak (teelt afronden)")
+                laatste_emmers = st.checkbox("Dit waren de laatste emmers van dit vak (teelt afronden)")
 
-                submit_emmers = st.form_submit_button(
-                    "Emmers toevoegen" if is_afgerond else "Oogstmoment registreren"
-                )
+                submit_emmers = st.form_submit_button("Oogstmoment registreren")
 
                 if submit_emmers:
                     if aantal_emmers > 0:
@@ -321,41 +347,12 @@ elif actie == "3. Oogst registeren":
                     else:
                         st.warning("Vul een aantal emmers groter dan 0 in.")
 
-            # Overzicht van reeds geregistreerde oogstmomenten voor deze teelt
-            registraties = get_oogstregistraties_voor_teelt(uitval_id)
-            if registraties:
-                totaal_emmers = sum(r[2] for r in registraties)
-                totaal_stelen = totaal_emmers * 100
-                st.markdown(f"**Totaal tot nu toe:** {totaal_emmers:g} emmers ({totaal_stelen:g} stelen)")
-
-                if huidige_uitval["aantal_planten"]:
-                    uitval_pct = (
-                        (huidige_uitval["aantal_planten"] - totaal_stelen) / huidige_uitval["aantal_planten"] * 100
-                    )
-                    st.markdown(
-                        f"**Uitval t.o.v. {huidige_uitval['aantal_planten']} planten:** {uitval_pct:.2f}%"
-                    )
-
-                st.caption("Pas een oogstmoment aan met 💾, of verwijder het met 🗑️.")
-                for reg_id, reg_datum, reg_emmers in registraties:
-                    col_datum, col_aantal, col_opslaan, col_verwijder = st.columns([2, 2, 1, 1])
-                    col_datum.write(format_datum(reg_datum))
-                    nieuw_aantal = col_aantal.number_input(
-                        "Aantal emmers",
-                        min_value=0, step=1, value=int(reg_emmers),
-                        key=f"edit_emmer_{reg_id}",
-                        label_visibility="collapsed",
-                    )
-                    if col_opslaan.button("💾", key=f"save_emmer_{reg_id}", help="Wijziging opslaan"):
-                        wijzig_oogstregistratie(reg_id, reg_datum, nieuw_aantal)
-                        st.rerun()
-                    if col_verwijder.button("🗑️", key=f"del_emmer_{reg_id}", help="Oogstmoment verwijderen"):
-                        verwijder_oogstregistratie(reg_id)
-                        st.rerun()
-            else:
-                st.info("Nog geen oogstmomenten geregistreerd voor deze teelt.")
+            toon_oogstregistraties_beheer(uitval_id, huidige_uitval)
         else:
-            st.info("Er zijn nog geen teelten gestart. Kies eerst optie 1.")
+            st.info(
+                "Er zijn geen lopende teelten. Kies eerst optie 1, of pas het aantal emmers van een "
+                "afgeronde teelt aan via optie 4 (Registratie wijzigen of verwijderen)."
+            )
 
     # --- TABBLAD: OOGSTGEWICHT EN LENGTE ---
     with tab_eind:
@@ -509,6 +506,13 @@ elif actie == "4. Registratie wijzigen of verwijderen":
                 except Exception as e:
                     st.sidebar.error(f"❌ Fout: {e}")
 
+        # Oogstregistraties (emmers) staan hier ook, zodat je ze ook voor
+        # een afgeronde teelt nog kunt corrigeren.
+        st.sidebar.markdown("---")
+        st.sidebar.write("**🪣 Oogstregistraties (emmers)**")
+        with st.sidebar:
+            toon_oogstregistraties_beheer(geselecteerd_id, huidige)
+
         # Verwijderen staat buiten het formulier, met expliciete bevestiging
         st.sidebar.markdown("---")
         st.sidebar.write("**⚠️ Registratie verwijderen**")
@@ -523,37 +527,162 @@ elif actie == "4. Registratie wijzigen of verwijderen":
     else:
         st.sidebar.info("Er zijn nog geen registraties om te wijzigen.")
 
-# --- OVERZICHT OP HET HOOFDSCHERM ---
-st.subheader("📊 Overzicht Teelten")
+# --- HOOFDSCHERM: TABBLADEN ---
+tab_overzicht, tab_detail, tab_klimaat, tab_stats, tab_help = st.tabs([
+    "📊 Overzicht", "🔍 Teelt-detail", "🌡️ Klimaatdata", "📈 Statistieken", "ℹ️ Hoe dit werkt",
+])
 
 kolommen, rijen = get_overzicht_dataframe()
 
-if rijen:
-    # Maak een DataFrame van de rijen (zonder de ID-kolom voor display)
-    df = pd.DataFrame(rijen, columns=kolommen)
+# --- OVERZICHT ---
+with tab_overzicht:
+    st.subheader("📊 Overzicht Teelten")
 
-    # Rijen komen al gesorteerd uit de database (op code, laag naar hoog)
-    st.dataframe(df.drop(columns=['ID']), use_container_width=True)
+    if rijen:
+        # Maak een DataFrame van de rijen (zonder de ID-kolom voor display)
+        df = pd.DataFrame(rijen, columns=kolommen)
 
-    # Statistieken
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        actieve_teelten = len(df[df['Oogstdatum'] == '-'])
-        st.metric("Actieve teelten", actieve_teelten)
-    with col2:
-        afgeronde_teelten = len(df[df['Oogstdatum'] != '-'])
-        st.metric("Afgeronde teelten", afgeronde_teelten)
-    with col3:
-        gem_duur = df[df['Teeltduur (dagen)'] != '-']['Teeltduur (dagen)'].astype(float).mean()
-        if not pd.isna(gem_duur):
-            st.metric("Gem. teeltduur (dagen)", f"{gem_duur:.0f}")
+        # Rijen komen al gesorteerd uit de database (op code, laag naar hoog)
+        st.dataframe(df.drop(columns=['ID']), use_container_width=True)
+
+        # Statistieken
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            actieve_teelten = len(df[df['Oogstdatum'] == '-'])
+            st.metric("Actieve teelten", actieve_teelten)
+        with col2:
+            afgeronde_teelten = len(df[df['Oogstdatum'] != '-'])
+            st.metric("Afgeronde teelten", afgeronde_teelten)
+        with col3:
+            gem_duur = df[df['Teeltduur (dagen)'] != '-']['Teeltduur (dagen)'].astype(float).mean()
+            if not pd.isna(gem_duur):
+                st.metric("Gem. teeltduur (dagen)", f"{gem_duur:.0f}")
+            else:
+                st.metric("Gem. teeltduur (dagen)", "-")
+    else:
+        st.info("Nog geen teelten geregistreerd. Gebruik de zijbalk om te beginnen.")
+
+# --- TEELT-DETAIL (GRAFISCH OVERZICHT PER TEELT) ---
+with tab_detail:
+    st.subheader("🔍 Teelt-detail")
+
+    alle_teelten_detail = get_alle_teelten_voor_selectie()
+    if alle_teelten_detail:
+        keuzes_detail = {label: teelt_id for teelt_id, label in alle_teelten_detail}
+        detail_label = st.selectbox("Kies een teelt", list(keuzes_detail.keys()), key="detail_selectie")
+        detail_id = keuzes_detail[detail_label]
+        detail = get_teelt_by_id(detail_id)
+
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Vak", detail["vaknummer"] or "-")
+        col2.metric("Code", detail["code"] or "-")
+        col3.metric("Startdatum", format_datum(detail["datum_teelt_start"]))
+        col4.metric("Status", "Afgerond" if detail["datum_oogst"] else "Lopend")
+
+        st.write("**Lengtegroei**")
+        groei_data = {}
+        if detail["lengte_half"]:
+            groei_data["Florgib (halverwege)"] = detail["lengte_half"]
+        if detail["lengte_eind"]:
+            groei_data["Eindlengte (oogst)"] = detail["lengte_eind"]
+        if groei_data:
+            st.bar_chart(pd.Series(groei_data, name="Lengte (cm)"))
         else:
-            st.metric("Gem. teeltduur (dagen)", "-")
-else:
-    st.info("Nog geen teelten geregistreerd. Gebruik de zijbalk om te beginnen.")
+            st.caption("Nog geen lengtemetingen voor deze teelt.")
+
+        st.write("**Oogst per moment (emmers)**")
+        registraties_detail = get_oogstregistraties_voor_teelt(detail_id)
+        if registraties_detail:
+            df_oogst = pd.DataFrame(registraties_detail, columns=["id", "datum", "emmers"])
+            df_oogst["datum"] = df_oogst["datum"].apply(format_datum)
+            df_oogst = df_oogst.set_index("datum")
+            st.bar_chart(df_oogst["emmers"])
+            st.line_chart(df_oogst["emmers"].cumsum().rename("Cumulatief aantal emmers"))
+        else:
+            st.caption("Nog geen oogstmomenten geregistreerd voor deze teelt.")
+
+        st.write("**Klimaat tijdens deze teelt**")
+        afdeling_detail = afdeling_van_vaknummer(detail["vaknummer"])
+        if afdeling_detail:
+            eind_detail = detail["datum_oogst"] or str(datetime.today().date())
+            klimaat_weken = get_klimaatdata_weken_voor_periode(
+                afdeling_detail, detail["datum_teelt_start"], eind_detail
+            )
+            if klimaat_weken:
+                df_klimaat_detail = pd.DataFrame(
+                    klimaat_weken,
+                    columns=["Datum", "Gem. temperatuur (°C)", "Gem. RV (%)", "Stralingssom (per dag)"]
+                )
+                df_klimaat_detail["Datum"] = df_klimaat_detail["Datum"].apply(format_datum)
+                df_klimaat_detail = df_klimaat_detail.set_index("Datum")
+                st.line_chart(df_klimaat_detail[["Gem. temperatuur (°C)"]])
+                st.line_chart(df_klimaat_detail[["Gem. RV (%)"]])
+                st.line_chart(df_klimaat_detail[["Stralingssom (per dag)"]])
+            else:
+                st.caption("Nog geen klimaatdata gekoppeld aan deze teelt-periode.")
+        else:
+            st.caption("Onbekend vaknummer; kan geen afdeling/klimaatdata bepalen.")
+    else:
+        st.info("Nog geen teelten geregistreerd.")
+
+# --- KLIMAATDATA (KLIMAATCOMPUTER-CSV) ---
+with tab_klimaat:
+    st.subheader("🌡️ Klimaatdata")
+
+    klimaat_csv = st.file_uploader(
+        "Upload de klimaatcomputer-export (.csv)",
+        type=["csv"],
+        key="klimaat_csv_upload",
+        help="Weekexport met kolommen label, pcu, type_1, idx_1, type_2, idx_2, startdate, enddate, value.",
+    )
+
+    if klimaat_csv is not None:
+        try:
+            aantal_verwerkt = verwerk_klimaat_csv(klimaat_csv)
+            st.success(f"✅ {aantal_verwerkt} afdeling-weken verwerkt en opgeslagen.")
+        except Exception as e:
+            st.error(f"❌ Kon de CSV niet verwerken: {e}")
+
+    kolommen_klimaat, rijen_klimaat = get_klimaat_overzicht_dataframe()
+    if rijen_klimaat:
+        df_klimaat = pd.DataFrame(rijen_klimaat, columns=kolommen_klimaat)
+        st.dataframe(df_klimaat, use_container_width=True)
+    else:
+        st.info(
+            "Nog geen gekoppelde klimaatdata. Upload hierboven een CSV-export uit de klimaatcomputer; "
+            "de gemiddelde temperatuur, gemiddelde RV en gemiddelde dagstralingssom worden automatisch "
+            "gekoppeld aan elke teelt op basis van vaknummer (→ afdeling) en teeltperiode."
+        )
+
+# --- STATISTIEKEN ---
+with tab_stats:
+    st.subheader("📈 Statistieken & Inzichten")
+    if rijen:
+        df_stats = pd.DataFrame(rijen, columns=kolommen)
+
+        # Teelten per vak
+        st.write("**Teelten per vak:**")
+        teelten_per_vak = df_stats['Teeltvak'].value_counts()
+        st.bar_chart(teelten_per_vak)
+
+        # Teeltduur analyse
+        df_afgerond = df_stats[df_stats['Oogstdatum'] != '-'].copy()
+        if len(df_afgerond) > 0:
+            st.write("**Teeltduur analyse (afgeronde teelten):**")
+            df_afgerond['Teeltduur (dagen)'] = pd.to_numeric(df_afgerond['Teeltduur (dagen)'], errors='coerce')
+            gemiddeld = df_afgerond['Teeltduur (dagen)'].mean()
+            minimum = df_afgerond['Teeltduur (dagen)'].min()
+            maximum = df_afgerond['Teeltduur (dagen)'].max()
+
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Gemiddeld", f"{gemiddeld:.0f} dagen")
+            col2.metric("Shortest", f"{minimum:.0f} dagen")
+            col3.metric("Longest", f"{maximum:.0f} dagen")
+    else:
+        st.info("Geen data beschikbaar voor statistieken.")
 
 # --- EXTRA INFO ---
-with st.expander("ℹ️ Hoe dit werkt"):
+with tab_help:
     st.write("""
     **Stap 1: Nieuwe teelt registreren**
     - Je vult het vaknummer (1-39) en het aantal geplante planten in
@@ -569,80 +698,30 @@ with st.expander("ℹ️ Hoe dit werkt"):
     - Deze meting wordt voor alle gekozen teelten opgeslagen
 
     **Stap 3: Oogst registeren**
-    - Tabblad 🪣 Uitval: registreer per oogstmoment het aantal emmers (100 stelen per emmer).
-      Vink "laatste emmers" aan om de teelt af te ronden. Ook afgeronde teelten blijven
-      hier kiesbaar, zodat je het aantal emmers achteraf nog kunt aanpassen (💾) of
-      verwijderen (🗑️).
+    - Tabblad 🪣 Uitval: registreer per oogstmoment het aantal emmers (100 stelen per emmer),
+      voor lopende teelten. Vink "laatste emmers" aan om de teelt af te ronden.
     - Tabblad 📏 Oogstgewicht en lengte: alleen voor teelten die nog niet zijn afgerond.
       Je vult de oogstlengte, oogstgewicht (in gram) en rijpheidsstadium in.
     - Rijpheid loopt van 1 (rauw) tot 4 (rijp); sleep de slider naar één punt voor een enkel
       stadium (bijv. "3") of laat een bereik staan voor bijv. "1-3" of "2-3"
     - Deze gegevens worden voor alle gekozen teelten opgeslagen
-    
+    - Wil je het aantal emmers van een **afgeronde** teelt achteraf corrigeren? Dat doe je bij
+      optie 4 (Registratie wijzigen of verwijderen) — daar staat dezelfde emmers-editor (💾/🗑️).
+
+    **Teelt-detail**
+    - Kies een teelt in het tabblad 🔍 Teelt-detail voor een grafisch overzicht: lengtegroei,
+      oogst per moment (en cumulatief), en het klimaat (temperatuur, RV, stralingssom) tijdens
+      de teeltperiode.
+
     **Weeknummers**
     - Elke datum toont het ISO-weeknummer (1-53)
     - Handig voor overzicht en teeltplanning
-    
+
     **Teeltduur**
     - Dit wordt automatisch berekend als start- en oogstdatum beide ingevuld zijn
     - Toont het aantal dagen van planten tot oogsten
-    
+
     **Meerdere teelten per vak**
     - Je kunt hetzelfde teeltvak meerdere keren gebruiken (bijv. lente, zomer, herfst)
     - Elke teelt is een apart record met eigen gegevens
     """)
-
-# --- HANDIGE STATISTIEKEN ---
-with st.expander("📈 Statistieken & Inzichten"):
-    if rijen:
-        kolommen_stats, rijen_stats = get_overzicht_dataframe()
-        df_stats = pd.DataFrame(rijen_stats, columns=kolommen_stats)
-        
-        # Teelten per vak
-        st.write("**Teelten per vak:**")
-        teelten_per_vak = df_stats['Teeltvak'].value_counts()
-        st.bar_chart(teelten_per_vak)
-        
-        # Teeltduur analyse
-        df_afgerond = df_stats[df_stats['Oogstdatum'] != '-'].copy()
-        if len(df_afgerond) > 0:
-            st.write("**Teeltduur analyse (afgeronde teelten):**")
-            df_afgerond['Teeltduur (dagen)'] = pd.to_numeric(df_afgerond['Teeltduur (dagen)'], errors='coerce')
-            gemiddeld = df_afgerond['Teeltduur (dagen)'].mean()
-            minimum = df_afgerond['Teeltduur (dagen)'].min()
-            maximum = df_afgerond['Teeltduur (dagen)'].max()
-            
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Gemiddeld", f"{gemiddeld:.0f} dagen")
-            col2.metric("Shortest", f"{minimum:.0f} dagen")
-            col3.metric("Longest", f"{maximum:.0f} dagen")
-    else:
-        st.info("Geen data beschikbaar voor statistieken.")
-
-# --- KLIMAATDATA (KLIMAATCOMPUTER-CSV) ---
-st.subheader("🌡️ Klimaatdata")
-
-klimaat_csv = st.file_uploader(
-    "Upload de klimaatcomputer-export (.csv)",
-    type=["csv"],
-    key="klimaat_csv_upload",
-    help="Weekexport met kolommen label, pcu, type_1, idx_1, type_2, idx_2, startdate, enddate, value.",
-)
-
-if klimaat_csv is not None:
-    try:
-        aantal_verwerkt = verwerk_klimaat_csv(klimaat_csv)
-        st.success(f"✅ {aantal_verwerkt} afdeling-weken verwerkt en opgeslagen.")
-    except Exception as e:
-        st.error(f"❌ Kon de CSV niet verwerken: {e}")
-
-kolommen_klimaat, rijen_klimaat = get_klimaat_overzicht_dataframe()
-if rijen_klimaat:
-    df_klimaat = pd.DataFrame(rijen_klimaat, columns=kolommen_klimaat)
-    st.dataframe(df_klimaat, use_container_width=True)
-else:
-    st.info(
-        "Nog geen gekoppelde klimaatdata. Upload hierboven een CSV-export uit de klimaatcomputer; "
-        "de gemiddelde temperatuur, gemiddelde RV en gemiddelde dagstralingssom worden automatisch "
-        "gekoppeld aan elke teelt op basis van vaknummer (→ afdeling) en teeltperiode."
-    )
