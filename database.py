@@ -759,8 +759,8 @@ def verwerk_klimaat_csv(bestand):
     df["idx_1"] = pd.to_numeric(df["idx_1"], errors="coerce")
     df = df[df["idx_1"].isin(KLIMAAT_GELDIGE_AFDELINGEN)]
 
-    df["datum_van"] = pd.to_datetime(df["startdate"], format="%d-%m-%Y").dt.date
-    df["datum_tot"] = pd.to_datetime(df["enddate"], format="%d-%m-%Y").dt.date
+    df["datum_van"] = pd.to_datetime(df["startdate"], dayfirst=True, format="mixed").dt.date
+    df["datum_tot"] = pd.to_datetime(df["enddate"], dayfirst=True, format="mixed").dt.date
     df["value"] = pd.to_numeric(df["value"], errors="coerce")
 
     relevante_labels = [KLIMAAT_TEMP_LABEL, KLIMAAT_RV_LABEL] + KLIMAAT_STRALING_LABELS
