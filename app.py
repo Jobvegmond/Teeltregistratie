@@ -24,6 +24,8 @@ from database import (
     verwijder_oogstregistratie,
     markeer_teelt_afgerond,
     get_gebruikers_credentials,
+    verwerk_klimaat_csv,
+    get_klimaat_overzicht_dataframe,
 )
 
 # --- PAGINA-INSTELLINGEN ---
@@ -616,3 +618,31 @@ with st.expander("📈 Statistieken & Inzichten"):
             col3.metric("Longest", f"{maximum:.0f} dagen")
     else:
         st.info("Geen data beschikbaar voor statistieken.")
+
+# --- KLIMAATDATA (KLIMAATCOMPUTER-CSV) ---
+st.subheader("🌡️ Klimaatdata")
+
+klimaat_csv = st.file_uploader(
+    "Upload de klimaatcomputer-export (.csv)",
+    type=["csv"],
+    key="klimaat_csv_upload",
+    help="Weekexport met kolommen label, pcu, type_1, idx_1, type_2, idx_2, startdate, enddate, value.",
+)
+
+if klimaat_csv is not None:
+    try:
+        aantal_verwerkt = verwerk_klimaat_csv(klimaat_csv)
+        st.success(f"✅ {aantal_verwerkt} afdeling-weken verwerkt en opgeslagen.")
+    except Exception as e:
+        st.error(f"❌ Kon de CSV niet verwerken: {e}")
+
+kolommen_klimaat, rijen_klimaat = get_klimaat_overzicht_dataframe()
+if rijen_klimaat:
+    df_klimaat = pd.DataFrame(rijen_klimaat, columns=kolommen_klimaat)
+    st.dataframe(df_klimaat, use_container_width=True)
+else:
+    st.info(
+        "Nog geen gekoppelde klimaatdata. Upload hierboven een CSV-export uit de klimaatcomputer; "
+        "de gemiddelde temperatuur, gemiddelde RV en gemiddelde dagstralingssom worden automatisch "
+        "gekoppeld aan elke teelt op basis van vaknummer (→ afdeling) en teeltperiode."
+    )
