@@ -223,10 +223,19 @@ def init_db():
                 datum TEXT NOT NULL,
                 gem_temperatuur REAL,
                 gem_rv REAL,
+                gem_temperatuur_dag REAL,
+                gem_temperatuur_nacht REAL,
+                gem_rv_dag REAL,
+                gem_rv_nacht REAL,
                 stralingssom_dag REAL,
                 UNIQUE (afdeling, datum)
             )
         """)
+        # Migratie: dag/nacht-kolommen toevoegen aan een reeds aangemaakte klimaatdata_dag.
+        cursor.execute("ALTER TABLE klimaatdata_dag ADD COLUMN IF NOT EXISTS gem_temperatuur_dag REAL")
+        cursor.execute("ALTER TABLE klimaatdata_dag ADD COLUMN IF NOT EXISTS gem_temperatuur_nacht REAL")
+        cursor.execute("ALTER TABLE klimaatdata_dag ADD COLUMN IF NOT EXISTS gem_rv_dag REAL")
+        cursor.execute("ALTER TABLE klimaatdata_dag ADD COLUMN IF NOT EXISTS gem_rv_nacht REAL")
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS wijzigingenlog (
@@ -866,7 +875,11 @@ def get_overzicht_dataframe():
 # (bijv. index 5) horen niet bij een van onze kasafdelingen en worden genegeerd.
 
 KLIMAAT_TEMP_LABEL = "Ave_24h_CompTemp"
+KLIMAAT_TEMP_DAG_LABEL = "Ave_Day_CompTemp"
+KLIMAAT_TEMP_NACHT_LABEL = "Ave_Night_CompTemp"
 KLIMAAT_RV_LABEL = "Ave_24h_CompRV"
+KLIMAAT_RV_DAG_LABEL = "Ave_Day_CompRV"
+KLIMAAT_RV_NACHT_LABEL = "Ave_Night_CompRV"
 KLIMAAT_STRALING_LABELS = ["Sum_Day_CalculatedRadiation", "Sum_Night_CalculatedRadiation"]
 KLIMAAT_GELDIGE_AFDELINGEN = {1, 2, 3, 4}
 
@@ -887,18 +900,29 @@ def afdeling_van_vaknummer(vaknummer):
     return None
 
 
-def upsert_klimaatdata_dag(afdeling, datum, gem_temperatuur, gem_rv, stralingssom_dag):
+def upsert_klimaatdata_dag(afdeling, datum, gem_temperatuur, gem_rv, stralingssom_dag,
+                            gem_temperatuur_dag=None, gem_temperatuur_nacht=None,
+                            gem_rv_dag=None, gem_rv_nacht=None):
     """Slaat één afdeling-dag klimaatgegevens op (of overschrijft de bestaande dag bij een herupload)."""
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT INTO klimaatdata_dag (afdeling, datum, gem_temperatuur, gem_rv, stralingssom_dag)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO klimaatdata_dag
+                (afdeling, datum, gem_temperatuur, gem_rv, stralingssom_dag,
+                 gem_temperatuur_dag, gem_temperatuur_nacht, gem_rv_dag, gem_rv_nacht)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (afdeling, datum)
             DO UPDATE SET gem_temperatuur = EXCLUDED.gem_temperatuur,
                           gem_rv = EXCLUDED.gem_rv,
-                          stralingssom_dag = EXCLUDED.stralingssom_dag
-        """, (afdeling, str(datum), gem_temperatuur, gem_rv, stralingssom_dag))
+                          stralingssom_dag = EXCLUDED.stralingssom_dag,
+                          gem_temperatuur_dag = EXCLUDED.gem_temperatuur_dag,
+                          gem_temperatuur_nacht = EXCLUDED.gem_temperatuur_nacht,
+                          gem_rv_dag = EXCLUDED.gem_rv_dag,
+                          gem_rv_nacht = EXCLUDED.gem_rv_nacht
+        """, (
+            afdeling, str(datum), gem_temperatuur, gem_rv, stralingssom_dag,
+            gem_temperatuur_dag, gem_temperatuur_nacht, gem_rv_dag, gem_rv_nacht,
+        ))
         conn.commit()
 
 
@@ -931,20 +955,31 @@ def verwerk_klimaat_csv(bestand, gebruiker=None):
     volledige_dagen = df[["idx_1", "datum"]].drop_duplicates()
     overgeslagen = len(alle_dagen) - len(volledige_dagen)
 
-    relevante_labels = [KLIMAAT_TEMP_LABEL, KLIMAAT_RV_LABEL] + KLIMAAT_STRALING_LABELS
+    relevante_labels = [
+        KLIMAAT_TEMP_LABEL, KLIMAAT_TEMP_DAG_LABEL, KLIMAAT_TEMP_NACHT_LABEL,
+        KLIMAAT_RV_LABEL, KLIMAAT_RV_DAG_LABEL, KLIMAAT_RV_NACHT_LABEL,
+    ] + KLIMAAT_STRALING_LABELS
     df = df[df["label"].isin(relevante_labels)]
+
+    def _eerste_waarde(groep, label):
+        reeks = groep.loc[groep["label"] == label, "value"].dropna()
+        return float(reeks.iloc[0]) if not reeks.empty else None
 
     verwerkt = 0
     for (afdeling, datum), groep in df.groupby(["idx_1", "datum"]):
-        temp = groep.loc[groep["label"] == KLIMAAT_TEMP_LABEL, "value"].dropna()
-        rv = groep.loc[groep["label"] == KLIMAAT_RV_LABEL, "value"].dropna()
         straling = groep.loc[groep["label"].isin(KLIMAAT_STRALING_LABELS), "value"].dropna()
-
-        gem_temperatuur = float(temp.iloc[0]) if not temp.empty else None
-        gem_rv = float(rv.iloc[0]) if not rv.empty else None
         stralingssom_dag = float(straling.sum()) if not straling.empty else None
 
-        upsert_klimaatdata_dag(int(afdeling), datum, gem_temperatuur, gem_rv, stralingssom_dag)
+        upsert_klimaatdata_dag(
+            int(afdeling), datum,
+            _eerste_waarde(groep, KLIMAAT_TEMP_LABEL),
+            _eerste_waarde(groep, KLIMAAT_RV_LABEL),
+            stralingssom_dag,
+            gem_temperatuur_dag=_eerste_waarde(groep, KLIMAAT_TEMP_DAG_LABEL),
+            gem_temperatuur_nacht=_eerste_waarde(groep, KLIMAAT_TEMP_NACHT_LABEL),
+            gem_rv_dag=_eerste_waarde(groep, KLIMAAT_RV_DAG_LABEL),
+            gem_rv_nacht=_eerste_waarde(groep, KLIMAAT_RV_NACHT_LABEL),
+        )
         verwerkt += 1
 
     log_wijziging(
@@ -979,12 +1014,14 @@ def get_klimaatdata_dagen_voor_periode(afdeling, datum_start, datum_eind):
     """
     Geeft de losse dagregels terug (voor grafieken) binnen de opgegeven
     periode, gesorteerd op datum. Retourneert een lijst van tuples
-    (datum, gem_temperatuur, gem_rv, stralingssom_dag).
+    (datum, gem_temperatuur, gem_rv, stralingssom_dag,
+    gem_temperatuur_dag, gem_temperatuur_nacht, gem_rv_dag, gem_rv_nacht).
     """
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT datum, gem_temperatuur, gem_rv, stralingssom_dag
+            SELECT datum, gem_temperatuur, gem_rv, stralingssom_dag,
+                   gem_temperatuur_dag, gem_temperatuur_nacht, gem_rv_dag, gem_rv_nacht
             FROM klimaatdata_dag
             WHERE afdeling = %s AND datum BETWEEN %s AND %s
             ORDER BY datum

@@ -768,31 +768,43 @@ with tab_detail:
         })
         if afdelingen_groep:
             eind_groep = max(t["datum_oogst"] or vandaag_detail for t in teelten_groep)
-            records_temp, records_rv, records_straling = [], [], []
+            records_temp, records_temp_dn, records_rv, records_rv_dn, records_straling = [], [], [], [], []
             for afdeling in afdelingen_groep:
                 dagen = get_klimaatdata_dagen_voor_periode(afdeling, start_datums[0], eind_groep)
-                for datum, temp, rv, straling in dagen:
+                for datum, temp, rv, straling, temp_dag, temp_nacht, rv_dag, rv_nacht in dagen:
                     kolom = f"Afd. {afdeling}"
                     records_temp.append({"datum": datum, kolom: temp})
                     records_rv.append({"datum": datum, kolom: rv})
                     records_straling.append({"datum": datum, kolom: straling})
+                    records_temp_dn.append({"datum": datum, f"{kolom} dag": temp_dag, f"{kolom} nacht": temp_nacht})
+                    records_rv_dn.append({"datum": datum, f"{kolom} dag": rv_dag, f"{kolom} nacht": rv_nacht})
 
             def _pivot_klimaat(records):
                 if not records:
                     return None
                 df = pd.DataFrame(records).groupby("datum", as_index=True).first().sort_index()
+                if df.dropna(how="all").empty:
+                    return None
                 df.index = [format_datum(d) for d in df.index]
                 return df
 
             df_temp = _pivot_klimaat(records_temp)
+            df_temp_dn = _pivot_klimaat(records_temp_dn)
             df_rv = _pivot_klimaat(records_rv)
+            df_rv_dn = _pivot_klimaat(records_rv_dn)
             df_straling = _pivot_klimaat(records_straling)
 
             if df_temp is not None:
-                st.caption("Temperatuur (°C)")
+                st.caption("Temperatuur, 24-uurs gemiddelde (°C)")
                 st.line_chart(df_temp)
-                st.caption("RV (%)")
+                if df_temp_dn is not None:
+                    st.caption("Temperatuur, dag- en nachtgemiddelde (°C)")
+                    st.line_chart(df_temp_dn)
+                st.caption("RV, 24-uurs gemiddelde (%)")
                 st.line_chart(df_rv)
+                if df_rv_dn is not None:
+                    st.caption("RV, dag- en nachtgemiddelde (%)")
+                    st.line_chart(df_rv_dn)
                 st.caption("Lichtsom (per dag)")
                 st.line_chart(df_straling)
             else:
