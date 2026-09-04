@@ -27,7 +27,7 @@ from database import (
     verwerk_klimaat_csv,
     get_klimaat_overzicht_dataframe,
     afdeling_van_vaknummer,
-    get_klimaatdata_weken_voor_periode,
+    get_klimaatdata_dagen_voor_periode,
     get_klimaat_voor_periode,
     get_teeltduur,
     get_alle_teelten_detail,
@@ -770,12 +770,12 @@ with tab_detail:
             eind_groep = max(t["datum_oogst"] or vandaag_detail for t in teelten_groep)
             records_temp, records_rv, records_straling = [], [], []
             for afdeling in afdelingen_groep:
-                weken = get_klimaatdata_weken_voor_periode(afdeling, start_datums[0], eind_groep)
-                for datum_van, temp, rv, straling in weken:
+                dagen = get_klimaatdata_dagen_voor_periode(afdeling, start_datums[0], eind_groep)
+                for datum, temp, rv, straling in dagen:
                     kolom = f"Afd. {afdeling}"
-                    records_temp.append({"datum": datum_van, kolom: temp})
-                    records_rv.append({"datum": datum_van, kolom: rv})
-                    records_straling.append({"datum": datum_van, kolom: straling})
+                    records_temp.append({"datum": datum, kolom: temp})
+                    records_rv.append({"datum": datum, kolom: rv})
+                    records_straling.append({"datum": datum, kolom: straling})
 
             def _pivot_klimaat(records):
                 if not records:
@@ -810,16 +810,16 @@ with tab_klimaat:
         "Upload de klimaatcomputer-export (.csv)",
         type=["csv"],
         key="klimaat_csv_upload",
-        help="Weekexport met kolommen label, pcu, type_1, idx_1, type_2, idx_2, startdate, enddate, value.",
+        help="Dagexport met kolommen label, pcu, type_1, idx_1, type_2, idx_2, startdate, enddate, value.",
     )
 
     if klimaat_csv is not None:
         try:
             aantal_verwerkt, aantal_overgeslagen = verwerk_klimaat_csv(klimaat_csv, gebruiker=huidige_gebruiker())
-            melding = f"✅ {aantal_verwerkt} afdeling-weken verwerkt en opgeslagen."
+            melding = f"✅ {aantal_verwerkt} afdeling-dagen verwerkt en opgeslagen."
             if aantal_overgeslagen:
                 melding += (
-                    f" {aantal_overgeslagen} nog niet afgeronde afdeling-weken zijn overgeslagen "
+                    f" {aantal_overgeslagen} nog niet afgeronde afdeling-dagen zijn overgeslagen "
                     "(einddatum ligt nog niet in het verleden)."
                 )
             st.success(melding)

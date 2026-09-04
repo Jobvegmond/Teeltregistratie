@@ -212,17 +212,19 @@ def init_db():
             )
         """)
 
+        # Vervangen door klimaatdata_dag (dagniveau i.p.v. weekniveau) — de
+        # oude weektabel en alle daarin geuploade data vervallen bewust.
+        cursor.execute("DROP TABLE IF EXISTS klimaatdata_week")
+
         cursor.execute("""
-            CREATE TABLE IF NOT EXISTS klimaatdata_week (
+            CREATE TABLE IF NOT EXISTS klimaatdata_dag (
                 id SERIAL PRIMARY KEY,
                 afdeling INTEGER NOT NULL,
-                datum_van TEXT NOT NULL,
-                datum_tot TEXT NOT NULL,
+                datum TEXT NOT NULL,
                 gem_temperatuur REAL,
                 gem_rv REAL,
-                stralingssom_week REAL,
                 stralingssom_dag REAL,
-                UNIQUE (afdeling, datum_van)
+                UNIQUE (afdeling, datum)
             )
         """)
 
@@ -856,11 +858,11 @@ def get_overzicht_dataframe():
 # Kasindeling: afdeling 1 = vak 1-9, afdeling 2 = vak 30-39,
 # afdeling 3 = vak 10-19, afdeling 4 = vak 20-29.
 #
-# De klimaatcomputer-export bevat weekregels (startdate-enddate, maandag t/m
-# zondag) per variabele (label) en afdeling. Voor de teeltkoppeling gebruiken
-# we Ave_24h_CompTemp (gemiddelde temperatuur), Ave_24h_CompRV (gemiddelde
-# RV) en de som van Sum_Day_CalculatedRadiation + Sum_Night_CalculatedRadiation
-# (stralingssom, weeksom). Rijen voor een andere "Afdeling"-index dan 1-4
+# De klimaatcomputer-export bevat dagregels (startdate = enddate, per dag)
+# per variabele (label) en afdeling. Voor de teeltkoppeling gebruiken we
+# Ave_24h_CompTemp (gemiddelde temperatuur), Ave_24h_CompRV (gemiddelde RV)
+# en de som van Sum_Day_CalculatedRadiation + Sum_Night_CalculatedRadiation
+# (stralingssom van die dag). Rijen voor een andere "Afdeling"-index dan 1-4
 # (bijv. index 5) horen niet bij een van onze kasafdelingen en worden genegeerd.
 
 KLIMAAT_TEMP_LABEL = "Ave_24h_CompTemp"
@@ -885,41 +887,29 @@ def afdeling_van_vaknummer(vaknummer):
     return None
 
 
-def upsert_klimaatdata_week(afdeling, datum_van, datum_tot, gem_temperatuur, gem_rv, stralingssom_week):
-    """
-    Slaat één afdeling-week klimaatgegevens op (of overschrijft de bestaande
-    week bij een herupload). De stralingssom wordt meteen ook per dag
-    opgeslagen (weeksom / 7).
-    """
-    stralingssom_dag = stralingssom_week / 7 if stralingssom_week is not None else None
-
+def upsert_klimaatdata_dag(afdeling, datum, gem_temperatuur, gem_rv, stralingssom_dag):
+    """Slaat één afdeling-dag klimaatgegevens op (of overschrijft de bestaande dag bij een herupload)."""
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT INTO klimaatdata_week
-                (afdeling, datum_van, datum_tot, gem_temperatuur, gem_rv, stralingssom_week, stralingssom_dag)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (afdeling, datum_van)
-            DO UPDATE SET datum_tot = EXCLUDED.datum_tot,
-                          gem_temperatuur = EXCLUDED.gem_temperatuur,
+            INSERT INTO klimaatdata_dag (afdeling, datum, gem_temperatuur, gem_rv, stralingssom_dag)
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (afdeling, datum)
+            DO UPDATE SET gem_temperatuur = EXCLUDED.gem_temperatuur,
                           gem_rv = EXCLUDED.gem_rv,
-                          stralingssom_week = EXCLUDED.stralingssom_week,
                           stralingssom_dag = EXCLUDED.stralingssom_dag
-        """, (
-            afdeling, str(datum_van), str(datum_tot),
-            gem_temperatuur, gem_rv, stralingssom_week, stralingssom_dag
-        ))
+        """, (afdeling, str(datum), gem_temperatuur, gem_rv, stralingssom_dag))
         conn.commit()
 
 
 def verwerk_klimaat_csv(bestand, gebruiker=None):
     """
     Leest een klimaatcomputer-CSV in (tab- of puntkomma-gescheiden, decimale
-    komma) en zet de weekregels om naar rijen in klimaatdata_week, per
-    afdeling (1-4). Weken die nog niet helemaal voorbij zijn (einddatum
+    komma) en zet de dagregels om naar rijen in klimaatdata_dag, per
+    afdeling (1-4). Dagen die nog niet helemaal voorbij zijn (einddatum
     vandaag of later) worden overgeslagen, want die staan al wel in de
     export maar zijn nog niet compleet. Geeft (aantal verwerkte
-    afdeling-weken, aantal overgeslagen onvolledige afdeling-weken) terug.
+    afdeling-dagen, aantal overgeslagen onvolledige afdeling-dagen) terug.
     """
     try:
         df = pd.read_csv(bestand, sep=None, engine="python", decimal=",")
@@ -932,34 +922,34 @@ def verwerk_klimaat_csv(bestand, gebruiker=None):
     df["idx_1"] = pd.to_numeric(df["idx_1"], errors="coerce")
     df = df[df["idx_1"].isin(KLIMAAT_GELDIGE_AFDELINGEN)]
 
-    df["datum_van"] = pd.to_datetime(df["startdate"], dayfirst=True, format="mixed").dt.date
+    df["datum"] = pd.to_datetime(df["startdate"], dayfirst=True, format="mixed").dt.date
     df["datum_tot"] = pd.to_datetime(df["enddate"], dayfirst=True, format="mixed").dt.date
     df["value"] = pd.to_numeric(df["value"], errors="coerce")
 
-    alle_weken = df[["idx_1", "datum_van", "datum_tot"]].drop_duplicates()
+    alle_dagen = df[["idx_1", "datum"]].drop_duplicates()
     df = df[df["datum_tot"] < date.today()]
-    volledige_weken = df[["idx_1", "datum_van", "datum_tot"]].drop_duplicates()
-    overgeslagen = len(alle_weken) - len(volledige_weken)
+    volledige_dagen = df[["idx_1", "datum"]].drop_duplicates()
+    overgeslagen = len(alle_dagen) - len(volledige_dagen)
 
     relevante_labels = [KLIMAAT_TEMP_LABEL, KLIMAAT_RV_LABEL] + KLIMAAT_STRALING_LABELS
     df = df[df["label"].isin(relevante_labels)]
 
     verwerkt = 0
-    for (afdeling, datum_van, datum_tot), groep in df.groupby(["idx_1", "datum_van", "datum_tot"]):
+    for (afdeling, datum), groep in df.groupby(["idx_1", "datum"]):
         temp = groep.loc[groep["label"] == KLIMAAT_TEMP_LABEL, "value"].dropna()
         rv = groep.loc[groep["label"] == KLIMAAT_RV_LABEL, "value"].dropna()
         straling = groep.loc[groep["label"].isin(KLIMAAT_STRALING_LABELS), "value"].dropna()
 
         gem_temperatuur = float(temp.iloc[0]) if not temp.empty else None
         gem_rv = float(rv.iloc[0]) if not rv.empty else None
-        stralingssom_week = float(straling.sum()) if not straling.empty else None
+        stralingssom_dag = float(straling.sum()) if not straling.empty else None
 
-        upsert_klimaatdata_week(int(afdeling), datum_van, datum_tot, gem_temperatuur, gem_rv, stralingssom_week)
+        upsert_klimaatdata_dag(int(afdeling), datum, gem_temperatuur, gem_rv, stralingssom_dag)
         verwerkt += 1
 
     log_wijziging(
         gebruiker, "geupload", "klimaatdata_csv", None,
-        f"{verwerkt} afdeling-weken verwerkt, {overgeslagen} overgeslagen (nog niet afgerond)"
+        f"{verwerkt} afdeling-dagen verwerkt, {overgeslagen} overgeslagen (nog niet afgerond)"
     )
 
     return verwerkt, overgeslagen
@@ -968,16 +958,16 @@ def verwerk_klimaat_csv(bestand, gebruiker=None):
 def get_klimaat_voor_periode(afdeling, datum_start, datum_eind):
     """
     Geeft de gemiddelde temperatuur, gemiddelde RV en gemiddelde dagstralingssom
-    terug over alle opgeslagen weken die overlappen met de opgegeven periode
-    (bijv. de looptijd van een teelt). Geeft None terug als er geen data is.
+    terug over alle opgeslagen dagen binnen de opgegeven periode (bijv. de
+    looptijd van een teelt). Geeft None terug als er geen data is.
     """
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
             SELECT AVG(gem_temperatuur), AVG(gem_rv), AVG(stralingssom_dag)
-            FROM klimaatdata_week
-            WHERE afdeling = %s AND datum_van <= %s AND datum_tot >= %s
-        """, (afdeling, str(datum_eind), str(datum_start)))
+            FROM klimaatdata_dag
+            WHERE afdeling = %s AND datum BETWEEN %s AND %s
+        """, (afdeling, str(datum_start), str(datum_eind)))
         rij = cursor.fetchone()
 
     if not rij or rij[0] is None:
@@ -985,20 +975,20 @@ def get_klimaat_voor_periode(afdeling, datum_start, datum_eind):
     return {"gem_temperatuur": rij[0], "gem_rv": rij[1], "gem_stralingssom_dag": rij[2]}
 
 
-def get_klimaatdata_weken_voor_periode(afdeling, datum_start, datum_eind):
+def get_klimaatdata_dagen_voor_periode(afdeling, datum_start, datum_eind):
     """
-    Geeft de losse weekregels terug (voor grafieken) die overlappen met de
-    opgegeven periode, gesorteerd op datum. Retourneert een lijst van tuples
-    (datum_van, gem_temperatuur, gem_rv, stralingssom_dag).
+    Geeft de losse dagregels terug (voor grafieken) binnen de opgegeven
+    periode, gesorteerd op datum. Retourneert een lijst van tuples
+    (datum, gem_temperatuur, gem_rv, stralingssom_dag).
     """
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT datum_van, gem_temperatuur, gem_rv, stralingssom_dag
-            FROM klimaatdata_week
-            WHERE afdeling = %s AND datum_van <= %s AND datum_tot >= %s
-            ORDER BY datum_van
-        """, (afdeling, str(datum_eind), str(datum_start)))
+            SELECT datum, gem_temperatuur, gem_rv, stralingssom_dag
+            FROM klimaatdata_dag
+            WHERE afdeling = %s AND datum BETWEEN %s AND %s
+            ORDER BY datum
+        """, (afdeling, str(datum_start), str(datum_eind)))
         return cursor.fetchall()
 
 
