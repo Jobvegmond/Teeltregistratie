@@ -151,11 +151,14 @@ def rijpheid_tekst_naar_bereik(tekst):
         return (1, 4)
 
 
+PLANTDICHTHEID_OPTIES = [40, 50, 60]  # stelen per m²
+
+
 def standaard_aantal_stelen(vaknummer):
     """
-    Vooringevuld aantal stelen per teeltvak (uitgangspunt ~60 stelen per meter).
-    Wordt bij het aanmaken van een nieuwe teelt als beginwaarde gebruikt; je kunt
-    het altijd handmatig overschrijven.
+    Aantal stelen per teeltvak bij 60 stelen per m² — de oorspronkelijke,
+    vaste basiswaarden per vak. Dient als basis voor bereken_aantal_stelen()
+    bij een andere plantdichtheid (40/50/60 stelen per m²).
     """
     standaardwaarden = {1: 34000, 19: 15436, 20: 15436, 39: 31780}
     if vaknummer in standaardwaarden:
@@ -163,6 +166,17 @@ def standaard_aantal_stelen(vaknummer):
     if 2 <= vaknummer <= 38:
         return 32688
     return 0
+
+
+def bereken_aantal_stelen(vaknummer, stelen_per_m2):
+    """
+    Vooringevuld aantal stelen voor een vak bij de gekozen plantdichtheid
+    (40, 50 of 60 stelen per m²), herschaald vanaf de vaste 60-stelen/m²-
+    basiswaarde van dat vak. Wordt bij het aanmaken van een nieuwe teelt als
+    beginwaarde gebruikt; je kunt het altijd handmatig overschrijven.
+    """
+    basis_60 = standaard_aantal_stelen(vaknummer)
+    return round(basis_60 / 60 * stelen_per_m2)
 
 
 def toon_oogstregistraties_beheer(teelt_id, teelt_info):
@@ -227,19 +241,23 @@ if actie == "1. Nieuwe teelt registreren":
     week_start = get_weeknummer(datum_teelt_start)
     st.sidebar.caption(f"📅 Weeknummer: {week_start}")
 
-    # Vaknummer buiten het formulier: zo wordt het aantal stelen meteen
-    # vooringevuld met de standaardwaarde voor dat vak.
+    # Vaknummer en plantdichtheid buiten het formulier: zo wordt het aantal
+    # stelen meteen vooringevuld zodra je een van beide kiest.
     vaknummer = st.sidebar.number_input(
         "Vaknummer", min_value=1, max_value=39, step=1, value=1, key="start_vaknummer"
     )
-    standaard_stelen = standaard_aantal_stelen(int(vaknummer))
+    dichtheid = st.sidebar.radio(
+        "Plantdichtheid (stelen per m²)", PLANTDICHTHEID_OPTIES, index=2,
+        key="start_dichtheid", horizontal=True,
+    )
+    standaard_stelen = bereken_aantal_stelen(int(vaknummer), dichtheid)
 
     with st.sidebar.form("start_form"):
         aantal_planten = st.number_input(
             "Aantal geplante planten",
             min_value=0, step=1, value=standaard_stelen,
-            key=f"start_aantal_{int(vaknummer)}",
-            help="Vooringevuld op basis van het vaknummer (± 60 stelen per meter); pas aan indien nodig.",
+            key=f"start_aantal_{int(vaknummer)}_{dichtheid}",
+            help=f"Vooringevuld op basis van het vaknummer bij {dichtheid} stelen per m²; pas aan indien nodig.",
         )
 
         submit_start = st.form_submit_button("Teelt aanmaken")
@@ -863,9 +881,10 @@ with tab_log:
 with tab_help:
     st.write("""
     **Stap 1: Nieuwe teelt registreren**
-    - Je vult het vaknummer (1-39) en het aantal geplante planten in
-    - Het aantal stelen wordt automatisch vooringevuld per vak (± 60 stelen per meter):
-      vak 1 → 34000, vak 2-18 en 21-38 → 32688, vak 19 en 20 → 15436, vak 39 → 31780.
+    - Je vult het vaknummer (1-39) in en kiest de plantdichtheid (40, 50 of 60 stelen per m²)
+    - Het aantal stelen wordt daarbij automatisch vooringevuld per vak, uitgaande van de vaste
+      basiswaarden bij 60 stelen per m² (vak 1 → 34000, vak 2-18 en 21-38 → 32688, vak 19 en 20 →
+      15436, vak 39 → 31780) en naar evenredigheid herschaald voor 40 of 50 stelen per m².
       Je kunt de waarde altijd handmatig aanpassen.
     - Er wordt automatisch een unieke code aangemaakt: jaar + plantweek + vaknummer
     - Wil je meerdere vakken op dezelfde dag starten? Vul het formulier gewoon opnieuw in per vak
