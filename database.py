@@ -1271,53 +1271,111 @@ def plan_alle_vakken(gebruiker=None):
     return resultaten
 
 
-def plan_alle_vakken_op_volgorde(gebruiker=None):
+def _harde_bodem_vak(vaknummer):
     """
-    Plant alle vakken in strikt oplopende volgorde (eerst vak 1, dan 2, dan
-    3, enz.): elk vak wordt gepland op de latere van (a) zijn eigen eerst
-    mogelijke startdatum (na de eigen laatste oogst + wisseltijd) en (b)
-    minstens één dag na de (geplande of al bestaande) startdatum van het
-    vorige vak in de volgorde. Zo wordt de vaste volgorde altijd
-    gerespecteerd en ontstaat een geleidelijk oplopende planning in plaats
-    van dat losse vakken toevallig in dezelfde week samenklonteren.
-
-    Vakken die al een openstaand concept hebben tellen mee voor de
-    volgorde (hun bestaande datum geldt als ondergrens voor het volgende
-    vak) maar worden niet opnieuw aangemaakt. Vakken zonder teeltgeschiedenis
-    worden overgeslagen. Geeft een lijst van tuples
-    (vaknummer, status, verwachte_startdatum) terug, met status 'gepland',
-    'al_gepland' of 'geen_geschiedenis'.
+    Geeft de harde ondergrens voor een vak terug: de verwachte oogstdatum
+    van de meest recente teelt (werkelijk als al afgerond, anders berekend
+    via de teeltduur-tabel), zónder wisseltijd. Een vak kan nooit eerder dan
+    dit gepland worden. Geeft None terug als het vak nog geen teeltgeschiedenis heeft.
     """
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT vaknummer, verwachte_startdatum FROM teeltplanning")
-        bestaande = {}
-        for vak, start in cursor.fetchall():
-            datum = datetime.strptime(start, "%Y-%m-%d").date()
-            if vak not in bestaande or datum > bestaande[vak]:
-                bestaande[vak] = datum
+        cursor.execute("""
+            SELECT t.datum_teelt_start, t.datum_oogst
+            FROM teelten t
+            JOIN teeltvakken v ON t.teeltvak_id = v.id
+            WHERE v.vaknummer = %s
+            ORDER BY t.datum_teelt_start DESC LIMIT 1
+        """, (vaknummer,))
+        rij = cursor.fetchone()
+
+    if not rij:
+        return None
+
+    start, oogst = rij
+    if oogst:
+        return datetime.strptime(oogst, "%Y-%m-%d").date()
+    _, verwacht = bereken_verwachte_oogstdatum(start)
+    return verwacht
+
+
+def plan_alle_vakken_op_volgorde(gebruiker=None):
+    """
+    Plant alle vakken in strikt oplopende volgorde (eerst vak 1, dan 2, dan
+    3, enz.) en probeert daarbij elke week gevuld te houden — geen weken
+    zonder productie — door de wisseltijd flexibel in te zetten (0 tot
+    WISSELTIJD_DAGEN dagen) in plaats van altijd de volle wisseltijd aan te
+    houden. De harde ondergrens per vak blijft de eigen verwachte
+    oogstdatum (zónder wisseltijd): een vak wordt nooit eerder gepland dan
+    dat, en de volgorde wordt nooit doorbroken.
+
+    Vakken die al een openstaand concept hebben, en vakken zonder
+    teeltgeschiedenis, worden overgeslagen (niet opnieuw aangemaakt, en niet
+    gebruikt als anker voor de overige vakken — die vormen hun eigen
+    aaneengesloten, gelijkmatig verdeelde reeks). Geeft een lijst van
+    tuples (vaknummer, status, verwachte_startdatum) terug, met status
+    'gepland', 'al_gepland' of 'geen_geschiedenis'.
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT DISTINCT vaknummer FROM teeltplanning")
+        al_gepland = {rij[0] for rij in cursor.fetchall()}
+
+    bodems = {}
+    geen_geschiedenis = set()
+    for vaknummer in range(1, 40):
+        if vaknummer in al_gepland:
+            continue
+        bodem = _harde_bodem_vak(vaknummer)
+        if bodem is None:
+            geen_geschiedenis.add(vaknummer)
+        else:
+            bodems[vaknummer] = bodem
 
     resultaten = []
-    vorige_start = None
+    if not bodems:
+        for vaknummer in range(1, 40):
+            if vaknummer in al_gepland:
+                resultaten.append((vaknummer, "al_gepland", None))
+            elif vaknummer in geen_geschiedenis:
+                resultaten.append((vaknummer, "geen_geschiedenis", None))
+        return resultaten
+
+    # Streefaantal per week: totaal aantal te plannen vakken verdeeld over
+    # de natuurlijke spreiding van hun harde bodems (plus maximale
+    # wisseltijd), zo gelijkmatig mogelijk.
+    vroegste = min(bodems.values())
+    laatste = max(bodems.values()) + timedelta(days=WISSELTIJD_DAGEN)
+    weken_beschikbaar = max(1, (laatste - vroegste).days // 7 + 1)
+    quotum_per_week = max(1, -(-len(bodems) // weken_beschikbaar))
+
+    cursor_week_start = None
+    aantal_in_week = 0
+    gekozen_data = {}
+    for vaknummer in sorted(bodems):
+        bodem = bodems[vaknummer]
+        bodem_week_start = bodem - timedelta(days=bodem.weekday())
+        kandidaat = bodem_week_start if cursor_week_start is None else max(bodem_week_start, cursor_week_start)
+
+        if kandidaat == cursor_week_start and aantal_in_week >= quotum_per_week:
+            kandidaat = cursor_week_start + timedelta(days=7)
+
+        if kandidaat != cursor_week_start:
+            cursor_week_start = kandidaat
+            aantal_in_week = 0
+
+        gekozen_data[vaknummer] = max(bodem, cursor_week_start)
+        aantal_in_week += 1
+
     for vaknummer in range(1, 40):
-        if vaknummer in bestaande:
-            resultaten.append((vaknummer, "al_gepland", bestaande[vaknummer]))
-            vorige_start = bestaande[vaknummer]
-            continue
-
-        eigen_vroegste = volgende_startdatum_vak(vaknummer)
-        if eigen_vroegste is None:
+        if vaknummer in al_gepland:
+            resultaten.append((vaknummer, "al_gepland", None))
+        elif vaknummer in geen_geschiedenis:
             resultaten.append((vaknummer, "geen_geschiedenis", None))
-            continue
-
-        if vorige_start is not None and eigen_vroegste <= vorige_start:
-            gekozen_start = vorige_start + timedelta(days=1)
         else:
-            gekozen_start = eigen_vroegste
-
-        voeg_planning_toe(vaknummer, gekozen_start, gebruiker=gebruiker)
-        resultaten.append((vaknummer, "gepland", gekozen_start))
-        vorige_start = gekozen_start
+            gekozen_start = gekozen_data[vaknummer]
+            voeg_planning_toe(vaknummer, gekozen_start, gebruiker=gebruiker)
+            resultaten.append((vaknummer, "gepland", gekozen_start))
 
     return resultaten
 

@@ -861,11 +861,11 @@ with tab_planning:
 
     st.write("**Op volgorde plannen (1 → 2 → 3 → ...)**")
     st.caption(
-        "Plant alle vakken in strikt oplopende volgorde: vak 2 nooit vóór vak 1 gepland, vak 3 nooit "
-        "vóór vak 2, enzovoort — ook niet als een hoger vak eerder klaar zou zijn. Elk vak krijgt de "
-        "latere van zijn eigen eerst mogelijke datum en minstens één dag na het vorige vak in de "
-        "volgorde, zodat de planning geleidelijk oploopt in plaats van dat vakken toevallig in "
-        "dezelfde week samenklonteren. Er is geen maximum aantal vakken per week."
+        "Plant alle vakken in strikt oplopende volgorde: vak 2 nooit vóór vak 1, vak 3 nooit vóór "
+        "vak 2, enzovoort — ook niet als een hoger vak eerder klaar zou zijn. De harde ondergrens per "
+        f"vak is de eigen verwachte oogstdatum (zónder wisseltijd); de wisseltijd (0 t/m {WISSELTIJD_DAGEN} "
+        "dagen) wordt flexibel ingezet om elke week gevuld te houden — voor continue productie geen "
+        "weken zonder planting, verdeeld over een zo gelijkmatig mogelijk aantal vakken per week."
     )
     if st.button("📐 Plan alle vakken op volgorde", key="plan_op_volgorde"):
         resultaten = plan_alle_vakken_op_volgorde(gebruiker=huidige_gebruiker())
