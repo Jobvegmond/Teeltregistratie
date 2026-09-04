@@ -39,6 +39,7 @@ from database import (
     bevestig_planning,
     volgende_startdatum_vak,
     bereken_verwachte_oogstdatum,
+    plan_alle_vakken,
     WISSELTIJD_DAGEN,
 )
 
@@ -827,7 +828,37 @@ with tab_planning:
         "teeltregistratie (met eigen code) als je 'm hieronder bevestigt."
     )
 
-    st.write("**Nieuwe concept-planning toevoegen**")
+    st.write("**Alles in één keer plannen**")
+    st.caption(
+        "Maakt voor elk vak (1-39) meteen een concept-planning aan met de voorgestelde volgende "
+        "startdatum. Vakken die al een openstaand concept hebben, of nog geen teeltgeschiedenis "
+        "hebben om een voorstel op te baseren, worden overgeslagen."
+    )
+    if st.button("📋 Plan alle vakken in één keer", key="plan_alles"):
+        resultaten = plan_alle_vakken(gebruiker=huidige_gebruiker())
+        gepland = [r for r in resultaten if r[1] == "gepland"]
+        al_gepland = [r for r in resultaten if r[1] == "al_gepland"]
+        geen_geschiedenis = [r for r in resultaten if r[1] == "geen_geschiedenis"]
+
+        if gepland:
+            st.success(
+                f"✅ {len(gepland)} vakken gepland: "
+                + ", ".join(f"vak {v} ({format_datum(d)})" for v, _, d in gepland)
+            )
+        if al_gepland:
+            st.info(
+                f"ℹ️ {len(al_gepland)} vakken hadden al een openstaand concept en zijn overgeslagen: "
+                + ", ".join(str(v) for v, _, _ in al_gepland)
+            )
+        if geen_geschiedenis:
+            st.warning(
+                f"⚠️ {len(geen_geschiedenis)} vakken hebben nog geen teeltgeschiedenis, dus geen "
+                "voorstel: " + ", ".join(str(v) for v, _, _ in geen_geschiedenis)
+            )
+        st.rerun()
+
+    st.markdown("---")
+    st.write("**Eén vak plannen**")
     col_plan_vak, col_plan_datum = st.columns(2)
     plan_vaknummer = col_plan_vak.number_input(
         "Vaknummer", min_value=1, max_value=39, step=1, value=1, key="plan_vaknummer"

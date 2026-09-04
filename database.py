@@ -1237,3 +1237,34 @@ def bevestig_planning(planning_id, aantal_planten=None, gebruiker=None):
     teelt_id, code = start_nieuwe_teelt(vaknummer, verwachte_startdatum, aantal_planten, gebruiker=gebruiker)
     verwijder_planning(planning_id, gebruiker=gebruiker)
     return teelt_id, code
+
+
+def plan_alle_vakken(gebruiker=None):
+    """
+    Maakt in één keer voor elk vak (1-39) een concept-planning aan, met de
+    voorgestelde volgende startdatum (zie volgende_startdatum_vak). Slaat
+    vakken over die al een openstaand concept hebben, of waarvoor nog geen
+    teeltgeschiedenis bestaat om een voorstel op te baseren. Geeft een lijst
+    van tuples (vaknummer, status, verwachte_startdatum) terug, met status
+    'gepland', 'al_gepland' of 'geen_geschiedenis'.
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT DISTINCT vaknummer FROM teeltplanning")
+        al_gepland = {rij[0] for rij in cursor.fetchall()}
+
+    resultaten = []
+    for vaknummer in range(1, 40):
+        if vaknummer in al_gepland:
+            resultaten.append((vaknummer, "al_gepland", None))
+            continue
+
+        voorstel = volgende_startdatum_vak(vaknummer)
+        if voorstel is None:
+            resultaten.append((vaknummer, "geen_geschiedenis", None))
+            continue
+
+        voeg_planning_toe(vaknummer, voorstel, gebruiker=gebruiker)
+        resultaten.append((vaknummer, "gepland", voorstel))
+
+    return resultaten
