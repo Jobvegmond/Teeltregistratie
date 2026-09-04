@@ -1196,8 +1196,9 @@ def voeg_planning_toe(vaknummer, verwachte_startdatum, notitie=None, gebruiker=N
 
 def get_planning():
     """
-    Geeft alle concept-planningsregels terug, gesorteerd op vak en
-    startdatum. Retourneert een lijst van tuples:
+    Geeft alle concept-planningsregels terug, gesorteerd op startdatum (dus
+    chronologisch/per week) en bij een gelijke datum op vaknummer.
+    Retourneert een lijst van tuples:
     (id, vaknummer, verwachte_startdatum, verwachte_duur_weken, verwachte_oogstdatum, notitie)
     """
     with get_connection() as conn:
@@ -1205,7 +1206,7 @@ def get_planning():
         cursor.execute("""
             SELECT id, vaknummer, verwachte_startdatum, verwachte_duur_weken, verwachte_oogstdatum, notitie
             FROM teeltplanning
-            ORDER BY vaknummer, verwachte_startdatum
+            ORDER BY verwachte_startdatum, vaknummer
         """)
         return cursor.fetchall()
 
@@ -1268,3 +1269,73 @@ def plan_alle_vakken(gebruiker=None):
         resultaten.append((vaknummer, "gepland", voorstel))
 
     return resultaten
+
+
+def plan_alle_vakken_op_volgorde(gebruiker=None):
+    """
+    Plant alle vakken in strikt oplopende volgorde (eerst vak 1, dan 2, dan
+    3, enz.): elk vak wordt gepland op de latere van (a) zijn eigen eerst
+    mogelijke startdatum (na de eigen laatste oogst + wisseltijd) en (b)
+    minstens één dag na de (geplande of al bestaande) startdatum van het
+    vorige vak in de volgorde. Zo wordt de vaste volgorde altijd
+    gerespecteerd en ontstaat een geleidelijk oplopende planning in plaats
+    van dat losse vakken toevallig in dezelfde week samenklonteren.
+
+    Vakken die al een openstaand concept hebben tellen mee voor de
+    volgorde (hun bestaande datum geldt als ondergrens voor het volgende
+    vak) maar worden niet opnieuw aangemaakt. Vakken zonder teeltgeschiedenis
+    worden overgeslagen. Geeft een lijst van tuples
+    (vaknummer, status, verwachte_startdatum) terug, met status 'gepland',
+    'al_gepland' of 'geen_geschiedenis'.
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT vaknummer, verwachte_startdatum FROM teeltplanning")
+        bestaande = {}
+        for vak, start in cursor.fetchall():
+            datum = datetime.strptime(start, "%Y-%m-%d").date()
+            if vak not in bestaande or datum > bestaande[vak]:
+                bestaande[vak] = datum
+
+    resultaten = []
+    vorige_start = None
+    for vaknummer in range(1, 40):
+        if vaknummer in bestaande:
+            resultaten.append((vaknummer, "al_gepland", bestaande[vaknummer]))
+            vorige_start = bestaande[vaknummer]
+            continue
+
+        eigen_vroegste = volgende_startdatum_vak(vaknummer)
+        if eigen_vroegste is None:
+            resultaten.append((vaknummer, "geen_geschiedenis", None))
+            continue
+
+        if vorige_start is not None and eigen_vroegste <= vorige_start:
+            gekozen_start = vorige_start + timedelta(days=1)
+        else:
+            gekozen_start = eigen_vroegste
+
+        voeg_planning_toe(vaknummer, gekozen_start, gebruiker=gebruiker)
+        resultaten.append((vaknummer, "gepland", gekozen_start))
+        vorige_start = gekozen_start
+
+    return resultaten
+
+
+def get_planning_per_week():
+    """
+    Groepeert alle concept-planningen per plantweek (iso-jaar + weeknummer
+    van verwachte_startdatum), met de vaknummers in oplopende volgorde per
+    week. Geeft een lijst van tuples (jaar, week, [vaknummers]) terug,
+    gesorteerd op jaar/week.
+    """
+    rijen = get_planning()
+    groepen = {}
+    for _planning_id, vaknummer, start, _duur, _eind, _notitie in rijen:
+        sleutel = get_isojaar_week(start)
+        groepen.setdefault(sleutel, []).append(vaknummer)
+
+    return [
+        (jaar, week, sorted(groepen[(jaar, week)]))
+        for jaar, week in sorted(groepen.keys())
+    ]

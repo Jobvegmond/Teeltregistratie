@@ -40,6 +40,8 @@ from database import (
     volgende_startdatum_vak,
     bereken_verwachte_oogstdatum,
     plan_alle_vakken,
+    plan_alle_vakken_op_volgorde,
+    get_planning_per_week,
     WISSELTIJD_DAGEN,
 )
 
@@ -857,6 +859,53 @@ with tab_planning:
             )
         st.rerun()
 
+    st.write("**Op volgorde plannen (1 → 2 → 3 → ...)**")
+    st.caption(
+        "Plant alle vakken in strikt oplopende volgorde: vak 2 nooit vóór vak 1 gepland, vak 3 nooit "
+        "vóór vak 2, enzovoort — ook niet als een hoger vak eerder klaar zou zijn. Elk vak krijgt de "
+        "latere van zijn eigen eerst mogelijke datum en minstens één dag na het vorige vak in de "
+        "volgorde, zodat de planning geleidelijk oploopt in plaats van dat vakken toevallig in "
+        "dezelfde week samenklonteren. Er is geen maximum aantal vakken per week."
+    )
+    if st.button("📐 Plan alle vakken op volgorde", key="plan_op_volgorde"):
+        resultaten = plan_alle_vakken_op_volgorde(gebruiker=huidige_gebruiker())
+        gepland = [r for r in resultaten if r[1] == "gepland"]
+        al_gepland = [r for r in resultaten if r[1] == "al_gepland"]
+        geen_geschiedenis = [r for r in resultaten if r[1] == "geen_geschiedenis"]
+
+        if gepland:
+            st.success(
+                f"✅ {len(gepland)} vakken gepland: "
+                + ", ".join(f"vak {v} ({format_datum(d)})" for v, _, d in gepland)
+            )
+        if al_gepland:
+            st.info(
+                f"ℹ️ {len(al_gepland)} vakken hadden al een openstaand concept (telt mee voor de "
+                "volgorde) en zijn overgeslagen: "
+                + ", ".join(f"vak {v} ({format_datum(d)})" for v, _, d in al_gepland)
+            )
+        if geen_geschiedenis:
+            st.warning(
+                f"⚠️ {len(geen_geschiedenis)} vakken hebben nog geen teeltgeschiedenis, dus geen "
+                "voorstel: " + ", ".join(str(v) for v, _, _ in geen_geschiedenis)
+            )
+        st.rerun()
+
+    st.markdown("---")
+    st.write("**Overzicht per plantweek**")
+    planning_per_week = get_planning_per_week()
+    if planning_per_week:
+        df_planning_week = pd.DataFrame(
+            [
+                (f"Week {week} - {jaar}", len(vakken), ", ".join(str(v) for v in vakken))
+                for jaar, week, vakken in planning_per_week
+            ],
+            columns=["Plantweek", "Aantal vakken", "Vakken (oplopend)"]
+        )
+        st.dataframe(df_planning_week, use_container_width=True, hide_index=True)
+    else:
+        st.info("Nog geen concept-planningen om per week te tonen.")
+
     st.markdown("---")
     st.write("**Eén vak plannen**")
     col_plan_vak, col_plan_datum = st.columns(2)
@@ -894,12 +943,41 @@ with tab_planning:
 
     st.markdown("---")
     st.write("**Concept-planningen**")
-    planning_rijen = get_planning()
+    planning_rijen = get_planning()  # al gesorteerd op startdatum (dus per week), dan vaknummer
+
     if planning_rijen:
+        keuzes_bulk = {
+            f"Vak {vaknummer} — week {get_weeknummer(start)} ({format_datum(start)})": planning_id
+            for planning_id, vaknummer, start, _duur, _eind, _notitie in planning_rijen
+        }
+        geselecteerde_bulk = st.multiselect(
+            "Selecteer concept-planningen om in één keer te verwijderen",
+            list(keuzes_bulk.keys()),
+            key="plan_bulk_selectie",
+        )
+        if st.button(
+            f"🗑️ Verwijder {len(geselecteerde_bulk)} geselecteerde concept-planning(en)",
+            key="plan_bulk_verwijder",
+            disabled=not geselecteerde_bulk,
+        ):
+            for label in geselecteerde_bulk:
+                verwijder_planning(keuzes_bulk[label], gebruiker=huidige_gebruiker())
+            st.success(f"🗑️ {len(geselecteerde_bulk)} concept-planning(en) verwijderd.")
+            st.rerun()
+
+        st.markdown("---")
+
+        huidige_weeksleutel = None
         for planning_id, vaknummer, start, duur, eind, notitie in planning_rijen:
+            weeksleutel = get_isojaar_week(start)
+            if weeksleutel != huidige_weeksleutel:
+                jaar_kop, week_kop = weeksleutel
+                st.markdown(f"**Week {week_kop} - {jaar_kop}**")
+                huidige_weeksleutel = weeksleutel
+
             col1, col2, col3, col4, col5, col6, col7 = st.columns([1, 2, 1.3, 2, 1.7, 1, 1])
             col1.write(f"Vak {vaknummer}")
-            col2.write(f"{format_datum(start)} (wk {get_weeknummer(start)})")
+            col2.write(format_datum(start))
             col3.write(f"{duur:g} wk" if duur is not None else "-")
             col4.write(format_datum(eind) if eind else "-")
             aantal_planten_plan = col5.number_input(
@@ -923,7 +1001,7 @@ with tab_planning:
                 verwijder_planning(planning_id, gebruiker=huidige_gebruiker())
                 st.rerun()
     else:
-        st.info("Nog geen concept-planningen. Voeg er hierboven een toe.")
+        st.info("Nog geen concept-planningen.")
 
 # --- KLIMAATDATA (KLIMAATCOMPUTER-CSV) ---
 with tab_klimaat:
