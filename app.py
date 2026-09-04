@@ -33,6 +33,13 @@ from database import (
     get_alle_teelten_detail,
     get_isojaar_week,
     get_wijzigingenlog,
+    get_planning,
+    voeg_planning_toe,
+    verwijder_planning,
+    bevestig_planning,
+    volgende_startdatum_vak,
+    bereken_verwachte_oogstdatum,
+    WISSELTIJD_DAGEN,
 )
 
 # --- PAGINA-INSTELLINGEN ---
@@ -572,8 +579,9 @@ elif actie == "4. Registratie wijzigen of verwijderen":
         st.sidebar.info("Er zijn nog geen registraties om te wijzigen.")
 
 # --- HOOFDSCHERM: TABBLADEN ---
-tab_overzicht, tab_detail, tab_klimaat, tab_stats, tab_log, tab_help = st.tabs([
-    "📊 Overzicht", "🔍 Teelt-detail", "🌡️ Klimaatdata", "📈 Statistieken", "🧾 Logboek", "ℹ️ Hoe dit werkt",
+tab_overzicht, tab_detail, tab_planning, tab_klimaat, tab_stats, tab_log, tab_help = st.tabs([
+    "📊 Overzicht", "🔍 Teelt-detail", "🗓️ Planning", "🌡️ Klimaatdata", "📈 Statistieken", "🧾 Logboek",
+    "ℹ️ Hoe dit werkt",
 ])
 
 kolommen, rijen = get_overzicht_dataframe()
@@ -810,6 +818,82 @@ with tab_detail:
     else:
         st.info("Nog geen teelten geregistreerd.")
 
+# --- PLANNING (TOEKOMSTIGE TEELTEN) ---
+with tab_planning:
+    st.subheader("🗓️ Planning")
+    st.caption(
+        "Concept-planning voor toekomstige teelten, op basis van de teeltduur-per-plantweek-tabel en "
+        f"een wisseltijd van {WISSELTIJD_DAGEN} dagen na de oogst. Een concept wordt pas een echte "
+        "teeltregistratie (met eigen code) als je 'm hieronder bevestigt."
+    )
+
+    st.write("**Nieuwe concept-planning toevoegen**")
+    col_plan_vak, col_plan_datum = st.columns(2)
+    plan_vaknummer = col_plan_vak.number_input(
+        "Vaknummer", min_value=1, max_value=39, step=1, value=1, key="plan_vaknummer"
+    )
+    voorgestelde_start = volgende_startdatum_vak(int(plan_vaknummer))
+    plan_startdatum = col_plan_datum.date_input(
+        "Verwachte startdatum",
+        value=voorgestelde_start or datetime.today().date(),
+        key=f"plan_startdatum_{int(plan_vaknummer)}",
+        format="DD-MM-YYYY",
+    )
+    if voorgestelde_start:
+        st.caption(
+            f"📅 Voorstel op basis van de laatste (verwachte) oogst van vak {int(plan_vaknummer)} "
+            f"+ {WISSELTIJD_DAGEN} dagen wisseltijd: {format_datum(voorgestelde_start)}. Pas gerust aan."
+        )
+    else:
+        st.caption(f"Nog geen teeltgeschiedenis voor vak {int(plan_vaknummer)}; kies zelf een startdatum.")
+
+    plan_duur, plan_eind = bereken_verwachte_oogstdatum(plan_startdatum)
+    if plan_duur is not None:
+        st.caption(
+            f"Plantweek {get_weeknummer(plan_startdatum)} → verwachte teeltduur {plan_duur:g} weken, "
+            f"verwachte oogst {format_datum(plan_eind)}"
+        )
+    else:
+        st.caption("Geen teeltduur bekend voor deze plantweek (bijv. week 53) — vul de teeltduur later handmatig aan.")
+
+    if st.button("➕ Toevoegen aan planning", key="plan_toevoegen"):
+        voeg_planning_toe(int(plan_vaknummer), plan_startdatum, gebruiker=huidige_gebruiker())
+        st.success(f"✅ Concept-planning toegevoegd voor vak {int(plan_vaknummer)}.")
+        st.rerun()
+
+    st.markdown("---")
+    st.write("**Concept-planningen**")
+    planning_rijen = get_planning()
+    if planning_rijen:
+        for planning_id, vaknummer, start, duur, eind, notitie in planning_rijen:
+            col1, col2, col3, col4, col5, col6, col7 = st.columns([1, 2, 1.3, 2, 1.7, 1, 1])
+            col1.write(f"Vak {vaknummer}")
+            col2.write(f"{format_datum(start)} (wk {get_weeknummer(start)})")
+            col3.write(f"{duur:g} wk" if duur is not None else "-")
+            col4.write(format_datum(eind) if eind else "-")
+            aantal_planten_plan = col5.number_input(
+                "Aantal planten",
+                min_value=0, step=1, value=bereken_aantal_stelen(vaknummer, 60),
+                key=f"plan_aantal_{planning_id}",
+                label_visibility="collapsed",
+                help="Aantal planten bij bevestigen (standaard 60 stelen/m²; pas aan indien nodig).",
+            )
+            if col6.button("✅", key=f"plan_bevestig_{planning_id}", help="Omzetten naar een echte teeltregistratie"):
+                resultaat = bevestig_planning(
+                    planning_id,
+                    aantal_planten_plan if aantal_planten_plan else None,
+                    gebruiker=huidige_gebruiker(),
+                )
+                if resultaat:
+                    teelt_id, code = resultaat
+                    st.success(f"✅ Vak {vaknummer} gestart - code **{code}** (teelt-ID {teelt_id}).")
+                st.rerun()
+            if col7.button("🗑️", key=f"plan_verwijder_{planning_id}", help="Concept-planning verwijderen"):
+                verwijder_planning(planning_id, gebruiker=huidige_gebruiker())
+                st.rerun()
+    else:
+        st.info("Nog geen concept-planningen. Voeg er hierboven een toe.")
+
 # --- KLIMAATDATA (KLIMAATCOMPUTER-CSV) ---
 with tab_klimaat:
     st.subheader("🌡️ Klimaatdata")
@@ -937,6 +1021,12 @@ with tab_help:
     - Kies een teelt in het tabblad 🔍 Teelt-detail voor een grafisch overzicht: lengtegroei,
       oogst per moment (en cumulatief), en het klimaat (temperatuur, RV, stralingssom) tijdens
       de teeltperiode.
+
+    **Planning**
+    - Tabblad 🗓️ Planning stelt op basis van de teeltduur-per-plantweek-tabel en een vaste
+      wisseltijd na de oogst een volgende startdatum per vak voor.
+    - Een concept-planning is nog geen echte teelt: pas nadat je 'm bevestigt (✅) wordt er een
+      teeltregistratie met een eigen code aangemaakt. Met 🗑️ verwijder je een concept weer.
 
     **Weeknummers**
     - Elke datum toont het ISO-weeknummer (1-53)

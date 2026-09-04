@@ -1,7 +1,7 @@
 import os
 import threading
 from contextlib import contextmanager
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -236,6 +236,18 @@ def init_db():
         cursor.execute("ALTER TABLE klimaatdata_dag ADD COLUMN IF NOT EXISTS gem_temperatuur_nacht REAL")
         cursor.execute("ALTER TABLE klimaatdata_dag ADD COLUMN IF NOT EXISTS gem_rv_dag REAL")
         cursor.execute("ALTER TABLE klimaatdata_dag ADD COLUMN IF NOT EXISTS gem_rv_nacht REAL")
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS teeltplanning (
+                id SERIAL PRIMARY KEY,
+                vaknummer INTEGER NOT NULL,
+                verwachte_startdatum TEXT NOT NULL,
+                verwachte_duur_weken REAL,
+                verwachte_oogstdatum TEXT,
+                notitie TEXT,
+                aangemaakt_op TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS wijzigingenlog (
@@ -1071,3 +1083,157 @@ def get_klimaat_overzicht_dataframe():
     kolommen = ["Code", "Teeltvak", "Afdeling", "Startdatum", "Oogstdatum",
                 "Gem. temperatuur (°C)", "Gem. RV (%)", "Gem. stralingssom (per dag)"]
     return kolommen, rijen
+
+
+# --- PLANNING (TOEKOMSTIGE TEELTEN) ---
+#
+# Geeft per plantweek (ISO-weeknummer 1-52) de verwachte teeltduur in weken,
+# geldig voor de hele kas (niet per afdeling). Voorlopige tabel, aangeleverd
+# 2026-09-04; kan later nog worden bijgewerkt of verfijnd per afdeling.
+# Week 53 (niet elk jaar aanwezig) heeft bewust geen waarde.
+TEELTDUUR_PER_PLANTWEEK = {
+    1: 11.0, 2: 10.0, 3: 10.0, 4: 9.0, 5: 9.0, 6: 8.5, 7: 8.0, 8: 8.0, 9: 8.0, 10: 8.0,
+    11: 7.0, 12: 7.0, 13: 7.0, 14: 7.0, 15: 7.0, 16: 7.0, 17: 7.0, 18: 7.0, 19: 7.0, 20: 7.0,
+    21: 7.0, 22: 6.3, 23: 6.8, 24: 6.5, 25: 6.4, 26: 6.6, 27: 6.7, 28: 6.8, 29: 7.0, 30: 7.0,
+    31: 7.0, 32: 7.2, 33: 7.8, 34: 8.3, 35: 9.0, 36: 9.4, 37: 9.6, 38: 10.3, 39: 10.8, 40: 11.6,
+    41: 12.6, 42: 13.5, 43: 14.0, 44: 14.0, 45: 14.7, 46: 15.3, 47: 15.0, 48: 15.0, 49: 14.5,
+    50: 14.0, 51: 14.0, 52: 13.0,
+}
+
+# Vaste wisseltijd (schoonmaak/omschakelen) tussen de oogst van de ene teelt
+# en het planten van de volgende in hetzelfde vak. Voorlopige waarde,
+# aangeleverd 2026-09-04 ("houdt voor nu maar aan").
+WISSELTIJD_DAGEN = 4
+
+
+def teeltduur_voor_plantweek(week):
+    """Geeft de verwachte teeltduur (in weken) voor een ISO-plantweek terug, of None als onbekend."""
+    return TEELTDUUR_PER_PLANTWEEK.get(week)
+
+
+def bereken_verwachte_oogstdatum(datum_start):
+    """
+    Berekent de verwachte oogstdatum op basis van de teeltduur-per-plantweek-
+    tabel. Geeft (verwachte_duur_weken, verwachte_oogstdatum) terug, of
+    (None, None) als de plantweek niet in de tabel staat.
+    """
+    if isinstance(datum_start, str):
+        datum_start = datetime.strptime(datum_start, "%Y-%m-%d").date()
+    duur_weken = teeltduur_voor_plantweek(get_weeknummer(datum_start))
+    if duur_weken is None:
+        return None, None
+    return duur_weken, datum_start + timedelta(days=round(duur_weken * 7))
+
+
+def volgende_startdatum_vak(vaknummer):
+    """
+    Stelt de volgende startdatum voor een vak voor: wisseltijd na de laatst
+    bekende (of al geplande) oogst van dat vak. Kijkt in volgorde van
+    voorkeur naar: de laatste concept-planning voor dit vak, dan de meest
+    recente teelt (afgerond -> werkelijke oogstdatum, lopend -> verwachte
+    oogstdatum via de duur-tabel). Geeft None terug als er nog niets bekend
+    is om op verder te bouwen (nooit een teelt of planning gehad).
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT verwachte_oogstdatum FROM teeltplanning
+            WHERE vaknummer = %s AND verwachte_oogstdatum IS NOT NULL
+            ORDER BY verwachte_startdatum DESC LIMIT 1
+        """, (vaknummer,))
+        planning_rij = cursor.fetchone()
+
+    if planning_rij:
+        laatste_eind = datetime.strptime(planning_rij[0], "%Y-%m-%d").date()
+    else:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT t.datum_teelt_start, t.datum_oogst
+                FROM teelten t
+                JOIN teeltvakken v ON t.teeltvak_id = v.id
+                WHERE v.vaknummer = %s
+                ORDER BY t.datum_teelt_start DESC LIMIT 1
+            """, (vaknummer,))
+            teelt_rij = cursor.fetchone()
+
+        if not teelt_rij:
+            return None
+
+        start, oogst = teelt_rij
+        if oogst:
+            laatste_eind = datetime.strptime(oogst, "%Y-%m-%d").date()
+        else:
+            _, verwacht = bereken_verwachte_oogstdatum(start)
+            if not verwacht:
+                return None
+            laatste_eind = verwacht
+
+    return laatste_eind + timedelta(days=WISSELTIJD_DAGEN)
+
+
+def voeg_planning_toe(vaknummer, verwachte_startdatum, notitie=None, gebruiker=None):
+    """Maakt een concept-planningsregel aan voor een vak; duur/oogst worden automatisch berekend."""
+    duur_weken, eind = bereken_verwachte_oogstdatum(verwachte_startdatum)
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO teeltplanning (vaknummer, verwachte_startdatum, verwachte_duur_weken, verwachte_oogstdatum, notitie)
+            VALUES (%s, %s, %s, %s, %s)
+            RETURNING id
+        """, (vaknummer, str(verwachte_startdatum), duur_weken, str(eind) if eind else None, notitie))
+        planning_id = cursor.fetchone()[0]
+        conn.commit()
+
+    log_wijziging(
+        gebruiker, "aangemaakt", "planning", planning_id,
+        f"Concept-planning vak {vaknummer}, start {verwachte_startdatum}"
+        + (f", verwachte oogst {eind}" if eind else "")
+    )
+    return planning_id
+
+
+def get_planning():
+    """
+    Geeft alle concept-planningsregels terug, gesorteerd op vak en
+    startdatum. Retourneert een lijst van tuples:
+    (id, vaknummer, verwachte_startdatum, verwachte_duur_weken, verwachte_oogstdatum, notitie)
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, vaknummer, verwachte_startdatum, verwachte_duur_weken, verwachte_oogstdatum, notitie
+            FROM teeltplanning
+            ORDER BY vaknummer, verwachte_startdatum
+        """)
+        return cursor.fetchall()
+
+
+def verwijder_planning(planning_id, gebruiker=None):
+    """Verwijdert een concept-planningsregel (zonder gevolgen voor eventuele echte teelten)."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM teeltplanning WHERE id = %s", (planning_id,))
+        conn.commit()
+    log_wijziging(gebruiker, "verwijderd", "planning", planning_id, "Concept-planning verwijderd")
+
+
+def bevestig_planning(planning_id, aantal_planten=None, gebruiker=None):
+    """
+    Zet een concept-planningsregel om in een echte teelt-registratie (via
+    start_nieuwe_teelt) en verwijdert daarna de planningsregel. Geeft
+    (teelt_id, code) terug, of None als de planningsregel niet bestaat.
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT vaknummer, verwachte_startdatum FROM teeltplanning WHERE id = %s", (planning_id,))
+        rij = cursor.fetchone()
+
+    if not rij:
+        return None
+
+    vaknummer, verwachte_startdatum = rij
+    teelt_id, code = start_nieuwe_teelt(vaknummer, verwachte_startdatum, aantal_planten, gebruiker=gebruiker)
+    verwijder_planning(planning_id, gebruiker=gebruiker)
+    return teelt_id, code
