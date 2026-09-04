@@ -590,14 +590,17 @@ with tab_overzicht:
         st.dataframe(df.drop(columns=['ID']), use_container_width=True)
 
         # Statistieken
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4)
         with col1:
-            actieve_teelten = len(df[df['Oogstdatum'] == '-'])
+            actieve_teelten = len(df[df['Status'] == 'Lopend'])
             st.metric("Actieve teelten", actieve_teelten)
         with col2:
-            afgeronde_teelten = len(df[df['Oogstdatum'] != '-'])
-            st.metric("Afgeronde teelten", afgeronde_teelten)
+            nog_te_starten = len(df[df['Status'] == 'Nog te starten'])
+            st.metric("Nog te starten", nog_te_starten)
         with col3:
+            afgeronde_teelten = len(df[df['Status'] == 'Afgerond'])
+            st.metric("Afgeronde teelten", afgeronde_teelten)
+        with col4:
             gem_duur = df[df['Teeltduur (dagen)'] != '-']['Teeltduur (dagen)'].astype(float).mean()
             if not pd.isna(gem_duur):
                 st.metric("Gem. teeltduur (dagen)", f"{gem_duur:.0f}")
@@ -633,12 +636,26 @@ with tab_detail:
 
         vandaag_detail = str(datetime.today().date())
         aantal_afgerond = sum(1 for t in teelten_groep if t["datum_oogst"])
-        if aantal_afgerond == 0:
+        aantal_nog_te_starten = sum(
+            1 for t in teelten_groep if not t["datum_oogst"] and t["datum_teelt_start"] > vandaag_detail
+        )
+        aantal_lopend = len(teelten_groep) - aantal_afgerond - aantal_nog_te_starten
+
+        if aantal_lopend == len(teelten_groep):
             status_tekst = "🌱 Alle lopend"
         elif aantal_afgerond == len(teelten_groep):
             status_tekst = "✅ Alle afgerond"
+        elif aantal_nog_te_starten == len(teelten_groep):
+            status_tekst = "🕓 Nog te starten"
         else:
-            status_tekst = f"↔️ {aantal_afgerond} van de {len(teelten_groep)} afgerond"
+            status_delen = []
+            if aantal_lopend:
+                status_delen.append(f"{aantal_lopend} lopend")
+            if aantal_afgerond:
+                status_delen.append(f"{aantal_afgerond} afgerond")
+            if aantal_nog_te_starten:
+                status_delen.append(f"{aantal_nog_te_starten} nog te starten")
+            status_tekst = " · ".join(status_delen)
 
         start_datums = sorted(t["datum_teelt_start"] for t in teelten_groep)
         vakken_groep = sorted({t["vaknummer"] for t in teelten_groep if t["vaknummer"] is not None})
@@ -649,6 +666,9 @@ with tab_detail:
         # over de groep — niet als één vast afdeling/vak-gemiddelde.
         dagen_lijst, temp_lijst, rv_lijst, straling_lijst = [], [], [], []
         for t in teelten_groep:
+            if not t["datum_oogst"] and t["datum_teelt_start"] > vandaag_detail:
+                continue  # nog niet gestart: geen teeltduur/klimaat "tot nu toe" om te middelen
+
             eind_t = t["datum_oogst"] or vandaag_detail
             dagen_t = get_teeltduur(t["datum_teelt_start"], eind_t)
             if dagen_t is not None:

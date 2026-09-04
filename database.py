@@ -387,9 +387,11 @@ def start_nieuwe_teelt(vaknummer, datum_teelt_start, aantal_planten=None, naam=N
 
 def get_lopende_teelten():
     """
-    Geeft alle teelten terug die nog niet zijn afgerond (geen oogstdatum),
-    samen met de naam van het teeltvak. Handig voor selectboxen.
-    Retourneert lijst van tuples: (teelt_id, label_voor_selectbox)
+    Geeft alle teelten terug die daadwerkelijk lopen: nog niet afgerond
+    (geen oogstdatum) én al gestart (startdatum ligt niet in de toekomst).
+    Een teelt met een toekomstige startdatum is nog niet geplant en hoort
+    dus niet tussen de Florgib-/oogstregistratie-keuzes. Handig voor
+    selectboxen. Retourneert lijst van tuples: (teelt_id, label_voor_selectbox)
     """
     with get_connection() as conn:
         cursor = conn.cursor()
@@ -397,9 +399,9 @@ def get_lopende_teelten():
             SELECT t.id, v.vaknummer, t.datum_teelt_start, t.code
             FROM teelten t
             JOIN teeltvakken v ON t.teeltvak_id = v.id
-            WHERE t.datum_oogst IS NULL
+            WHERE t.datum_oogst IS NULL AND t.datum_teelt_start <= %s
             ORDER BY t.datum_teelt_start, v.vaknummer
-        """)
+        """, (str(date.today()),))
         rijen = cursor.fetchall()
 
     resultaat = []
@@ -798,6 +800,7 @@ def get_overzicht_dataframe():
         teelt_rijen = cursor.fetchall()
 
     totaal_emmers_per_teelt = get_totaal_emmers_per_teelt()
+    vandaag_iso = str(date.today())
 
     rijen_uitgebreid = []
     for row in teelt_rijen:
@@ -815,9 +818,17 @@ def get_overzicht_dataframe():
         else:
             uitval_pct = "-"
 
+        if oogst_datum:
+            status = "Afgerond"
+        elif start and start > vandaag_iso:
+            status = "Nog te starten"
+        else:
+            status = "Lopend"
+
         rijen_uitgebreid.append((
             teelt_id,
             f"{format_datum(start)} (week {start_week})" if start else "-",
+            status,
             naam,
             f"{format_datum(half_datum)} (week {get_weeknummer(half_datum)})" if half_datum else "-",
             half_lengte if half_lengte else "-",
@@ -833,7 +844,7 @@ def get_overzicht_dataframe():
             code if code else "-",
         ))
 
-    kolommen = ["ID", "Startdatum", "Teeltvak", "Datum Halverwege", "Lengte Half (cm)",
+    kolommen = ["ID", "Startdatum", "Status", "Teeltvak", "Datum Halverwege", "Lengte Half (cm)",
                 "Oogstdatum", "Teeltduur (dagen)", "Oogstlengte (cm)", "Oogstgewicht (gram)",
                 "Rijpheid", "Uitval (%)", "Aantal Planten", "Aantal Emmers", "Aantal Stelen",
                 "Code"]
