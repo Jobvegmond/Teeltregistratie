@@ -1350,9 +1350,26 @@ def plan_x_weken_vooruit(aantal_weken, gebruiker=None):
         cursor_week = laatste_bestaande - timedelta(days=laatste_bestaande.weekday())
         vorige_week_count = sum(1 for d in al_gepland.values() if d >= cursor_week and d < cursor_week + timedelta(days=7))
     elif eenheden:
+        # Startpunt: nooit vroeger dan de week ná de meest recente
+        # werkelijke planting (elders in de kas) — die week is al "vol" met
+        # echte arbeid, ook als een vak z'n eigen harde bodem toevallig in
+        # diezelfde of een eerdere week valt.
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT MAX(datum_teelt_start) FROM teelten")
+            laatste_echte_start = cursor.fetchone()[0]
+
         eerste_bodem_week = eenheden[0][1] - timedelta(days=eenheden[0][1].weekday())
-        week_ervoor_start = eerste_bodem_week - timedelta(days=7)
-        week_ervoor_eind = eerste_bodem_week - timedelta(days=1)
+        if laatste_echte_start:
+            laatste_echte_datum = datetime.strptime(laatste_echte_start, "%Y-%m-%d").date()
+            laatste_echte_week = laatste_echte_datum - timedelta(days=laatste_echte_datum.weekday())
+            vroegste_toegestane_week = laatste_echte_week + timedelta(days=7)
+            cursor_week = max(eerste_bodem_week, vroegste_toegestane_week)
+        else:
+            cursor_week = eerste_bodem_week
+
+        week_ervoor_start = cursor_week - timedelta(days=7)
+        week_ervoor_eind = cursor_week - timedelta(days=1)
         with get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
