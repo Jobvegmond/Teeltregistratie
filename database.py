@@ -1299,83 +1299,153 @@ def _harde_bodem_vak(vaknummer):
     return verwacht
 
 
+
+# Vak 19 en 20 zijn qua formaat/aantal samen gelijk aan één regulier vak
+# en worden daarom als één eenheid gepland (altijd dezelfde week).
+VAK_GECOMBINEERD = (19, 20)
+
+# Vak 1 loopt zelf op een ander ritme dan de rest en zou anders de hele
+# vaste volgorde blokkeren tot het zover is; het wordt daarom apart
+# ingepast in plaats van als eerste in de keten van vak 2..39.
+VAK_VOLGORDE_UITZONDERING = 1
+
+
 def plan_alle_vakken_op_volgorde(gebruiker=None):
     """
-    Plant alle vakken in strikt oplopende volgorde (eerst vak 1, dan 2, dan
-    3, enz.) en probeert daarbij elke week gevuld te houden — geen weken
-    zonder productie — door de wisseltijd flexibel in te zetten (0 tot
-    WISSELTIJD_DAGEN dagen) in plaats van altijd de volle wisseltijd aan te
-    houden. De harde ondergrens per vak blijft de eigen verwachte
-    oogstdatum (zónder wisseltijd): een vak wordt nooit eerder gepland dan
-    dat, en de volgorde wordt nooit doorbroken.
+    Plant alle vakken zodanig dat het aantal vakken per week nooit meer dan
+    1 verschilt met de vorige/volgende week (voor een werkbare, continue
+    arbeidsplanning):
+    - vak 19 en 20 worden als één gecombineerde eenheid gepland (altijd
+      dezelfde startdatum);
+    - vak 1 is een uitzondering op de vaste onderlinge volgorde en wordt
+      apart ingepast op de week die de spreiding het minst verstoort;
+    - de overige vakken (2 t/m 39, met 19+20 samengevoegd) volgen een
+      vaste oplopende onderlinge volgorde en worden nooit eerder gepland
+      dan hun eigen harde bodem (verwachte oogstdatum, zónder wisseltijd).
 
     Vakken die al een openstaand concept hebben, en vakken zonder
-    teeltgeschiedenis, worden overgeslagen (niet opnieuw aangemaakt, en niet
-    gebruikt als anker voor de overige vakken — die vormen hun eigen
-    aaneengesloten, gelijkmatig verdeelde reeks). Geeft een lijst van
-    tuples (vaknummer, status, verwachte_startdatum) terug, met status
-    'gepland', 'al_gepland' of 'geen_geschiedenis'.
+    teeltgeschiedenis, worden overgeslagen. Geeft een lijst van tuples
+    (vaknummer, status, verwachte_startdatum) terug, met status 'gepland',
+    'al_gepland' of 'geen_geschiedenis' — voor het gecombineerde paar
+    komen beide vaknummers los in de lijst terug, met dezelfde datum.
     """
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT DISTINCT vaknummer FROM teeltplanning")
         al_gepland = {rij[0] for rij in cursor.fetchall()}
 
-    bodems = {}
+    gecombineerd_laag, gecombineerd_hoog = VAK_GECOMBINEERD
     geen_geschiedenis = set()
-    for vaknummer in range(1, 40):
-        if vaknummer in al_gepland:
+
+    # --- Eenheden opbouwen voor de vaste-volgorde-keten (vak 2..39, exclusief vak 1) ---
+    eenheden = []  # (vaknummers_in_eenheid, harde_bodem)
+    for vaknummer in range(2, 40):
+        if vaknummer == VAK_VOLGORDE_UITZONDERING or vaknummer in al_gepland:
             continue
+        if vaknummer == gecombineerd_hoog:
+            continue  # meegenomen bij gecombineerd_laag
+        if vaknummer == gecombineerd_laag:
+            if gecombineerd_hoog in al_gepland:
+                continue
+            bodem_laag = _harde_bodem_vak(gecombineerd_laag)
+            bodem_hoog = _harde_bodem_vak(gecombineerd_hoog)
+            if bodem_laag is None or bodem_hoog is None:
+                geen_geschiedenis.update({gecombineerd_laag, gecombineerd_hoog})
+                continue
+            eenheden.append(([gecombineerd_laag, gecombineerd_hoog], max(bodem_laag, bodem_hoog)))
+            continue
+
         bodem = _harde_bodem_vak(vaknummer)
         if bodem is None:
             geen_geschiedenis.add(vaknummer)
         else:
-            bodems[vaknummer] = bodem
+            eenheden.append(([vaknummer], bodem))
+
+    # --- Pass 1: greedy, met een ramp-up-cap (deze week hoogstens vorige week + 1) ---
+    weekplan = {}
+    cursor_week = None
+    vorige_week_count = 0
+    huidige_week_count = 0
+    for vakken, bodem in eenheden:
+        bodem_week = bodem - timedelta(days=bodem.weekday())
+        kandidaat = bodem_week if cursor_week is None else max(bodem_week, cursor_week)
+        cap = vorige_week_count + 1
+
+        if cursor_week is not None and kandidaat == cursor_week and huidige_week_count >= max(cap, 1):
+            kandidaat = cursor_week + timedelta(days=7)
+
+        if kandidaat != cursor_week:
+            vorige_week_count = huidige_week_count
+            cursor_week = kandidaat
+            huidige_week_count = 0
+
+        weekplan.setdefault(cursor_week, []).append((vakken, bodem))
+        huidige_week_count += 1
+
+    # --- Pass 2: itereren tot elk opeenvolgend weekpaar hoogstens 1 verschilt ---
+    def _grootste_afwijking(plan):
+        weken = sorted(plan)
+        for i in range(len(weken) - 1):
+            if abs(len(plan[weken[i]]) - len(plan[weken[i + 1]])) > 1:
+                return weken[i], weken[i + 1]
+        return None
+
+    for _ in range(2000):
+        afwijking = _grootste_afwijking(weekplan)
+        if afwijking is None:
+            break
+        w1, w2 = afwijking
+        if len(weekplan[w1]) > len(weekplan[w2]):
+            eenheid = weekplan[w1].pop()
+            weekplan.setdefault(w2, []).insert(0, eenheid)
+        else:
+            weken_sorted = sorted(weekplan)
+            idx = weken_sorted.index(w2)
+            volgende = weken_sorted[idx + 1] if idx + 1 < len(weken_sorted) else w2 + timedelta(days=7)
+            eenheid = weekplan[w2].pop(0)
+            weekplan.setdefault(volgende, []).append(eenheid)
+        weekplan = {k: v for k, v in weekplan.items() if v}
+
+    # --- Pass 3: vak 1 (indien nog te plannen) apart invoegen ---
+    if VAK_VOLGORDE_UITZONDERING not in al_gepland:
+        bodem_1 = _harde_bodem_vak(VAK_VOLGORDE_UITZONDERING)
+        if bodem_1 is None:
+            geen_geschiedenis.add(VAK_VOLGORDE_UITZONDERING)
+        else:
+            bodem_1_week = bodem_1 - timedelta(days=bodem_1.weekday())
+            kandidaten = sorted(w for w in weekplan if w >= bodem_1_week) or [bodem_1_week]
+            beste_week, beste_penalty = None, None
+            for w in [bodem_1_week] + kandidaten:
+                proef = {k: list(v) for k, v in weekplan.items()}
+                proef.setdefault(w, []).append(([VAK_VOLGORDE_UITZONDERING], bodem_1))
+                weken_sorted = sorted(proef)
+                penalty = sum(
+                    max(0, abs(len(proef[weken_sorted[i]]) - len(proef[weken_sorted[i + 1]])) - 1)
+                    for i in range(len(weken_sorted) - 1)
+                )
+                if beste_penalty is None or penalty < beste_penalty:
+                    beste_penalty, beste_week = penalty, w
+            weekplan.setdefault(beste_week, []).append(([VAK_VOLGORDE_UITZONDERING], bodem_1))
+
+    # --- Wegschrijven en resultaten opbouwen ---
+    gekozen_per_vak = {}
+    for week_start, items in weekplan.items():
+        for vakken, bodem in items:
+            gekozen_start = max(bodem, week_start)
+            for vaknummer in vakken:
+                gekozen_per_vak[vaknummer] = gekozen_start
+
+    for vaknummer, gekozen_start in gekozen_per_vak.items():
+        voeg_planning_toe(vaknummer, gekozen_start, gebruiker=gebruiker)
 
     resultaten = []
-    if not bodems:
-        for vaknummer in range(1, 40):
-            if vaknummer in al_gepland:
-                resultaten.append((vaknummer, "al_gepland", None))
-            elif vaknummer in geen_geschiedenis:
-                resultaten.append((vaknummer, "geen_geschiedenis", None))
-        return resultaten
-
-    # Streefaantal per week: totaal aantal te plannen vakken verdeeld over
-    # de natuurlijke spreiding van hun harde bodems (plus maximale
-    # wisseltijd), zo gelijkmatig mogelijk.
-    vroegste = min(bodems.values())
-    laatste = max(bodems.values()) + timedelta(days=WISSELTIJD_DAGEN)
-    weken_beschikbaar = max(1, (laatste - vroegste).days // 7 + 1)
-    quotum_per_week = max(1, -(-len(bodems) // weken_beschikbaar))
-
-    cursor_week_start = None
-    aantal_in_week = 0
-    gekozen_data = {}
-    for vaknummer in sorted(bodems):
-        bodem = bodems[vaknummer]
-        bodem_week_start = bodem - timedelta(days=bodem.weekday())
-        kandidaat = bodem_week_start if cursor_week_start is None else max(bodem_week_start, cursor_week_start)
-
-        if kandidaat == cursor_week_start and aantal_in_week >= quotum_per_week:
-            kandidaat = cursor_week_start + timedelta(days=7)
-
-        if kandidaat != cursor_week_start:
-            cursor_week_start = kandidaat
-            aantal_in_week = 0
-
-        gekozen_data[vaknummer] = max(bodem, cursor_week_start)
-        aantal_in_week += 1
-
     for vaknummer in range(1, 40):
         if vaknummer in al_gepland:
             resultaten.append((vaknummer, "al_gepland", None))
         elif vaknummer in geen_geschiedenis:
             resultaten.append((vaknummer, "geen_geschiedenis", None))
-        else:
-            gekozen_start = gekozen_data[vaknummer]
-            voeg_planning_toe(vaknummer, gekozen_start, gebruiker=gebruiker)
-            resultaten.append((vaknummer, "gepland", gekozen_start))
+        elif vaknummer in gekozen_per_vak:
+            resultaten.append((vaknummer, "gepland", gekozen_per_vak[vaknummer]))
 
     return resultaten
 

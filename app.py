@@ -370,13 +370,19 @@ elif actie == "3. Oogst registeren":
                 + (f" · {huidige_uitval['aantal_planten']} planten" if huidige_uitval["aantal_planten"] else "")
             )
 
+            if "emmers_form_versie" not in st.session_state:
+                st.session_state["emmers_form_versie"] = 0
+
             with st.form("emmers_form"):
                 datum_emmers = st.date_input(
                     "Datum oogstmoment", key="emmers_datum", format="DD-MM-YYYY"
                 )
                 st.caption(f"📅 Weeknummer: {get_weeknummer(datum_emmers)}")
                 aantal_emmers = st.number_input("Aantal emmers", min_value=0, step=1)
-                laatste_emmers = st.checkbox("Dit waren de laatste emmers van dit vak (teelt afronden)")
+                laatste_emmers = st.checkbox(
+                    "Dit waren de laatste emmers van dit vak (teelt afronden)",
+                    key=f"emmers_laatste_{st.session_state['emmers_form_versie']}",
+                )
 
                 submit_emmers = st.form_submit_button("Oogstmoment registreren")
 
@@ -393,6 +399,9 @@ elif actie == "3. Oogst registeren":
                             st.success(
                                 f"✅ {aantal_emmers} emmers geregistreerd op {format_datum(datum_emmers)}."
                             )
+                        # Nieuwe key voor het vinkje bij de volgende weergave, zodat het
+                        # altijd weer uit staat na het opslaan (i.p.v. aan te blijven staan).
+                        st.session_state["emmers_form_versie"] += 1
                         st.rerun()
                     else:
                         st.warning("Vul een aantal emmers groter dan 0 in.")
