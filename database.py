@@ -1183,6 +1183,25 @@ def voeg_planning_toe(vaknummer, verwachte_startdatum, notitie=None, gebruiker=N
     return planning_id
 
 
+def wijzig_planning(planning_id, nieuwe_startdatum, gebruiker=None):
+    """Past de startdatum van een concept-planningsregel aan; duur/oogst worden herberekend."""
+    duur_weken, eind = bereken_verwachte_oogstdatum(nieuwe_startdatum)
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE teeltplanning
+            SET verwachte_startdatum = %s, verwachte_duur_weken = %s, verwachte_oogstdatum = %s
+            WHERE id = %s
+        """, (str(nieuwe_startdatum), duur_weken, str(eind) if eind else None, planning_id))
+        conn.commit()
+
+    log_wijziging(
+        gebruiker, "gewijzigd", "planning", planning_id,
+        f"Startdatum aangepast naar {nieuwe_startdatum}" + (f", verwachte oogst {eind}" if eind else "")
+    )
+
+
 def get_planning():
     """
     Geeft alle concept-planningsregels terug, gesorteerd op startdatum (dus
@@ -1474,4 +1493,42 @@ def plan_x_weken_vooruit(aantal_weken, gebruiker=None):
             resultaten.append((vaknummer, "geen_geschiedenis", None))
 
     return resultaten
+
+
+def get_lege_vakken_per_week(aantal_weken=12):
+    """
+    Telt per week, vanaf de huidige week, hoeveel vakken geen actieve
+    (werkelijke) teelt hebben lopen — dus hoeveel grond er leeg ligt.
+    Kijkt alleen naar echte teelten, niet naar concept-planningen. Geeft
+    een lijst van tuples (jaar, week, aantal_leeg, [vaknummers]) terug.
+    """
+    vandaag = date.today()
+    start_week = vandaag - timedelta(days=vandaag.weekday())
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT v.vaknummer, t.datum_teelt_start, t.datum_oogst
+            FROM teelten t
+            JOIN teeltvakken v ON t.teeltvak_id = v.id
+        """)
+        rijen = cursor.fetchall()
+
+    resultaat = []
+    for i in range(aantal_weken):
+        week_start = start_week + timedelta(weeks=i)
+        week_eind = week_start + timedelta(days=6)
+
+        bezet = set()
+        for vak, start, oogst in rijen:
+            start_datum = datetime.strptime(start, "%Y-%m-%d").date()
+            oogst_datum = datetime.strptime(oogst, "%Y-%m-%d").date() if oogst else None
+            if start_datum <= week_eind and (oogst_datum is None or oogst_datum >= week_start):
+                bezet.add(vak)
+
+        leeg = sorted(set(range(1, 40)) - bezet)
+        jaar, week, _ = week_start.isocalendar()
+        resultaat.append((jaar, week, len(leeg), leeg))
+
+    return resultaat
 

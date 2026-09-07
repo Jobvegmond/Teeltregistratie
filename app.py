@@ -36,10 +36,12 @@ from database import (
     get_planning,
     get_planning_per_week,
     voeg_planning_toe,
+    wijzig_planning,
     verwijder_planning,
     bevestig_planning,
     plan_x_weken_vooruit,
     bereken_verwachte_oogstdatum,
+    get_lege_vakken_per_week,
 )
 
 # --- PAGINA-INSTELLINGEN ---
@@ -186,6 +188,22 @@ def bereken_aantal_stelen(vaknummer, stelen_per_m2):
     return round(basis_60 / 60 * stelen_per_m2)
 
 
+def standaard_dichtheid_voor_plantweek(week):
+    """
+    Standaard plantdichtheid (stelen per m²) per plantweek: 60 in week 1-37,
+    50 in week 38-41, 40 in week 42-47, 50 in week 48-53. Wordt gebruikt om
+    het aantal planten automatisch vooraf in te vullen op basis van de
+    startdatum; je kunt de dichtheid altijd handmatig overschrijven.
+    """
+    if 38 <= week <= 41:
+        return 50
+    if 42 <= week <= 47:
+        return 40
+    if 48 <= week <= 53:
+        return 50
+    return 60
+
+
 def toon_oogstregistraties_beheer(teelt_id, teelt_info):
     """
     Toont de al geregistreerde oogstmomenten (emmers) voor een teelt: totaal,
@@ -253,9 +271,12 @@ if actie == "1. Nieuwe teelt registreren":
     vaknummer = st.sidebar.number_input(
         "Vaknummer", min_value=1, max_value=39, step=1, value=1, key="start_vaknummer"
     )
+    voorgestelde_dichtheid = standaard_dichtheid_voor_plantweek(week_start)
     dichtheid = st.sidebar.radio(
-        "Plantdichtheid (stelen per m²)", PLANTDICHTHEID_OPTIES, index=2,
-        key="start_dichtheid", horizontal=True,
+        "Plantdichtheid (stelen per m²)", PLANTDICHTHEID_OPTIES,
+        index=PLANTDICHTHEID_OPTIES.index(voorgestelde_dichtheid),
+        key=f"start_dichtheid_{week_start}", horizontal=True,
+        help=f"Voorgesteld op basis van plantweek {week_start}: {voorgestelde_dichtheid} stelen/m². Pas gerust aan.",
     )
     standaard_stelen = bereken_aantal_stelen(int(vaknummer), dichtheid)
 
@@ -886,6 +907,22 @@ with tab_planning:
         st.info("Nog geen concept-planningen om per week te tonen.")
 
     st.markdown("---")
+    st.write("**Lege vakken per week**")
+    st.caption(
+        "Hoeveel vakken op dit moment geen werkelijke (lopende) teelt hebben, per week — dus hoeveel "
+        "grond er leeg ligt. Kijkt alleen naar echte teelten, niet naar concept-planningen."
+    )
+    lege_vakken_per_week = get_lege_vakken_per_week(12)
+    df_leeg = pd.DataFrame(
+        [
+            (f"Week {week} - {jaar}", aantal_leeg, ", ".join(str(v) for v in vakken) if vakken else "-")
+            for jaar, week, aantal_leeg, vakken in lege_vakken_per_week
+        ],
+        columns=["Week", "Aantal leeg", "Vakken"]
+    )
+    st.dataframe(df_leeg, use_container_width=True, hide_index=True)
+
+    st.markdown("---")
     st.write("**Eén vak handmatig plannen**")
     col_plan_vak, col_plan_datum = st.columns(2)
     plan_vaknummer = col_plan_vak.number_input(
@@ -942,17 +979,26 @@ with tab_planning:
                 st.markdown(f"**Week {week_kop} - {jaar_kop}**")
                 huidige_weeksleutel = weeksleutel
 
-            col1, col2, col3, col4, col5, col6, col7 = st.columns([1, 2, 1.3, 2, 1.7, 1, 1])
+            col1, col2, col2b, col3, col4, col5, col6, col7 = st.columns(
+                [0.8, 1.6, 0.6, 1, 1.6, 1.5, 0.8, 0.8]
+            )
             col1.write(f"Vak {vaknummer}")
-            col2.write(format_datum(start))
+            nieuwe_datum_plan = col2.date_input(
+                "Startdatum", value=datetime.strptime(start, "%Y-%m-%d").date(),
+                key=f"plan_datum_{planning_id}", format="DD-MM-YYYY", label_visibility="collapsed",
+            )
+            if col2b.button("💾", key=f"plan_datum_opslaan_{planning_id}", help="Startdatum aanpassen"):
+                wijzig_planning(planning_id, nieuwe_datum_plan, gebruiker=huidige_gebruiker())
+                st.rerun()
             col3.write(f"{duur:g} wk" if duur is not None else "-")
             col4.write(format_datum(eind) if eind else "-")
+            dichtheid_plan = standaard_dichtheid_voor_plantweek(get_weeknummer(start))
             aantal_planten_plan = col5.number_input(
                 "Aantal planten",
-                min_value=0, step=1, value=bereken_aantal_stelen(vaknummer, 60),
+                min_value=0, step=1, value=bereken_aantal_stelen(vaknummer, dichtheid_plan),
                 key=f"plan_aantal_{planning_id}",
                 label_visibility="collapsed",
-                help="Aantal planten bij bevestigen (standaard 60 stelen/m²; pas aan indien nodig).",
+                help=f"Aantal planten bij bevestigen (standaard {dichtheid_plan} stelen/m² o.b.v. plantweek; pas aan indien nodig).",
             )
             if col6.button("✅", key=f"plan_bevestig_{planning_id}", help="Omzetten naar een echte teeltregistratie"):
                 resultaat = bevestig_planning(
