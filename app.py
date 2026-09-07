@@ -876,10 +876,10 @@ with tab_planning:
     if planning_per_week:
         df_planning_week = pd.DataFrame(
             [
-                (f"Week {week} - {jaar}", len(vakken), ", ".join(str(v) for v in vakken))
-                for jaar, week, vakken in planning_per_week
+                (f"Week {week} - {jaar}", arbeidsaantal, ", ".join(str(v) for v in vakken))
+                for jaar, week, vakken, arbeidsaantal in planning_per_week
             ],
-            columns=["Plantweek", "Aantal vakken", "Vakken (oplopend)"]
+            columns=["Plantweek", "Aantal vakken (arbeid)", "Vakken (oplopend)"]
         )
         st.dataframe(df_planning_week, use_container_width=True, hide_index=True)
     else:

@@ -1204,8 +1204,11 @@ def get_planning_per_week():
     """
     Groepeert alle concept-planningen per plantweek (iso-jaar + weeknummer
     van verwachte_startdatum), met de vaknummers in oplopende volgorde per
-    week. Geeft een lijst van tuples (jaar, week, [vaknummers]) terug,
-    gesorteerd op jaar/week.
+    week. Geeft een lijst van tuples (jaar, week, [vaknummers], arbeidsaantal)
+    terug, gesorteerd op jaar/week. Het arbeidsaantal is het aantal vakken
+    dat voor de arbeidsplanning telt: vak 19+20 samen tellen daarin als 1
+    (net als bij het maken van de planning), ook al staan ze allebei apart
+    in de vakkenlijst.
     """
     rijen = get_planning()
     groepen = {}
@@ -1213,10 +1216,14 @@ def get_planning_per_week():
         sleutel = get_isojaar_week(start)
         groepen.setdefault(sleutel, []).append(vaknummer)
 
-    return [
-        (jaar, week, sorted(groepen[(jaar, week)]))
-        for jaar, week in sorted(groepen.keys())
-    ]
+    resultaat = []
+    for jaar, week in sorted(groepen.keys()):
+        vakken = sorted(groepen[(jaar, week)])
+        arbeidsaantal = len(vakken)
+        if VAK_GECOMBINEERD[0] in vakken and VAK_GECOMBINEERD[1] in vakken:
+            arbeidsaantal -= 1
+        resultaat.append((jaar, week, vakken, arbeidsaantal))
+    return resultaat
 
 
 def verwijder_planning(planning_id, gebruiker=None):
@@ -1329,7 +1336,11 @@ def plan_x_weken_vooruit(aantal_weken, gebruiker=None):
 
     # --- Pass 1: greedy, met een ramp-up-cap (deze week hoogstens vorige week + 1) ---
     # Begint bij de laatst al bestaande week (indien aanwezig), zodat een
-    # nieuwe aanroep netjes doorplant op de vorige.
+    # nieuwe aanroep netjes doorplant op de vorige. Het startniveau voor de
+    # ramp-up komt uit de werkelijkheid — het aantal vakken dat al gepland
+    # stond in diezelfde week, of bij een verse start het aantal vakken dat
+    # daadwerkelijk in de week vóór het begin van deze planning is geplant
+    # — zodat er niet steeds weer bij 1 vak per week begonnen wordt.
     weekplan = {}
     cursor_week = None
     vorige_week_count = 0
@@ -1337,6 +1348,18 @@ def plan_x_weken_vooruit(aantal_weken, gebruiker=None):
     if al_gepland:
         laatste_bestaande = max(al_gepland.values())
         cursor_week = laatste_bestaande - timedelta(days=laatste_bestaande.weekday())
+        vorige_week_count = sum(1 for d in al_gepland.values() if d >= cursor_week and d < cursor_week + timedelta(days=7))
+    elif eenheden:
+        eerste_bodem_week = eenheden[0][1] - timedelta(days=eenheden[0][1].weekday())
+        week_ervoor_start = eerste_bodem_week - timedelta(days=7)
+        week_ervoor_eind = eerste_bodem_week - timedelta(days=1)
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT COUNT(*) FROM teelten WHERE datum_teelt_start BETWEEN %s AND %s",
+                (str(week_ervoor_start), str(week_ervoor_eind))
+            )
+            vorige_week_count = cursor.fetchone()[0]
 
     for vakken, bodem in eenheden:
         bodem_week = bodem - timedelta(days=bodem.weekday())
@@ -1347,7 +1370,8 @@ def plan_x_weken_vooruit(aantal_weken, gebruiker=None):
             kandidaat = cursor_week + timedelta(days=7)
 
         if kandidaat != cursor_week:
-            vorige_week_count = huidige_week_count
+            if cursor_week is not None:
+                vorige_week_count = huidige_week_count
             cursor_week = kandidaat
             huidige_week_count = 0
 
@@ -1355,11 +1379,29 @@ def plan_x_weken_vooruit(aantal_weken, gebruiker=None):
         huidige_week_count += 1
 
     # --- Pass 2: itereren tot elk opeenvolgend weekpaar hoogstens 1 verschilt ---
-    def _grootste_afwijking(plan):
+    # Kijkt naar de volledige doorlopende weekreeks (dus ook expliciet naar
+    # helemaal lege tussenweken, die anders onzichtbaar zouden blijven
+    # omdat ze geen sleutel in het plan hebben).
+    def _volledige_weekreeks(plan):
+        if not plan:
+            return []
         weken = sorted(plan)
-        for i in range(len(weken) - 1):
-            if abs(len(plan[weken[i]]) - len(plan[weken[i + 1]])) > 1:
-                return weken[i], weken[i + 1]
+        reeks = []
+        w = weken[0]
+        while w <= weken[-1]:
+            reeks.append(w)
+            w += timedelta(days=7)
+        return reeks
+
+    def _grootste_afwijking(plan):
+        reeks = _volledige_weekreeks(plan)
+        for i in range(len(reeks) - 1):
+            c1 = len(plan.get(reeks[i], []))
+            c2 = len(plan.get(reeks[i + 1], []))
+            if c1 == 0 and c2 == 0:
+                continue  # niets om te verschuiven tussen twee lege weken
+            if c2 == 0 or abs(c1 - c2) > 1:
+                return reeks[i], reeks[i + 1]
         return None
 
     for _ in range(2000):
@@ -1367,13 +1409,12 @@ def plan_x_weken_vooruit(aantal_weken, gebruiker=None):
         if afwijking is None:
             break
         w1, w2 = afwijking
-        if len(weekplan[w1]) > len(weekplan[w2]):
+        c1, c2 = len(weekplan.get(w1, [])), len(weekplan.get(w2, []))
+        if c1 > c2:
             eenheid = weekplan[w1].pop()
             weekplan.setdefault(w2, []).insert(0, eenheid)
         else:
-            weken_sorted = sorted(weekplan)
-            idx = weken_sorted.index(w2)
-            volgende = weken_sorted[idx + 1] if idx + 1 < len(weken_sorted) else w2 + timedelta(days=7)
+            volgende = w2 + timedelta(days=7)
             eenheid = weekplan[w2].pop(0)
             weekplan.setdefault(volgende, []).append(eenheid)
         weekplan = {k: v for k, v in weekplan.items() if v}
