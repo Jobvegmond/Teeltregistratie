@@ -1334,26 +1334,23 @@ def plan_x_weken_vooruit(aantal_weken, gebruiker=None):
 
     eenheden = [(vakken, bodem) for _rep, vakken, bodem in eenheden_ruw]
 
-    # --- Pass 1: greedy, met een ramp-up-cap (deze week hoogstens vorige week + 1) ---
+    # --- Pass 1: greedy, met een vast streefaantal per week ---
     # Begint bij de laatst al bestaande week (indien aanwezig), zodat een
-    # nieuwe aanroep netjes doorplant op de vorige. Het startniveau voor de
-    # ramp-up komt uit de werkelijkheid — het aantal vakken dat al gepland
-    # stond in diezelfde week, of bij een verse start het aantal vakken dat
-    # daadwerkelijk in de week vóór het begin van deze planning is geplant
-    # — zodat er niet steeds weer bij 1 vak per week begonnen wordt.
+    # nieuwe aanroep netjes doorplant op de vorige, en nooit vroeger dan de
+    # week ná de meest recente werkelijke planting elders in de kas (die
+    # week is al "vol" met echte arbeid). In plaats van een tempo dat
+    # oploopt/afneemt met hoeveel vakken toevallig dezelfde week klaar
+    # zijn, wordt het totaal zo gelijkmatig mogelijk over de beschikbare
+    # weken verdeeld tot één vast streefaantal per week — voor een
+    # planning die qua arbeid voorspelbaar is.
     weekplan = {}
     cursor_week = None
-    vorige_week_count = 0
     huidige_week_count = 0
     if al_gepland:
         laatste_bestaande = max(al_gepland.values())
         cursor_week = laatste_bestaande - timedelta(days=laatste_bestaande.weekday())
-        vorige_week_count = sum(1 for d in al_gepland.values() if d >= cursor_week and d < cursor_week + timedelta(days=7))
+        huidige_week_count = sum(1 for d in al_gepland.values() if cursor_week <= d < cursor_week + timedelta(days=7))
     elif eenheden:
-        # Startpunt: nooit vroeger dan de week ná de meest recente
-        # werkelijke planting (elders in de kas) — die week is al "vol" met
-        # echte arbeid, ook als een vak z'n eigen harde bodem toevallig in
-        # diezelfde of een eerdere week valt.
         with get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT MAX(datum_teelt_start) FROM teelten")
@@ -1368,27 +1365,20 @@ def plan_x_weken_vooruit(aantal_weken, gebruiker=None):
         else:
             cursor_week = eerste_bodem_week
 
-        week_ervoor_start = cursor_week - timedelta(days=7)
-        week_ervoor_eind = cursor_week - timedelta(days=1)
-        with get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT COUNT(*) FROM teelten WHERE datum_teelt_start BETWEEN %s AND %s",
-                (str(week_ervoor_start), str(week_ervoor_eind))
-            )
-            vorige_week_count = cursor.fetchone()[0]
+    streefaantal = 1
+    if eenheden and cursor_week is not None:
+        laatste_bodem = max(bodem for _vakken, bodem in eenheden)
+        weken_beschikbaar = max(1, (laatste_bodem + timedelta(days=WISSELTIJD_DAGEN) - cursor_week).days // 7 + 1)
+        streefaantal = max(1, -(-len(eenheden) // weken_beschikbaar))
 
     for vakken, bodem in eenheden:
         bodem_week = bodem - timedelta(days=bodem.weekday())
         kandidaat = bodem_week if cursor_week is None else max(bodem_week, cursor_week)
-        cap = vorige_week_count + 1
 
-        if cursor_week is not None and kandidaat == cursor_week and huidige_week_count >= max(cap, 1):
+        if cursor_week is not None and kandidaat == cursor_week and huidige_week_count >= streefaantal:
             kandidaat = cursor_week + timedelta(days=7)
 
         if kandidaat != cursor_week:
-            if cursor_week is not None:
-                vorige_week_count = huidige_week_count
             cursor_week = kandidaat
             huidige_week_count = 0
 
