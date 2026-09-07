@@ -1288,7 +1288,7 @@ def plan_x_weken_vooruit(aantal_weken, gebruiker=None):
     geen_geschiedenis = set()
 
     # --- Eenheden opbouwen voor de vaste-volgorde-keten (vak 2..39, exclusief vak 1) ---
-    eenheden = []  # (vaknummers_in_eenheid, harde_bodem)
+    eenheden_ruw = []  # (representatief_vaknummer, vakken_in_eenheid, harde_bodem)
     for vaknummer in range(2, 40):
         if vaknummer == VAK_VOLGORDE_UITZONDERING or vaknummer in al_gepland:
             continue
@@ -1302,14 +1302,30 @@ def plan_x_weken_vooruit(aantal_weken, gebruiker=None):
             if bodem_laag is None or bodem_hoog is None:
                 geen_geschiedenis.update({gecombineerd_laag, gecombineerd_hoog})
                 continue
-            eenheden.append(([gecombineerd_laag, gecombineerd_hoog], max(bodem_laag, bodem_hoog)))
+            eenheden_ruw.append((gecombineerd_laag, [gecombineerd_laag, gecombineerd_hoog], max(bodem_laag, bodem_hoog)))
             continue
 
         bodem = _harde_bodem_vak(vaknummer)
         if bodem is None:
             geen_geschiedenis.add(vaknummer)
         else:
-            eenheden.append(([vaknummer], bodem))
+            eenheden_ruw.append((vaknummer, [vaknummer], bodem))
+
+    # Bij een verse start (nog geen enkel vak uit deze keten al gepland)
+    # begint de vaste volgorde niet per se bij vak 2, maar bij het vak dat
+    # als eerste klaar is — de kas draait door, dus de volgorde is een
+    # doorlopende rotatie (…, 38, 39, 2, 3, …) die aansluit op waar de
+    # vorige ronde al gebleven was, in plaats van steeds weer bij vak 2
+    # te herstarten.
+    if eenheden_ruw and not al_gepland:
+        start_rep = min(eenheden_ruw, key=lambda e: (e[2], e[0]))[0]
+        eenheden_ruw.sort(key=lambda e: e[0])
+        start_idx = next(i for i, e in enumerate(eenheden_ruw) if e[0] == start_rep)
+        eenheden_ruw = eenheden_ruw[start_idx:] + eenheden_ruw[:start_idx]
+    else:
+        eenheden_ruw.sort(key=lambda e: e[0])
+
+    eenheden = [(vakken, bodem) for _rep, vakken, bodem in eenheden_ruw]
 
     # --- Pass 1: greedy, met een ramp-up-cap (deze week hoogstens vorige week + 1) ---
     # Begint bij de laatst al bestaande week (indien aanwezig), zodat een
