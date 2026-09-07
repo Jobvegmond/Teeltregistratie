@@ -237,9 +237,17 @@ def init_db():
         cursor.execute("ALTER TABLE klimaatdata_dag ADD COLUMN IF NOT EXISTS gem_rv_dag REAL")
         cursor.execute("ALTER TABLE klimaatdata_dag ADD COLUMN IF NOT EXISTS gem_rv_nacht REAL")
 
-        # De planningmodule (concept-planningen per vak) is teruggedraaid;
-        # de tabel en de data die erin stond vervallen bewust.
-        cursor.execute("DROP TABLE IF EXISTS teeltplanning")
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS teeltplanning (
+                id SERIAL PRIMARY KEY,
+                vaknummer INTEGER NOT NULL,
+                verwachte_startdatum TEXT NOT NULL,
+                verwachte_duur_weken REAL,
+                verwachte_oogstdatum TEXT,
+                notitie TEXT,
+                aangemaakt_op TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS wijzigingenlog (
@@ -1075,4 +1083,331 @@ def get_klimaat_overzicht_dataframe():
     kolommen = ["Code", "Teeltvak", "Afdeling", "Startdatum", "Oogstdatum",
                 "Gem. temperatuur (°C)", "Gem. RV (%)", "Gem. stralingssom (per dag)"]
     return kolommen, rijen
+
+
+# --- PLANNING (TOEKOMSTIGE TEELTEN) ---
+#
+# Geeft per plantweek (ISO-weeknummer 1-52) de verwachte teeltduur in weken,
+# geldig voor de hele kas (niet per afdeling). Voorlopige tabel, aangeleverd
+# 2026-09-04. Week 53 (niet elk jaar aanwezig) heeft bewust geen waarde.
+TEELTDUUR_PER_PLANTWEEK = {
+    1: 11.0, 2: 10.0, 3: 10.0, 4: 9.0, 5: 9.0, 6: 8.5, 7: 8.0, 8: 8.0, 9: 8.0, 10: 8.0,
+    11: 7.0, 12: 7.0, 13: 7.0, 14: 7.0, 15: 7.0, 16: 7.0, 17: 7.0, 18: 7.0, 19: 7.0, 20: 7.0,
+    21: 7.0, 22: 6.3, 23: 6.8, 24: 6.5, 25: 6.4, 26: 6.6, 27: 6.7, 28: 6.8, 29: 7.0, 30: 7.0,
+    31: 7.0, 32: 7.2, 33: 7.8, 34: 8.3, 35: 9.0, 36: 9.4, 37: 9.6, 38: 10.3, 39: 10.8, 40: 11.6,
+    41: 12.6, 42: 13.5, 43: 14.0, 44: 14.0, 45: 14.7, 46: 15.3, 47: 15.0, 48: 15.0, 49: 14.5,
+    50: 14.0, 51: 14.0, 52: 13.0,
+}
+
+# Vaste wisseltijd (schoonmaak/omschakelen) tussen de oogst van de ene teelt
+# en het planten van de volgende in hetzelfde vak; wordt als flexibele
+# marge (0 tot dit maximum) gebruikt om de planning gelijkmatiger te maken.
+WISSELTIJD_DAGEN = 4
+
+# Vak 19 en 20 zijn qua formaat/aantal samen gelijk aan één regulier vak
+# en worden daarom als één eenheid gepland (altijd dezelfde week).
+VAK_GECOMBINEERD = (19, 20)
+
+# Vak 1 loopt zelf op een ander ritme dan de rest en zou anders de hele
+# vaste volgorde blokkeren tot het zover is; het wordt daarom apart
+# ingepast in plaats van als eerste in de keten van vak 2..39.
+VAK_VOLGORDE_UITZONDERING = 1
+
+
+def teeltduur_voor_plantweek(week):
+    """Geeft de verwachte teeltduur (in weken) voor een ISO-plantweek terug, of None als onbekend."""
+    return TEELTDUUR_PER_PLANTWEEK.get(week)
+
+
+def bereken_verwachte_oogstdatum(datum_start):
+    """
+    Berekent de verwachte oogstdatum op basis van de teeltduur-per-plantweek-
+    tabel. Geeft (verwachte_duur_weken, verwachte_oogstdatum) terug, of
+    (None, None) als de plantweek niet in de tabel staat.
+    """
+    if isinstance(datum_start, str):
+        datum_start = datetime.strptime(datum_start, "%Y-%m-%d").date()
+    duur_weken = teeltduur_voor_plantweek(get_weeknummer(datum_start))
+    if duur_weken is None:
+        return None, None
+    return duur_weken, datum_start + timedelta(days=round(duur_weken * 7))
+
+
+def _harde_bodem_vak(vaknummer):
+    """
+    Geeft de harde ondergrens voor een vak terug: de verwachte oogstdatum
+    van de meest recente teelt (werkelijk als al afgerond, anders berekend
+    via de teeltduur-tabel), zónder wisseltijd. Een vak kan nooit eerder dan
+    dit gepland worden. Geeft None terug als het vak nog geen teeltgeschiedenis heeft.
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT t.datum_teelt_start, t.datum_oogst
+            FROM teelten t
+            JOIN teeltvakken v ON t.teeltvak_id = v.id
+            WHERE v.vaknummer = %s
+            ORDER BY t.datum_teelt_start DESC LIMIT 1
+        """, (vaknummer,))
+        rij = cursor.fetchone()
+
+    if not rij:
+        return None
+
+    start, oogst = rij
+    if oogst:
+        return datetime.strptime(oogst, "%Y-%m-%d").date()
+    _, verwacht = bereken_verwachte_oogstdatum(start)
+    return verwacht
+
+
+def voeg_planning_toe(vaknummer, verwachte_startdatum, notitie=None, gebruiker=None):
+    """Maakt een concept-planningsregel aan voor een vak; duur/oogst worden automatisch berekend."""
+    duur_weken, eind = bereken_verwachte_oogstdatum(verwachte_startdatum)
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO teeltplanning (vaknummer, verwachte_startdatum, verwachte_duur_weken, verwachte_oogstdatum, notitie)
+            VALUES (%s, %s, %s, %s, %s)
+            RETURNING id
+        """, (vaknummer, str(verwachte_startdatum), duur_weken, str(eind) if eind else None, notitie))
+        planning_id = cursor.fetchone()[0]
+        conn.commit()
+
+    log_wijziging(
+        gebruiker, "aangemaakt", "planning", planning_id,
+        f"Concept-planning vak {vaknummer}, start {verwachte_startdatum}"
+        + (f", verwachte oogst {eind}" if eind else "")
+    )
+    return planning_id
+
+
+def get_planning():
+    """
+    Geeft alle concept-planningsregels terug, gesorteerd op startdatum (dus
+    chronologisch/per week) en bij een gelijke datum op vaknummer.
+    Retourneert een lijst van tuples:
+    (id, vaknummer, verwachte_startdatum, verwachte_duur_weken, verwachte_oogstdatum, notitie)
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, vaknummer, verwachte_startdatum, verwachte_duur_weken, verwachte_oogstdatum, notitie
+            FROM teeltplanning
+            ORDER BY verwachte_startdatum, vaknummer
+        """)
+        return cursor.fetchall()
+
+
+def get_planning_per_week():
+    """
+    Groepeert alle concept-planningen per plantweek (iso-jaar + weeknummer
+    van verwachte_startdatum), met de vaknummers in oplopende volgorde per
+    week. Geeft een lijst van tuples (jaar, week, [vaknummers]) terug,
+    gesorteerd op jaar/week.
+    """
+    rijen = get_planning()
+    groepen = {}
+    for _planning_id, vaknummer, start, _duur, _eind, _notitie in rijen:
+        sleutel = get_isojaar_week(start)
+        groepen.setdefault(sleutel, []).append(vaknummer)
+
+    return [
+        (jaar, week, sorted(groepen[(jaar, week)]))
+        for jaar, week in sorted(groepen.keys())
+    ]
+
+
+def verwijder_planning(planning_id, gebruiker=None):
+    """Verwijdert een concept-planningsregel (zonder gevolgen voor eventuele echte teelten)."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM teeltplanning WHERE id = %s", (planning_id,))
+        conn.commit()
+    log_wijziging(gebruiker, "verwijderd", "planning", planning_id, "Concept-planning verwijderd")
+
+
+def bevestig_planning(planning_id, aantal_planten=None, gebruiker=None):
+    """
+    Zet een concept-planningsregel om in een echte teelt-registratie (via
+    start_nieuwe_teelt) en verwijdert daarna de planningsregel. Geeft
+    (teelt_id, code) terug, of None als de planningsregel niet bestaat.
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT vaknummer, verwachte_startdatum FROM teeltplanning WHERE id = %s", (planning_id,))
+        rij = cursor.fetchone()
+
+    if not rij:
+        return None
+
+    vaknummer, verwachte_startdatum = rij
+    teelt_id, code = start_nieuwe_teelt(vaknummer, verwachte_startdatum, aantal_planten, gebruiker=gebruiker)
+    verwijder_planning(planning_id, gebruiker=gebruiker)
+    return teelt_id, code
+
+
+def plan_x_weken_vooruit(aantal_weken, gebruiker=None):
+    """
+    Plant vakken vooruit voor de komende `aantal_weken` weken (vanaf
+    vandaag), doorplannend vanaf waar de huidige teelt van elk vak en de
+    reeds bestaande concept-planning gebleven zijn:
+    - vak 19 en 20 worden als één gecombineerde eenheid gepland (altijd
+      dezelfde startdatum);
+    - vak 1 is een uitzondering op de vaste onderlinge volgorde en wordt
+      apart ingepast op de week die de spreiding het minst verstoort;
+    - de overige vakken (2 t/m 39, met 19+20 samengevoegd) volgen een
+      vaste oplopende onderlinge volgorde en worden nooit eerder gepland
+      dan hun eigen harde bodem (verwachte oogstdatum zonder wisseltijd);
+    - het aantal vakken per week verschilt nooit meer dan 1 met de vorige
+      of volgende week (voor een werkbare, continue arbeidsplanning).
+
+    Vakken die al een openstaand concept hebben, worden overgeslagen maar
+    tellen mee als anker voor de volgorde/spreiding van de rest. Vakken
+    zonder teeltgeschiedenis worden ook overgeslagen. Vakken die niet
+    binnen de gekozen horizon (aantal_weken vanaf vandaag) vallen, blijven
+    ongepland — druk de knop nogmaals in (evt. met een groter aantal
+    weken) om verder te plannen.
+
+    Geeft een lijst van tuples (vaknummer, status, verwachte_startdatum)
+    terug, met status 'gepland', 'al_gepland', 'geen_geschiedenis' of
+    'buiten_horizon'.
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT vaknummer, verwachte_startdatum FROM teeltplanning")
+        al_gepland = {}
+        for vak, start in cursor.fetchall():
+            datum = datetime.strptime(start, "%Y-%m-%d").date()
+            if vak not in al_gepland or datum > al_gepland[vak]:
+                al_gepland[vak] = datum
+
+    horizon_eind = date.today() + timedelta(weeks=aantal_weken)
+    gecombineerd_laag, gecombineerd_hoog = VAK_GECOMBINEERD
+    geen_geschiedenis = set()
+
+    # --- Eenheden opbouwen voor de vaste-volgorde-keten (vak 2..39, exclusief vak 1) ---
+    eenheden = []  # (vaknummers_in_eenheid, harde_bodem)
+    for vaknummer in range(2, 40):
+        if vaknummer == VAK_VOLGORDE_UITZONDERING or vaknummer in al_gepland:
+            continue
+        if vaknummer == gecombineerd_hoog:
+            continue  # meegenomen bij gecombineerd_laag
+        if vaknummer == gecombineerd_laag:
+            if gecombineerd_hoog in al_gepland:
+                continue
+            bodem_laag = _harde_bodem_vak(gecombineerd_laag)
+            bodem_hoog = _harde_bodem_vak(gecombineerd_hoog)
+            if bodem_laag is None or bodem_hoog is None:
+                geen_geschiedenis.update({gecombineerd_laag, gecombineerd_hoog})
+                continue
+            eenheden.append(([gecombineerd_laag, gecombineerd_hoog], max(bodem_laag, bodem_hoog)))
+            continue
+
+        bodem = _harde_bodem_vak(vaknummer)
+        if bodem is None:
+            geen_geschiedenis.add(vaknummer)
+        else:
+            eenheden.append(([vaknummer], bodem))
+
+    # --- Pass 1: greedy, met een ramp-up-cap (deze week hoogstens vorige week + 1) ---
+    # Begint bij de laatst al bestaande week (indien aanwezig), zodat een
+    # nieuwe aanroep netjes doorplant op de vorige.
+    weekplan = {}
+    cursor_week = None
+    vorige_week_count = 0
+    huidige_week_count = 0
+    if al_gepland:
+        laatste_bestaande = max(al_gepland.values())
+        cursor_week = laatste_bestaande - timedelta(days=laatste_bestaande.weekday())
+
+    for vakken, bodem in eenheden:
+        bodem_week = bodem - timedelta(days=bodem.weekday())
+        kandidaat = bodem_week if cursor_week is None else max(bodem_week, cursor_week)
+        cap = vorige_week_count + 1
+
+        if cursor_week is not None and kandidaat == cursor_week and huidige_week_count >= max(cap, 1):
+            kandidaat = cursor_week + timedelta(days=7)
+
+        if kandidaat != cursor_week:
+            vorige_week_count = huidige_week_count
+            cursor_week = kandidaat
+            huidige_week_count = 0
+
+        weekplan.setdefault(cursor_week, []).append((vakken, bodem))
+        huidige_week_count += 1
+
+    # --- Pass 2: itereren tot elk opeenvolgend weekpaar hoogstens 1 verschilt ---
+    def _grootste_afwijking(plan):
+        weken = sorted(plan)
+        for i in range(len(weken) - 1):
+            if abs(len(plan[weken[i]]) - len(plan[weken[i + 1]])) > 1:
+                return weken[i], weken[i + 1]
+        return None
+
+    for _ in range(2000):
+        afwijking = _grootste_afwijking(weekplan)
+        if afwijking is None:
+            break
+        w1, w2 = afwijking
+        if len(weekplan[w1]) > len(weekplan[w2]):
+            eenheid = weekplan[w1].pop()
+            weekplan.setdefault(w2, []).insert(0, eenheid)
+        else:
+            weken_sorted = sorted(weekplan)
+            idx = weken_sorted.index(w2)
+            volgende = weken_sorted[idx + 1] if idx + 1 < len(weken_sorted) else w2 + timedelta(days=7)
+            eenheid = weekplan[w2].pop(0)
+            weekplan.setdefault(volgende, []).append(eenheid)
+        weekplan = {k: v for k, v in weekplan.items() if v}
+
+    # --- Pass 3: vak 1 (indien nog te plannen) apart invoegen ---
+    if VAK_VOLGORDE_UITZONDERING not in al_gepland:
+        bodem_1 = _harde_bodem_vak(VAK_VOLGORDE_UITZONDERING)
+        if bodem_1 is None:
+            geen_geschiedenis.add(VAK_VOLGORDE_UITZONDERING)
+        else:
+            bodem_1_week = bodem_1 - timedelta(days=bodem_1.weekday())
+            kandidaten = sorted(w for w in weekplan if w >= bodem_1_week) or [bodem_1_week]
+            beste_week, beste_penalty = None, None
+            for w in [bodem_1_week] + kandidaten:
+                proef = {k: list(v) for k, v in weekplan.items()}
+                proef.setdefault(w, []).append(([VAK_VOLGORDE_UITZONDERING], bodem_1))
+                weken_sorted = sorted(proef)
+                penalty = sum(
+                    max(0, abs(len(proef[weken_sorted[i]]) - len(proef[weken_sorted[i + 1]])) - 1)
+                    for i in range(len(weken_sorted) - 1)
+                )
+                if beste_penalty is None or penalty < beste_penalty:
+                    beste_penalty, beste_week = penalty, w
+            weekplan.setdefault(beste_week, []).append(([VAK_VOLGORDE_UITZONDERING], bodem_1))
+
+    # --- Horizon toepassen: alleen weken t/m de gekozen horizon wegschrijven ---
+    gekozen_per_vak = {}
+    buiten_horizon = set()
+    for week_start, items in weekplan.items():
+        for vakken, bodem in items:
+            gekozen_start = max(bodem, week_start)
+            if gekozen_start > horizon_eind:
+                buiten_horizon.update(vakken)
+                continue
+            for vaknummer in vakken:
+                gekozen_per_vak[vaknummer] = gekozen_start
+
+    for vaknummer, gekozen_start in gekozen_per_vak.items():
+        voeg_planning_toe(vaknummer, gekozen_start, gebruiker=gebruiker)
+
+    resultaten = []
+    for vaknummer in range(1, 40):
+        if vaknummer in al_gepland:
+            resultaten.append((vaknummer, "al_gepland", al_gepland[vaknummer]))
+        elif vaknummer in gekozen_per_vak:
+            resultaten.append((vaknummer, "gepland", gekozen_per_vak[vaknummer]))
+        elif vaknummer in buiten_horizon:
+            resultaten.append((vaknummer, "buiten_horizon", None))
+        elif vaknummer in geen_geschiedenis:
+            resultaten.append((vaknummer, "geen_geschiedenis", None))
+
+    return resultaten
 
