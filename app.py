@@ -4,7 +4,8 @@ import secrets
 import streamlit as st
 import streamlit_authenticator as stauth
 import pandas as pd
-from datetime import datetime, timedelta
+import altair as alt
+from datetime import datetime, timedelta, date
 from database import (
     init_db,
     start_nieuwe_teelt,
@@ -43,6 +44,7 @@ from database import (
     plan_x_weken_vooruit,
     bereken_verwachte_oogstdatum,
     get_lege_vakken_per_week,
+    get_strokenplanning,
 )
 
 # --- PAGINA-INSTELLINGEN ---
@@ -59,6 +61,87 @@ st.markdown("""
 [data-testid="stMetricLabel"] { font-size: 0.8rem; }
 </style>
 """, unsafe_allow_html=True)
+
+
+# Vaste kleur per afdeling, zodat afd. 1 overal dezelfde kleur heeft.
+AFDELING_KLEUR = {1: "#2a78d6", 2: "#eb6834", 3: "#1baf7a", 4: "#eda100"}
+
+
+def klimaat_grafieken(dagen_records, toon_dagnacht=False, temp_max=30, licht_max=2500):
+    """
+    Tekent twee grafieken uit dagrecords (dicts met datum, afdeling, temp_24h,
+    temp_dag, temp_nacht, rv_24h, rv_dag, rv_nacht, lichtsom):
+    1) temperatuur als lijn (linker-as 0..temp_max) gecombineerd met de
+       lichtsom per dag als staaf (rechter-as 0..licht_max, gemiddeld over de
+       gekozen afdelingen);
+    2) relatieve luchtvochtigheid als lijn.
+    De assen zijn temporeel, dus altijd chronologisch.
+    """
+    if not dagen_records:
+        st.caption("Geen klimaatdata in deze periode.")
+        return
+
+    df = pd.DataFrame(dagen_records)
+    df["datum"] = pd.to_datetime(df["datum"])
+    df["Afdeling"] = "Afd. " + df["afdeling"].astype(str)
+    afdelingen = sorted(df["afdeling"].unique())
+    kleur = alt.Color(
+        "Afdeling:N",
+        scale=alt.Scale(
+            domain=[f"Afd. {a}" for a in afdelingen],
+            range=[AFDELING_KLEUR.get(a, "#8a8a80") for a in afdelingen],
+        ),
+        legend=alt.Legend(title=None, orient="top"),
+    )
+    streepjes = (
+        alt.StrokeDash("Deel:N", legend=alt.Legend(title=None, orient="top"))
+        if toon_dagnacht else alt.value([1, 0])
+    )
+    x_as = alt.X("datum:T", title=None)
+
+    def _lang(prefix):
+        varianten = [(f"{prefix}_24h", "24h")]
+        if toon_dagnacht:
+            varianten += [(f"{prefix}_dag", "dag"), (f"{prefix}_nacht", "nacht")]
+        etiket = dict(varianten)
+        lang = df.melt(
+            id_vars=["datum", "Afdeling"], value_vars=list(etiket),
+            var_name="_v", value_name="waarde",
+        ).dropna(subset=["waarde"])
+        lang["Deel"] = lang["_v"].map(etiket)
+        return lang
+
+    licht = df.groupby("datum", as_index=False)["lichtsom"].mean().dropna(subset=["lichtsom"])
+    licht_laag = alt.Chart(licht).mark_bar(color="#e7c98a", opacity=0.75).encode(
+        x=x_as,
+        y=alt.Y("lichtsom:Q", title="Lichtsom per dag",
+                scale=alt.Scale(domain=[0, licht_max], clamp=True)),
+        tooltip=[alt.Tooltip("datum:T", title="datum", format="%d-%m-%y"),
+                 alt.Tooltip("lichtsom:Q", title="lichtsom", format=".0f")],
+    )
+    temp_laag = alt.Chart(_lang("temp")).mark_line().encode(
+        x=x_as,
+        y=alt.Y("waarde:Q", title="Temperatuur (°C)",
+                scale=alt.Scale(domain=[0, temp_max], clamp=True)),
+        color=kleur, strokeDash=streepjes,
+        tooltip=[alt.Tooltip("datum:T", title="datum", format="%d-%m-%y"),
+                 "Afdeling:N", "Deel:N", alt.Tooltip("waarde:Q", title="°C", format=".1f")],
+    )
+    st.caption("Temperatuur (lijn, links) + lichtsom per dag (staaf, gemiddeld over de afdelingen, rechts)")
+    st.altair_chart(
+        alt.layer(licht_laag, temp_laag).resolve_scale(y="independent"),
+        use_container_width=True,
+    )
+
+    rv_chart = alt.Chart(_lang("rv")).mark_line().encode(
+        x=x_as,
+        y=alt.Y("waarde:Q", title="RV (%)"),
+        color=kleur, strokeDash=streepjes,
+        tooltip=[alt.Tooltip("datum:T", title="datum", format="%d-%m-%y"),
+                 "Afdeling:N", "Deel:N", alt.Tooltip("waarde:Q", title="%", format=".0f")],
+    )
+    st.caption("Relatieve luchtvochtigheid (%)")
+    st.altair_chart(rv_chart, use_container_width=True)
 
 
 # --- INITIALISATIE ---
@@ -872,8 +955,65 @@ with tab_planning:
         "Concept-planning voor toekomstige teelten: plant vooruit vanaf waar de huidige teelt van "
         "elk vak en de bestaande concept-planning gebleven zijn. Vak 19+20 worden als één eenheid "
         "gepland, vak 1 is een uitzondering op de vaste onderlinge volgorde, en het aantal vakken "
-        "per week verschilt nooit meer dan 1 met de vorige/volgende week."
+        "per week verschilt nooit meer dan 1 met de vorige/volgende week. Binnen een week worden de "
+        "vakken over maandag t/m donderdag verdeeld (laagste vaknummer op maandag). De teeltduur-tabel "
+        "is een gemiddelde: een vak mag tot een halve week eerder gepland worden als dat de weken "
+        "gelijkmatiger maakt."
     )
+
+    # --- Strokenplanning (Gantt): vakken verticaal, weken horizontaal ---
+    stroken = get_strokenplanning(weken_terug=8)
+    if stroken:
+        df_stroken = pd.DataFrame(stroken)
+        df_stroken["start"] = pd.to_datetime(df_stroken["start"])
+        df_stroken["eind"] = pd.to_datetime(df_stroken["eind"])
+
+        kleur = alt.Color(
+            "status:N",
+            scale=alt.Scale(
+                domain=["afgerond", "lopend", "concept"],
+                range=["#b8b8b3", "#1baf7a", "#2a78d6"],
+            ),
+            legend=alt.Legend(title=None, orient="top"),
+        )
+        balken = (
+            alt.Chart(df_stroken)
+            .mark_bar(height=13, cornerRadius=3, stroke="white", strokeWidth=1)
+            .encode(
+                y=alt.Y(
+                    "vaknummer:O", title="Vak", sort="ascending",
+                    scale=alt.Scale(domain=list(range(1, 40))),
+                ),
+                x=alt.X(
+                    "start:T", title="Week",
+                    axis=alt.Axis(format="%V", tickCount={"interval": "week", "step": 2}, grid=True),
+                ),
+                x2="eind:T",
+                color=kleur,
+                tooltip=[
+                    alt.Tooltip("vaknummer:O", title="Vak"),
+                    alt.Tooltip("label:N", title="Teelt"),
+                    alt.Tooltip("status:N", title="Status"),
+                    alt.Tooltip("start:T", title="Start", format="%d-%m-%y"),
+                    alt.Tooltip("eind:T", title="Oogst", format="%d-%m-%y"),
+                ],
+            )
+        )
+        vandaag_lijn = (
+            alt.Chart(pd.DataFrame({"d": [pd.Timestamp(date.today())]}))
+            .mark_rule(color="#e34948", strokeDash=[4, 3])
+            .encode(x="d:T")
+        )
+        st.altair_chart(
+            (balken + vandaag_lijn).properties(height=640).configure_view(strokeOpacity=0),
+            use_container_width=True,
+        )
+        st.caption(
+            "Strokenplanning: grijs = afgerond, groen = lopende teelt, blauw = concept-planning. "
+            "Getal op de as = ISO-weeknummer; rode stippellijn = vandaag. Oogstdatum van lopende "
+            "teelten en concepten is de verwachte datum uit de teeltduur-tabel."
+        )
+        st.markdown("---")
 
     st.write("**X weken vooruit plannen**")
     col_weken, col_knop = st.columns([1, 2])
@@ -1057,31 +1197,7 @@ with tab_klimaat:
         except Exception as e:
             st.error(f"❌ Kon de CSV niet verwerken: {e}")
 
-    # --- Geimporteerd t/m: per afdeling tot welke dag er data is ---
     dekking = get_klimaatdata_dekking()
-    if dekking:
-        st.write("**Geïmporteerd t/m**")
-        laatste_alle = max(r[2] for r in dekking)
-        dekking_rijen = []
-        for afdeling, eerste, laatste, aantal, ontbrekend in dekking:
-            achterstand = (
-                datetime.strptime(laatste_alle, "%Y-%m-%d").date()
-                - datetime.strptime(laatste, "%Y-%m-%d").date()
-            ).days
-            dekking_rijen.append({
-                "Afdeling": afdeling,
-                "Eerste dag": format_datum(eerste),
-                "Laatste dag": format_datum(laatste),
-                "Dagen": aantal,
-                "Gaten": ontbrekend,
-                "Achter op nieuwste": f"{achterstand} dg" if achterstand else "-",
-            })
-        st.dataframe(pd.DataFrame(dekking_rijen), use_container_width=True, hide_index=True)
-        dagen_oud = (datetime.today().date() - datetime.strptime(laatste_alle, "%Y-%m-%d").date()).days
-        st.caption(
-            f"Nieuwste geïmporteerde dag: {format_datum(laatste_alle)} "
-            f"({dagen_oud} dag(en) geleden). 'Gaten' = ontbrekende dagen tussen eerste en laatste dag."
-        )
 
     kolommen_klimaat, rijen_klimaat = get_klimaat_overzicht_dataframe()
     if rijen_klimaat:
@@ -1116,46 +1232,52 @@ with tab_klimaat:
             "Tot en met", value=data_laatste, min_value=data_eerste, max_value=data_laatste,
             key="klimaat_grafiek_tot", format="DD-MM-YYYY",
         )
+        toon_dagnacht = st.checkbox(
+            "Toon ook dag- en nachtgemiddelde", value=False, key="klimaat_grafiek_dagnacht"
+        )
 
         if gekozen_afdelingen and datum_van <= datum_tot:
-            rec_temp, rec_rv, rec_straling = [], [], []
+            records = []
             for afdeling in sorted(gekozen_afdelingen):
-                dagen = get_klimaatdata_dagen_voor_periode(afdeling, datum_van, datum_tot)
-                for datum, temp, rv, straling, temp_dag, temp_nacht, rv_dag, rv_nacht in dagen:
-                    d = pd.to_datetime(datum)
-                    rec_temp.append({"datum": d, f"Afd. {afdeling} (24h)": temp,
-                                     f"Afd. {afdeling} dag": temp_dag, f"Afd. {afdeling} nacht": temp_nacht})
-                    rec_rv.append({"datum": d, f"Afd. {afdeling} (24h)": rv,
-                                   f"Afd. {afdeling} dag": rv_dag, f"Afd. {afdeling} nacht": rv_nacht})
-                    rec_straling.append({"datum": d, f"Afd. {afdeling}": straling})
-
-            def _reeks(records):
-                if not records:
-                    return None
-                d = pd.DataFrame(records).groupby("datum").first().sort_index()
-                return d if not d.dropna(how="all").empty else None
-
-            df_g_temp = _reeks(rec_temp)
-            df_g_rv = _reeks(rec_rv)
-            df_g_straling = _reeks(rec_straling)
-
-            if df_g_temp is None:
-                st.caption("Geen klimaatdata in deze periode voor de gekozen afdeling(en).")
-            else:
-                toon_dagnacht = st.checkbox(
-                    "Toon ook dag- en nachtgemiddelde", value=False, key="klimaat_grafiek_dagnacht"
-                )
-                if not toon_dagnacht:
-                    df_g_temp = df_g_temp[[c for c in df_g_temp.columns if "(24h)" in c]]
-                    df_g_rv = df_g_rv[[c for c in df_g_rv.columns if "(24h)" in c]]
-                st.caption("Temperatuur (°C)")
-                st.line_chart(df_g_temp)
-                st.caption("Relatieve luchtvochtigheid (%)")
-                st.line_chart(df_g_rv)
-                st.caption("Lichtsom per dag")
-                st.line_chart(df_g_straling)
+                for datum, temp, rv, straling, temp_dag, temp_nacht, rv_dag, rv_nacht in \
+                        get_klimaatdata_dagen_voor_periode(afdeling, datum_van, datum_tot):
+                    records.append({
+                        "datum": datum, "afdeling": afdeling,
+                        "temp_24h": temp, "temp_dag": temp_dag, "temp_nacht": temp_nacht,
+                        "rv_24h": rv, "rv_dag": rv_dag, "rv_nacht": rv_nacht,
+                        "lichtsom": straling,
+                    })
+            klimaat_grafieken(records, toon_dagnacht=toon_dagnacht)
         elif datum_van > datum_tot:
             st.warning("'Van' ligt na 'Tot en met'.")
+
+    # --- Geïmporteerd t/m: per afdeling tot welke dag er data is (onderaan) ---
+    if dekking:
+        st.markdown("---")
+        st.write("**Geïmporteerd t/m**")
+        laatste_alle = max(r[2] for r in dekking)
+        dekking_rijen = []
+        for afdeling, eerste, laatste, aantal, ontbrekend in dekking:
+            achterstand = (
+                datetime.strptime(laatste_alle, "%Y-%m-%d").date()
+                - datetime.strptime(laatste, "%Y-%m-%d").date()
+            ).days
+            dekking_rijen.append({
+                "Afdeling": afdeling,
+                "Eerste dag": format_datum(eerste),
+                "Laatste dag": format_datum(laatste),
+                "Dagen": aantal,
+                "Ontbrekende dagen": ontbrekend,
+                "Loopt achter": f"{achterstand} dg" if achterstand else "-",
+            })
+        st.dataframe(pd.DataFrame(dekking_rijen), use_container_width=True, hide_index=True)
+        dagen_oud = (datetime.today().date() - datetime.strptime(laatste_alle, "%Y-%m-%d").date()).days
+        st.caption(
+            f"Nieuwste geïmporteerde dag: {format_datum(laatste_alle)} ({dagen_oud} dag(en) geleden). "
+            "**Ontbrekende dagen** = dagen tussen de eerste en laatste dag zonder data (bijv. overgeslagen "
+            "omdat de dag nog niet compleet was bij het uploaden). **Loopt achter** = hoeveel dagen die "
+            "afdeling achterloopt op de afdeling met de meest recente data (0 = alles gelijk geïmporteerd)."
+        )
 
 # --- STATISTIEKEN ---
 with tab_stats:
@@ -1163,10 +1285,21 @@ with tab_stats:
     if rijen:
         df_stats = pd.DataFrame(rijen, columns=kolommen)
 
-        # Teelten per vak
+        # Teelten per vak (op vaknummer-volgorde, laag naar hoog)
         st.write("**Teelten per vak:**")
-        teelten_per_vak = df_stats['Teeltvak'].value_counts()
-        st.bar_chart(teelten_per_vak)
+        per_vak = (
+            pd.to_numeric(df_stats['Teeltvak'], errors='coerce').dropna().astype(int)
+            .value_counts().reindex(range(1, 40), fill_value=0)
+            .rename_axis('Vak').reset_index(name='Aantal teelten')
+        )
+        st.altair_chart(
+            alt.Chart(per_vak).mark_bar().encode(
+                x=alt.X('Vak:O', title='Vak'),
+                y=alt.Y('Aantal teelten:Q', title='Aantal teelten'),
+                tooltip=['Vak:O', 'Aantal teelten:Q'],
+            ),
+            use_container_width=True,
+        )
 
         # Teeltduur analyse
         df_afgerond = df_stats[df_stats['Oogstdatum'] != '-'].copy()

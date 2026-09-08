@@ -1136,6 +1136,12 @@ TEELTDUUR_PER_PLANTWEEK = {
 # marge (0 tot dit maximum) gebruikt om de planning gelijkmatiger te maken.
 WISSELTIJD_DAGEN = 4
 
+# De teeltduur-per-plantweek-tabel is een gemiddelde, geen harde waarde. Bij het
+# vooruitplannen mag een vak daarom tot een halve week eerder gepland worden dan
+# de tabel strikt zou zeggen, zodat het nivelleren (aantal vakken per week gelijk
+# houden) wat speling heeft. Later plannen kan het algoritme sowieso al vrij.
+TEELTDUUR_SPELING_DAGEN = 4
+
 # Vak 19 en 20 zijn qua formaat/aantal samen gelijk aan één regulier vak
 # en worden daarom als één eenheid gepland (altijd dezelfde week).
 VAK_GECOMBINEERD = (19, 20)
@@ -1167,10 +1173,12 @@ def bereken_verwachte_oogstdatum(datum_start):
 
 def _harde_bodem_vak(vaknummer):
     """
-    Geeft de harde ondergrens voor een vak terug: de verwachte oogstdatum
-    van de meest recente teelt (werkelijk als al afgerond, anders berekend
-    via de teeltduur-tabel), zónder wisseltijd. Een vak kan nooit eerder dan
-    dit gepland worden. Geeft None terug als het vak nog geen teeltgeschiedenis heeft.
+    Geeft de ondergrens voor een vak terug: de oogstdatum van de meest
+    recente teelt. Is die teelt al afgerond, dan telt de werkelijke
+    oogstdatum (hard). Loopt de teelt nog, dan is het de via de
+    teeltduur-tabel verwachte oogstdatum minus TEELTDUUR_SPELING_DAGEN —
+    de tabel is een gemiddelde, dus een halve week eerder mag. Zónder
+    wisseltijd. Geeft None terug als het vak nog geen teeltgeschiedenis heeft.
     """
     with get_connection() as conn:
         cursor = conn.cursor()
@@ -1190,7 +1198,9 @@ def _harde_bodem_vak(vaknummer):
     if oogst:
         return datetime.strptime(oogst, "%Y-%m-%d").date()
     _, verwacht = bereken_verwachte_oogstdatum(start)
-    return verwacht
+    if verwacht is None:
+        return None
+    return verwacht - timedelta(days=TEELTDUUR_SPELING_DAGEN)
 
 
 def voeg_planning_toe(vaknummer, verwachte_startdatum, notitie=None, gebruiker=None):
@@ -1499,11 +1509,21 @@ def plan_x_weken_vooruit(aantal_weken, gebruiker=None):
             weekplan.setdefault(beste_week, []).append(([VAK_VOLGORDE_UITZONDERING], bodem_1))
 
     # --- Horizon toepassen: alleen weken t/m de gekozen horizon wegschrijven ---
+    # Binnen een plantweek worden de vakken over ma/di/wo/do verdeeld i.p.v.
+    # allemaal op maandag: het eerste vak (laagste nummer) op maandag, het
+    # tweede op dinsdag, enz. Zijn er meer dan 4 eenheden, dan stapelen de
+    # extra's vooraan (maandag krijgt er als eerste een bij, dan dinsdag, ...).
     gekozen_per_vak = {}
     buiten_horizon = set()
     for week_start, items in weekplan.items():
-        for vakken, bodem in items:
-            gekozen_start = max(bodem, week_start)
+        items_op_volgorde = sorted(items, key=lambda it: min(it[0]))
+        basis, rest = divmod(len(items_op_volgorde), 4)
+        dag_offsets = []
+        for dag in range(4):
+            dag_offsets += [dag] * (basis + (1 if dag < rest else 0))
+
+        for dag_offset, (vakken, bodem) in zip(dag_offsets, items_op_volgorde):
+            gekozen_start = max(bodem, week_start + timedelta(days=dag_offset))
             if gekozen_start > horizon_eind:
                 buiten_horizon.update(vakken)
                 continue
@@ -1563,4 +1583,56 @@ def get_lege_vakken_per_week(aantal_weken=12):
         resultaat.append((jaar, week, len(leeg), leeg))
 
     return resultaat
+
+
+def get_strokenplanning(weken_terug=8):
+    """
+    Bouwt de gegevens voor een strokenplanning (Gantt): per vak elke teelt
+    en elke concept-planning als balk van startdatum tot (verwachte) oogst.
+
+    Geeft een lijst dicts terug met: vaknummer, soort ('teelt'/'concept'),
+    status ('afgerond'/'lopend'/'concept'), label (code of 'concept'),
+    start (date), eind (date). Teelten die meer dan `weken_terug` weken
+    geleden zijn geoogst worden weggelaten; concept-planningen altijd getoond.
+    """
+    ondergrens = date.today() - timedelta(weeks=weken_terug)
+    rijen = []
+
+    for t in get_alle_teelten_detail():
+        start = datetime.strptime(t["datum_teelt_start"], "%Y-%m-%d").date()
+        if t["datum_oogst"]:
+            eind = datetime.strptime(t["datum_oogst"], "%Y-%m-%d").date()
+            status = "afgerond"
+        else:
+            _, verwacht = bereken_verwachte_oogstdatum(t["datum_teelt_start"])
+            eind = verwacht or (start + timedelta(weeks=8))
+            status = "lopend"
+        if eind < ondergrens:
+            continue
+        rijen.append({
+            "vaknummer": t["vaknummer"],
+            "soort": "teelt",
+            "status": status,
+            "label": t["code"] or f"ID{t['id']}",
+            "start": start,
+            "eind": eind,
+        })
+
+    for _pid, vaknummer, start, _duur, eind, _notitie in get_planning():
+        start_d = datetime.strptime(start, "%Y-%m-%d").date()
+        eind_d = (
+            datetime.strptime(eind, "%Y-%m-%d").date() if eind
+            else start_d + timedelta(weeks=8)
+        )
+        rijen.append({
+            "vaknummer": vaknummer,
+            "soort": "concept",
+            "status": "concept",
+            "label": "concept",
+            "start": start_d,
+            "eind": eind_d,
+        })
+
+    rijen.sort(key=lambda r: (r["vaknummer"], r["start"]))
+    return rijen
 
