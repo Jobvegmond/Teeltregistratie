@@ -850,13 +850,13 @@ def get_overzicht_dataframe():
 
         rijen_uitgebreid.append((
             teelt_id,
+            str(start) if start else "",  # verborgen sorteersleutel (ISO)
             naam,
             start_week,
-            format_datum(start) if start else "-",
             status,
-            f"{format_datum(half_datum)} (week {get_weeknummer(half_datum)})" if half_datum else "-",
+            get_weeknummer(half_datum) if half_datum else "-",
             half_lengte if half_lengte else "-",
-            f"{format_datum(oogst_datum)} (week {get_weeknummer(oogst_datum)})" if oogst_datum else "-",
+            get_weeknummer(oogst_datum) if oogst_datum else "-",
             teeltduur,
             eind_lengte if eind_lengte else "-",
             round(gewicht) if gewicht else "-",
@@ -866,12 +866,16 @@ def get_overzicht_dataframe():
             totaal_emmers if totaal_emmers else "-",
             totaal_stelen,
             code if code else "-",
+            format_datum(start) if start else "-",
+            format_datum(half_datum) if half_datum else "-",
+            format_datum(oogst_datum) if oogst_datum else "-",
         ))
 
-    kolommen = ["ID", "Teeltvak", "Startweek", "Startdatum", "Status", "Datum Halverwege", "Lengte Half (cm)",
-                "Oogstdatum", "Teeltduur (dagen)", "Oogstlengte (cm)", "Oogstgewicht (gram)",
-                "Rijpheid", "Uitval (%)", "Aantal Planten", "Aantal Emmers", "Aantal Stelen",
-                "Code"]
+    kolommen = ["ID", "_startdatum_iso", "Teeltvak", "Startweek", "Status",
+                "Week Halverwege", "Lengte Half (cm)", "Oogstweek", "Teeltduur (dagen)",
+                "Oogstlengte (cm)", "Oogstgewicht (gram)", "Rijpheid", "Uitval (%)",
+                "Aantal Planten", "Aantal Emmers", "Aantal Stelen", "Code",
+                "Startdatum", "Datum Halverwege", "Oogstdatum"]
     return kolommen, rijen_uitgebreid
 
 
@@ -1040,6 +1044,33 @@ def get_klimaatdata_dagen_voor_periode(afdeling, datum_start, datum_eind):
             ORDER BY datum
         """, (afdeling, str(datum_start), str(datum_eind)))
         return cursor.fetchall()
+
+
+def get_klimaatdata_dekking():
+    """
+    Geeft per afdeling terug tot welke dag er klimaatdata is geimporteerd:
+    (afdeling, eerste_datum, laatste_datum, aantal_dagen, ontbrekende_dagen).
+    ontbrekende_dagen = het aantal kalenderdagen tussen eerste en laatste dag
+    waarvoor geen rij bestaat (gaten in de import). Gesorteerd op afdeling.
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT afdeling, MIN(datum), MAX(datum), COUNT(*)
+            FROM klimaatdata_dag
+            GROUP BY afdeling
+            ORDER BY afdeling
+        """)
+        rijen = cursor.fetchall()
+
+    resultaat = []
+    for afdeling, eerste, laatste, aantal in rijen:
+        eerste_d = datetime.strptime(str(eerste), "%Y-%m-%d").date()
+        laatste_d = datetime.strptime(str(laatste), "%Y-%m-%d").date()
+        verwacht = (laatste_d - eerste_d).days + 1
+        ontbrekend = max(verwacht - aantal, 0)
+        resultaat.append((afdeling, str(eerste), str(laatste), aantal, ontbrekend))
+    return resultaat
 
 
 def get_klimaat_overzicht_dataframe():

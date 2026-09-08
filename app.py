@@ -4,7 +4,7 @@ import secrets
 import streamlit as st
 import streamlit_authenticator as stauth
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 from database import (
     init_db,
     start_nieuwe_teelt,
@@ -28,6 +28,7 @@ from database import (
     get_klimaat_overzicht_dataframe,
     afdeling_van_vaknummer,
     get_klimaatdata_dagen_voor_periode,
+    get_klimaatdata_dekking,
     get_klimaat_voor_periode,
     get_teeltduur,
     get_alle_teelten_detail,
@@ -628,14 +629,19 @@ with tab_overzicht:
         # Lopende teelten + nog te starten altijd zichtbaar; afgeronde teelten
         # in een dichtgeklapte uitklapper zodat de tabel opent op de scheiding
         # tussen de laatste afgeronde en de eerste lopende teelt.
-        df_zichtbaar = df.drop(columns=['ID'])
-        df_ov_actief = df_zichtbaar[df_zichtbaar['Status'] != 'Afgerond']
-        df_ov_afgerond = df_zichtbaar[df_zichtbaar['Status'] == 'Afgerond']
+        verborgen = ['ID', '_startdatum_iso']
+        mask_afgerond = df['Status'] == 'Afgerond'
+        df_ov_actief = df.loc[~mask_afgerond].drop(columns=verborgen)
+        df_ov_afgerond = (
+            df.loc[mask_afgerond]
+            .sort_values('_startdatum_iso', ascending=False)
+            .drop(columns=verborgen)
+        )
 
         st.dataframe(df_ov_actief, use_container_width=True, hide_index=True)
 
         if not df_ov_afgerond.empty:
-            with st.expander(f"Toon afgeronde teelten ({len(df_ov_afgerond)})"):
+            with st.expander(f"Toon afgeronde teelten ({len(df_ov_afgerond)}) — nieuwste startdatum eerst"):
                 st.dataframe(df_ov_afgerond, use_container_width=True, hide_index=True)
 
         # Statistieken
@@ -803,8 +809,8 @@ with tab_detail:
         if alle_registraties:
             df_oogst = pd.DataFrame(alle_registraties, columns=["id", "datum", "emmers"])
             df_oogst_som = df_oogst.groupby("datum", as_index=False)["emmers"].sum()
-            df_oogst_som["datum"] = df_oogst_som["datum"].apply(format_datum)
-            df_oogst_som = df_oogst_som.set_index("datum")
+            df_oogst_som["datum"] = pd.to_datetime(df_oogst_som["datum"])
+            df_oogst_som = df_oogst_som.set_index("datum").sort_index()
             st.bar_chart(df_oogst_som["emmers"])
             st.line_chart(df_oogst_som["emmers"].cumsum().rename("Cumulatief aantal emmers"))
         else:
@@ -838,7 +844,7 @@ with tab_detail:
                 df = pd.DataFrame(records).groupby("datum", as_index=True).first().sort_index()
                 if df.dropna(how="all").empty:
                     return None
-                df.index = [format_datum(d) for d in df.index]
+                df.index = pd.to_datetime(df.index)
                 return df
 
             df_temp = _pivot_klimaat(records_temp)
@@ -1051,16 +1057,105 @@ with tab_klimaat:
         except Exception as e:
             st.error(f"❌ Kon de CSV niet verwerken: {e}")
 
+    # --- Geimporteerd t/m: per afdeling tot welke dag er data is ---
+    dekking = get_klimaatdata_dekking()
+    if dekking:
+        st.write("**Geïmporteerd t/m**")
+        laatste_alle = max(r[2] for r in dekking)
+        dekking_rijen = []
+        for afdeling, eerste, laatste, aantal, ontbrekend in dekking:
+            achterstand = (
+                datetime.strptime(laatste_alle, "%Y-%m-%d").date()
+                - datetime.strptime(laatste, "%Y-%m-%d").date()
+            ).days
+            dekking_rijen.append({
+                "Afdeling": afdeling,
+                "Eerste dag": format_datum(eerste),
+                "Laatste dag": format_datum(laatste),
+                "Dagen": aantal,
+                "Gaten": ontbrekend,
+                "Achter op nieuwste": f"{achterstand} dg" if achterstand else "-",
+            })
+        st.dataframe(pd.DataFrame(dekking_rijen), use_container_width=True, hide_index=True)
+        dagen_oud = (datetime.today().date() - datetime.strptime(laatste_alle, "%Y-%m-%d").date()).days
+        st.caption(
+            f"Nieuwste geïmporteerde dag: {format_datum(laatste_alle)} "
+            f"({dagen_oud} dag(en) geleden). 'Gaten' = ontbrekende dagen tussen eerste en laatste dag."
+        )
+
     kolommen_klimaat, rijen_klimaat = get_klimaat_overzicht_dataframe()
     if rijen_klimaat:
+        st.write("**Gemiddelden per teelt**")
         df_klimaat = pd.DataFrame(rijen_klimaat, columns=kolommen_klimaat)
-        st.dataframe(df_klimaat, use_container_width=True)
+        st.dataframe(df_klimaat, use_container_width=True, hide_index=True)
     else:
         st.info(
             "Nog geen gekoppelde klimaatdata. Upload hierboven een CSV-export uit de klimaatcomputer; "
             "de gemiddelde temperatuur, gemiddelde RV en gemiddelde dagstralingssom worden automatisch "
             "gekoppeld aan elke teelt op basis van vaknummer (→ afdeling) en teeltperiode."
         )
+
+    # --- Grafieken: klimaatverloop per afdeling over een vrije periode ---
+    if dekking:
+        st.markdown("---")
+        st.write("**Grafieken**")
+        alle_afdelingen = [r[0] for r in dekking]
+        data_eerste = datetime.strptime(min(r[1] for r in dekking), "%Y-%m-%d").date()
+        data_laatste = datetime.strptime(max(r[2] for r in dekking), "%Y-%m-%d").date()
+
+        col_afd, col_van, col_tot = st.columns([2, 1, 1])
+        gekozen_afdelingen = col_afd.multiselect(
+            "Afdeling(en)", alle_afdelingen, default=alle_afdelingen, key="klimaat_grafiek_afd"
+        )
+        standaard_van = max(data_eerste, data_laatste - timedelta(days=90))
+        datum_van = col_van.date_input(
+            "Van", value=standaard_van, min_value=data_eerste, max_value=data_laatste,
+            key="klimaat_grafiek_van", format="DD-MM-YYYY",
+        )
+        datum_tot = col_tot.date_input(
+            "Tot en met", value=data_laatste, min_value=data_eerste, max_value=data_laatste,
+            key="klimaat_grafiek_tot", format="DD-MM-YYYY",
+        )
+
+        if gekozen_afdelingen and datum_van <= datum_tot:
+            rec_temp, rec_rv, rec_straling = [], [], []
+            for afdeling in sorted(gekozen_afdelingen):
+                dagen = get_klimaatdata_dagen_voor_periode(afdeling, datum_van, datum_tot)
+                for datum, temp, rv, straling, temp_dag, temp_nacht, rv_dag, rv_nacht in dagen:
+                    d = pd.to_datetime(datum)
+                    rec_temp.append({"datum": d, f"Afd. {afdeling} (24h)": temp,
+                                     f"Afd. {afdeling} dag": temp_dag, f"Afd. {afdeling} nacht": temp_nacht})
+                    rec_rv.append({"datum": d, f"Afd. {afdeling} (24h)": rv,
+                                   f"Afd. {afdeling} dag": rv_dag, f"Afd. {afdeling} nacht": rv_nacht})
+                    rec_straling.append({"datum": d, f"Afd. {afdeling}": straling})
+
+            def _reeks(records):
+                if not records:
+                    return None
+                d = pd.DataFrame(records).groupby("datum").first().sort_index()
+                return d if not d.dropna(how="all").empty else None
+
+            df_g_temp = _reeks(rec_temp)
+            df_g_rv = _reeks(rec_rv)
+            df_g_straling = _reeks(rec_straling)
+
+            if df_g_temp is None:
+                st.caption("Geen klimaatdata in deze periode voor de gekozen afdeling(en).")
+            else:
+                toon_dagnacht = st.checkbox(
+                    "Toon ook dag- en nachtgemiddelde", value=False, key="klimaat_grafiek_dagnacht"
+                )
+                if not toon_dagnacht:
+                    df_g_temp = df_g_temp[[c for c in df_g_temp.columns if "(24h)" in c]]
+                    df_g_rv = df_g_rv[[c for c in df_g_rv.columns if "(24h)" in c]]
+                st.caption("Temperatuur (°C)")
+                st.line_chart(df_g_temp)
+                st.caption("Relatieve luchtvochtigheid (%)")
+                st.line_chart(df_g_rv)
+                st.caption("Lichtsom per dag")
+                st.line_chart(df_g_straling)
+        elif datum_van > datum_tot:
+            st.warning("'Van' ligt na 'Tot en met'.")
 
 # --- STATISTIEKEN ---
 with tab_stats:
