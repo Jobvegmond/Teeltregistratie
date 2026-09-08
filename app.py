@@ -47,7 +47,7 @@ from database import (
 # --- PAGINA-INSTELLINGEN ---
 # Moet de eerste Streamlit-aanroep zijn. Bepaalt o.a. de titel van het
 # browsertabblad.
-st.set_page_config(page_title="VEM teeltregistratie", page_icon="🌱")
+st.set_page_config(page_title="VEM teeltregistratie", page_icon="🌱", layout="wide")
 
 # Standaard rendert Streamlit st.metric-waarden in een erg groot lettertype;
 # hier wereldwijd verkleind zodat de kopgegevens (bijv. bij Teelt-detail)
@@ -624,8 +624,19 @@ with tab_overzicht:
         # Maak een DataFrame van de rijen (zonder de ID-kolom voor display)
         df = pd.DataFrame(rijen, columns=kolommen)
 
-        # Rijen komen al gesorteerd uit de database (op code, laag naar hoog)
-        st.dataframe(df.drop(columns=['ID']), use_container_width=True)
+        # Rijen komen al gesorteerd uit de database (op code, laag naar hoog).
+        # Lopende teelten + nog te starten altijd zichtbaar; afgeronde teelten
+        # in een dichtgeklapte uitklapper zodat de tabel opent op de scheiding
+        # tussen de laatste afgeronde en de eerste lopende teelt.
+        df_zichtbaar = df.drop(columns=['ID'])
+        df_ov_actief = df_zichtbaar[df_zichtbaar['Status'] != 'Afgerond']
+        df_ov_afgerond = df_zichtbaar[df_zichtbaar['Status'] == 'Afgerond']
+
+        st.dataframe(df_ov_actief, use_container_width=True, hide_index=True)
+
+        if not df_ov_afgerond.empty:
+            with st.expander(f"Toon afgeronde teelten ({len(df_ov_afgerond)})"):
+                st.dataframe(df_ov_afgerond, use_container_width=True, hide_index=True)
 
         # Statistieken
         col1, col2, col3, col4 = st.columns(4)

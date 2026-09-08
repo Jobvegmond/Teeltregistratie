@@ -850,9 +850,10 @@ def get_overzicht_dataframe():
 
         rijen_uitgebreid.append((
             teelt_id,
-            f"{format_datum(start)} (week {start_week})" if start else "-",
-            status,
             naam,
+            start_week,
+            format_datum(start) if start else "-",
+            status,
             f"{format_datum(half_datum)} (week {get_weeknummer(half_datum)})" if half_datum else "-",
             half_lengte if half_lengte else "-",
             f"{format_datum(oogst_datum)} (week {get_weeknummer(oogst_datum)})" if oogst_datum else "-",
@@ -867,7 +868,7 @@ def get_overzicht_dataframe():
             code if code else "-",
         ))
 
-    kolommen = ["ID", "Startdatum", "Status", "Teeltvak", "Datum Halverwege", "Lengte Half (cm)",
+    kolommen = ["ID", "Teeltvak", "Startweek", "Startdatum", "Status", "Datum Halverwege", "Lengte Half (cm)",
                 "Oogstdatum", "Teeltduur (dagen)", "Oogstlengte (cm)", "Oogstgewicht (gram)",
                 "Rijpheid", "Uitval (%)", "Aantal Planten", "Aantal Emmers", "Aantal Stelen",
                 "Code"]
