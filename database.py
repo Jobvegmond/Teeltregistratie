@@ -1136,12 +1136,6 @@ TEELTDUUR_PER_PLANTWEEK = {
 # marge (0 tot dit maximum) gebruikt om de planning gelijkmatiger te maken.
 WISSELTIJD_DAGEN = 4
 
-# De teeltduur-per-plantweek-tabel is een gemiddelde, geen harde waarde. Bij het
-# vooruitplannen mag een vak daarom tot een halve week eerder gepland worden dan
-# de tabel strikt zou zeggen, zodat het nivelleren (aantal vakken per week gelijk
-# houden) wat speling heeft. Later plannen kan het algoritme sowieso al vrij.
-TEELTDUUR_SPELING_DAGEN = 4
-
 # Vak 19 en 20 zijn qua formaat/aantal samen gelijk aan één regulier vak
 # en worden daarom als één eenheid gepland (altijd dezelfde week).
 VAK_GECOMBINEERD = (19, 20)
@@ -1173,12 +1167,11 @@ def bereken_verwachte_oogstdatum(datum_start):
 
 def _harde_bodem_vak(vaknummer):
     """
-    Geeft de ondergrens voor een vak terug: de oogstdatum van de meest
-    recente teelt. Is die teelt al afgerond, dan telt de werkelijke
-    oogstdatum (hard). Loopt de teelt nog, dan is het de via de
-    teeltduur-tabel verwachte oogstdatum minus TEELTDUUR_SPELING_DAGEN —
-    de tabel is een gemiddelde, dus een halve week eerder mag. Zónder
-    wisseltijd. Geeft None terug als het vak nog geen teeltgeschiedenis heeft.
+    Geeft de harde ondergrens voor een vak terug: de oogstdatum van de meest
+    recente teelt (werkelijk als al afgerond, anders de via de teeltduur-tabel
+    verwachte oogstdatum). Een vak kan nooit eerder dan dit gepland worden — de
+    vorige teelt staat er dan immers nog. Zónder wisseltijd. Geeft None terug
+    als het vak nog geen teeltgeschiedenis heeft.
     """
     with get_connection() as conn:
         cursor = conn.cursor()
@@ -1198,9 +1191,7 @@ def _harde_bodem_vak(vaknummer):
     if oogst:
         return datetime.strptime(oogst, "%Y-%m-%d").date()
     _, verwacht = bereken_verwachte_oogstdatum(start)
-    if verwacht is None:
-        return None
-    return verwacht - timedelta(days=TEELTDUUR_SPELING_DAGEN)
+    return verwacht
 
 
 def voeg_planning_toe(vaknummer, verwachte_startdatum, notitie=None, gebruiker=None):

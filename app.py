@@ -956,9 +956,8 @@ with tab_planning:
         "elk vak en de bestaande concept-planning gebleven zijn. Vak 19+20 worden als één eenheid "
         "gepland, vak 1 is een uitzondering op de vaste onderlinge volgorde, en het aantal vakken "
         "per week verschilt nooit meer dan 1 met de vorige/volgende week. Binnen een week worden de "
-        "vakken over maandag t/m donderdag verdeeld (laagste vaknummer op maandag). De teeltduur-tabel "
-        "is een gemiddelde: een vak mag tot een halve week eerder gepland worden als dat de weken "
-        "gelijkmatiger maakt."
+        "vakken over maandag t/m donderdag verdeeld (laagste vaknummer op maandag). Een vak wordt "
+        "nooit eerder gepland dan de (verwachte) oogst van de lopende teelt in dat vak."
     )
 
     # --- Strokenplanning (Gantt): vakken verticaal, weken horizontaal ---
