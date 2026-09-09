@@ -1009,13 +1009,12 @@ def verwerk_klimaat_csv(bestand, gebruiker=None):
 
 def importeer_klimaat_uit_priva(dagen_terug=4, gebruiker=None):
     """
-    Haalt de etmaalklimaatcijfers (etmaaltemperatuur, gemiddelde RV,
-    stralingssom) van de laatste afgeronde dagen rechtstreeks op uit de Priva
-    Horti API en zet ze via upsert in klimaatdata_dag — het alternatief voor de
-    handmatige klimaatcomputer-CSV. Historische CSV-rijen blijven ongemoeid;
-    alleen dagen die de API teruggeeft worden geschreven/overschreven.
-
-    Dag/nacht-splitsingen kent de API niet, die blijven leeg voor Priva-dagen.
+    Haalt de etmaalklimaatcijfers (etmaaltemperatuur en dag/nacht, gemiddelde
+    RV en dag/nacht, stralingssom) van de laatste afgeronde dagen rechtstreeks
+    op uit de Priva Horti API en zet ze via upsert in klimaatdata_dag — het
+    alternatief voor de handmatige klimaatcomputer-CSV. Historische CSV-rijen
+    blijven ongemoeid; alleen dagen die de API teruggeeft worden
+    geschreven/overschreven.
 
     Geeft (aantal geschreven afdeling-dagen, aantal overgeslagen) terug.
     Overgeslagen = dagen die nog niet compleet in het verleden liggen.
@@ -1033,6 +1032,10 @@ def importeer_klimaat_uit_priva(dagen_terug=4, gebruiker=None):
         upsert_klimaatdata_dag(
             rij["afdeling"], rij["datum"],
             rij["gem_temperatuur"], rij["gem_rv"], rij["stralingssom_dag"],
+            gem_temperatuur_dag=rij.get("gem_temperatuur_dag"),
+            gem_temperatuur_nacht=rij.get("gem_temperatuur_nacht"),
+            gem_rv_dag=rij.get("gem_rv_dag"),
+            gem_rv_nacht=rij.get("gem_rv_nacht"),
         )
         verwerkt += 1
 

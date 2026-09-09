@@ -2,8 +2,9 @@
 Priva Horticulture API-client — haalt etmaalklimaat op uit Priva ONE.
 
 Wordt gebruikt door database.importeer_klimaat_uit_priva() om de dagelijkse
-klimaatcijfers (etmaaltemperatuur, RV, stralingssom) per kasafdeling op te
-halen, als vervanger van de handmatige klimaatcomputer-CSV.
+klimaatcijfers per kasafdeling op te halen, als vervanger van de handmatige
+klimaatcomputer-CSV. De waarden zijn 1-op-1 vergeleken met een CSV-export
+(7-8 sept 2026) en komen overeen.
 
 Config via omgevingsvariabelen (lokaal via .env, op Render via Environment
 Variables):
@@ -27,28 +28,55 @@ API_VERSION = "2.0"
 SCOPES = "priva.hortiapi-data-access priva.data-services priva.metadatastore"
 
 # Standaard: tuin 3 (Alb. vt Hartweg 20). Tuin 1 is nog niet gedeeld in Priva
-# Access Control; zodra dat wel zo is kan die site-id hier of via env erbij.
+# Access Control; zodra dat wel zo is kan die site-id via PRIVA_SITE_ID erbij.
 STANDAARD_SITE_ID = "eb6c5c08-00e1-4fb2-9b3e-2f755a69405d"
 STANDAARD_DEVICE_ID = "VP9508"
 
-# Onze kasafdelingen 1-4 komen overeen met Priva-compartiment 1-4 (5 negeren,
-# net als bij de CSV-import). De variableId van een afdelingsdatapoint heeft de
-# vorm 00000002-000<afd>-0000-0000-<staart>.
+# Onze kasafdelingen 1-4 = Priva-compartiment 1-4 (5 negeren, net als bij de
+# CSV-import). De variableId van een afdelingsdatapoint heeft de vorm
+# 00000002-000<afd>-0000-0000-<staart>.
 AFDELINGEN = (1, 2, 3, 4)
 
-# Staarten van de datapoints die we per afdeling ophalen:
-STAART_ETMAALTEMP = "000000000e30"   # Temp24hour.PrevActual24hT  — gerealiseerde etmaaltemp vorige 24u (1 waarde/dag @ 10:00 UTC), °C
-STAART_STRALINGSSOM = "000000007dba"  # Temp24hour.PrevRadSumInside — stralingssom binnen vorige 24u (1 waarde/dag), J/cm²
-STAART_RV_MOMENT = "000000000d5a"     # KASL_REF.ATR_GEM_KAS_RV     — gem. kas-RV momentwaarde (~1/min); zelf daggemiddelde
+# Priva heeft een aggregatie-familie die 1-op-1 matcht met de CSV-labels:
+#   staart ...0003.... = "aggregation Average 24hr"  (etmaal)     <-> Ave_24h_Comp*
+#   staart ...0001.... = "aggregation Average Day"   (dag)        <-> Ave_Day_Comp*
+#   staart ...0002.... = "aggregation Average Night" (nacht)      <-> Ave_Night_Comp*
+# Deze komen als 1 waarde/dag terug, tijdstempel op de daggrens (00:00 UTC); de
+# datum van het tijdstempel is de dag waar de waarde bij hoort (geverifieerd
+# tegen de CSV). De Night-waarde van de laatste dag ontbreekt tot de nacht om
+# is — die blijft dan leeg en wordt de volgende ophaalronde aangevuld.
+STAART_TEMP_24H = "000030000d5b"    # KASL_REF.ATR_GEM_KAS_TEMP - Average 24hr
+STAART_TEMP_DAG = "000010000d5b"    #                             Average Day
+STAART_TEMP_NACHT = "000020000d5b"  #                             Average Night
+STAART_RV_24H = "000030000d5a"      # KASL_REF.ATR_GEM_KAS_RV   - Average 24hr
+STAART_RV_DAG = "000010000d5a"      #                             Average Day
+STAART_RV_NACHT = "000020000d5a"    #                             Average Night
+
+# De stralingssom-aggregaties (Sum Day/Night/24hr) bestaan wél in de metadata
+# maar geven geen timeseries terug via de API. Daarom halen we de berekende
+# afdelingsstraling als momentwaarde op (W/m², ~1 waarde/min) en integreren die
+# zelf per kalenderdag tot J/cm². Getest: komt op ±1 J/cm² overeen met de
+# CSV-kolommen Sum_Day_CalculatedRadiation + Sum_Night_CalculatedRadiation.
+STAART_STRALING_MOMENT = "000000000ce1"  # AFD_SOM.BER_AFD_STRAL - momentwaarde W/m²
+
+AGGREGATIE_STAARTEN = {
+    STAART_TEMP_24H: "temp",
+    STAART_TEMP_DAG: "temp_dag",
+    STAART_TEMP_NACHT: "temp_nacht",
+    STAART_RV_24H: "rv",
+    STAART_RV_DAG: "rv_dag",
+    STAART_RV_NACHT: "rv_nacht",
+}
+
+# Priva geeft UTC-tijdstempels. Voor het per-kalenderdag optellen van de
+# straling gebruiken we een vaste offset van +2 uur (CEST). De 1-uurs
+# onnauwkeurigheid rond de zomer-/wintertijdgrens valt altijd in donkere uren
+# (straling = 0) en heeft dus geen effect op een dagsom.
+LOKALE_OFFSET = timedelta(hours=2)
 
 # Gratis Priva-abonnement: max 5 dagen historie, en endTime moet vóór
-# middernacht UTC van vandaag liggen (alleen afgeronde dagen). We houden marge.
+# middernacht UTC van vandaag liggen (alleen afgeronde dagen). Marge houden.
 MAX_DAGEN_TERUG = 4
-
-# De etmaalwaarde met tijdstempel op dag D (10:00 UTC) hoort bij kalenderdag
-# D + OFFSET. 0 = zelfde datum als het tijdstempel. Verifieer dit één keer tegen
-# een overlappende klimaatcomputer-CSV-dag en pas zo nodig aan (-1 of +1).
-ETMAAL_DATUM_OFFSET_DAGEN = 0
 
 
 class PrivaConfiguratieFout(RuntimeError):
@@ -110,12 +138,14 @@ class PrivaHortiClient:
         `dagen_terug` afgeronde dagen, voor afdeling 1 t/m 4.
 
         Geeft een lijst dicts terug, gesorteerd op (datum, afdeling):
-            {"afdeling": 1, "datum": date(2026, 9, 6),
-             "gem_temperatuur": 17.78, "gem_rv": 82.1, "stralingssom_dag": 1584.0}
+            {"afdeling": 1, "datum": date(2026, 9, 7),
+             "gem_temperatuur": 20.71, "gem_temperatuur_dag": 23.60,
+             "gem_temperatuur_nacht": 18.46, "gem_rv": 82.99,
+             "gem_rv_dag": 77.07, "gem_rv_nacht": 89.49,
+             "stralingssom_dag": 1032.0}
 
-        Een dag/afdeling verschijnt alleen als er minstens één van de drie
-        waarden voor is. Ontbrekende waarden zijn None; bij een volgende
-        ophaalronde worden ze via de upsert alsnog aangevuld.
+        Ontbrekende waarden zijn None; bij een volgende ophaalronde worden ze
+        via de upsert alsnog aangevuld.
         """
         dagen_terug = max(1, min(int(dagen_terug), MAX_DAGEN_TERUG))
 
@@ -126,7 +156,7 @@ class PrivaHortiClient:
 
         datapoints = []
         for afd in AFDELINGEN:
-            for staart in (STAART_ETMAALTEMP, STAART_STRALINGSSOM, STAART_RV_MOMENT):
+            for staart in list(AGGREGATIE_STAARTEN) + [STAART_STRALING_MOMENT]:
                 datapoints.append({
                     "deviceGroupId": "none",
                     "deviceId": self.device_id,
@@ -154,19 +184,21 @@ class PrivaHortiClient:
     # -- payload -> dagwaarden ----------------------------------------
 
     def _verwerk_payload(self, payload):
-        # variableId-staart -> {afdeling: ...}
-        staart_naar_afd = {}
+        # variableId (lowercase) -> (afdeling, staart)
+        vid_index = {}
         for afd in AFDELINGEN:
-            for staart in (STAART_ETMAALTEMP, STAART_STRALINGSSOM, STAART_RV_MOMENT):
-                staart_naar_afd[self._variable_id(afd, staart).lower()] = (afd, staart)
+            for staart in list(AGGREGATIE_STAARTEN) + [STAART_STRALING_MOMENT]:
+                vid_index[self._variable_id(afd, staart).lower()] = (afd, staart)
 
-        # (afdeling, datum) -> {"temp":..., "straling":..., "rv_som":..., "rv_n":...}
+        # (afdeling, datum) -> {"temp":..., "rv_dag":..., "straling":..., ...}
         emmers = {}
+        # (afdeling) -> gesorteerde lijst (timestamp, W/m²) voor de straling
+        straling_reeks = {afd: [] for afd in AFDELINGEN}
 
         for entry in payload.get("data", []):
             dp = entry.get("datapoint", {})
             vid = (dp.get("variableId") or dp.get("id") or "").lower()
-            paar = staart_naar_afd.get(vid)
+            paar = vid_index.get(vid)
             if not paar:
                 continue
             afd, staart = paar
@@ -181,34 +213,49 @@ class PrivaHortiClient:
                     continue
                 ts = datetime.fromisoformat(meting["timestampUtc"].replace("Z", "+00:00"))
 
-                if staart in (STAART_ETMAALTEMP, STAART_STRALINGSSOM):
-                    datum = (ts + timedelta(days=ETMAAL_DATUM_OFFSET_DAGEN)).date()
-                    bak = emmers.setdefault((afd, datum), {})
-                    sleutel = "temp" if staart == STAART_ETMAALTEMP else "straling"
-                    bak[sleutel] = waarde
-                else:  # RV-momentwaarde: daggemiddelde zelf berekenen (UTC-dag)
-                    datum = ts.date()
-                    bak = emmers.setdefault((afd, datum), {})
-                    bak["rv_som"] = bak.get("rv_som", 0.0) + waarde
-                    bak["rv_n"] = bak.get("rv_n", 0) + 1
+                if staart == STAART_STRALING_MOMENT:
+                    straling_reeks[afd].append((ts, waarde))
+                else:
+                    veld = AGGREGATIE_STAARTEN[staart]
+                    emmers.setdefault((afd, ts.date()), {})[veld] = waarde
+
+        # straling per kalenderdag integreren (trapezium, W/m²·s -> J/cm²)
+        for afd, reeks in straling_reeks.items():
+            reeks.sort()
+            for i in range(len(reeks) - 1):
+                t0, v0 = reeks[i]
+                t1, v1 = reeks[i + 1]
+                dt = (t1 - t0).total_seconds()
+                if dt <= 0 or dt > 3600:  # nachtelijk gat overslaan (straling ~0)
+                    continue
+                datum = (t0 + LOKALE_OFFSET).date()
+                bak = emmers.setdefault((afd, datum), {})
+                bak["straling"] = bak.get("straling", 0.0) + (v0 + v1) / 2 * dt / 10000.0
 
         resultaat = []
         for (afd, datum), bak in emmers.items():
-            gem_rv = bak["rv_som"] / bak["rv_n"] if bak.get("rv_n") else None
-            temp = bak.get("temp")
-            straling = bak.get("straling")
-            if temp is None and straling is None and gem_rv is None:
+            if not any(v is not None for v in bak.values()):
                 continue
             resultaat.append({
                 "afdeling": afd,
                 "datum": datum,
-                "gem_temperatuur": round(temp, 2) if temp is not None else None,
-                "gem_rv": round(gem_rv, 1) if gem_rv is not None else None,
-                "stralingssom_dag": round(straling, 1) if straling is not None else None,
+                "gem_temperatuur": _rond(bak.get("temp"), 2),
+                "gem_temperatuur_dag": _rond(bak.get("temp_dag"), 2),
+                "gem_temperatuur_nacht": _rond(bak.get("temp_nacht"), 2),
+                "gem_rv": _rond(bak.get("rv"), 1),
+                "gem_rv_dag": _rond(bak.get("rv_dag"), 1),
+                "gem_rv_nacht": _rond(bak.get("rv_nacht"), 1),
+                "stralingssom_dag": _rond(bak.get("straling"), 0),
             })
 
         resultaat.sort(key=lambda r: (r["datum"], r["afdeling"]))
         return resultaat
+
+
+def _rond(waarde, decimalen):
+    if waarde is None:
+        return None
+    return round(waarde, decimalen) if decimalen else round(waarde)
 
 
 def _cli():
@@ -221,7 +268,9 @@ def _cli():
     for rij in client.haal_etmaal_dagwaarden():
         print(
             f"{rij['datum']}  afd {rij['afdeling']}  "
-            f"T={rij['gem_temperatuur']}  RV={rij['gem_rv']}  straling={rij['stralingssom_dag']}"
+            f"T={rij['gem_temperatuur']} (d {rij['gem_temperatuur_dag']} / n {rij['gem_temperatuur_nacht']})  "
+            f"RV={rij['gem_rv']} (d {rij['gem_rv_dag']} / n {rij['gem_rv_nacht']})  "
+            f"straling={rij['stralingssom_dag']}"
         )
 
 
