@@ -1689,15 +1689,14 @@ def _plan_een_ronde(horizon_eind, weekdoelen, geen_geschiedenis, gebruiker):
         else:
             eenheden_ruw.append((vaknummer, [vaknummer], bodem))
 
-    # De vaste volgorde begint bij het vak dat als eerste vrijkomt — de kas
-    # draait door, dus het is een doorlopende rotatie (…, 38, 39, 2, 3, …) die
-    # aansluit op waar de vorige ronde bleef.
-    if eenheden_ruw:
-        start_rep = min(eenheden_ruw, key=lambda e: (e[2], e[0]))[0]
-        eenheden_ruw.sort(key=lambda e: e[0])
-        start_idx = next(i for i, e in enumerate(eenheden_ruw) if e[0] == start_rep)
-        eenheden_ruw = eenheden_ruw[start_idx:] + eenheden_ruw[:start_idx]
-
+    # Plant in de volgorde waarin de vakken vrijkomen: op harde bodem
+    # (verwachte oogst van de vorige teelt/ronde), met vaknummer als tiebreak.
+    # Bij stabiele of langer wordende teeltduur (najaar) is dat gewoon de vaste
+    # oplopende vaknummer-rotatie; wordt de teeltduur korter (voorjaar), dan
+    # loopt de oogst niet meer gelijk met het vaknummer en volgt de
+    # plantvolgorde de oogstvolgorde (later geplant = eerder klaar = eerder
+    # herplant).
+    eenheden_ruw.sort(key=lambda e: (e[2], e[0]))
     eenheden = [(vakken, bodem) for _rep, vakken, bodem in eenheden_ruw]
 
     # --- Pass 1: greedy, met een vast streefaantal per week ---
@@ -1886,7 +1885,11 @@ def _plan_een_ronde(horizon_eind, weekdoelen, geen_geschiedenis, gebruiker):
     # extra's vooraan (maandag krijgt er als eerste een bij, dan dinsdag, ...).
     geplaatst = 0
     for week_start, items in weekplan.items():
-        items_op_volgorde = sorted(items, key=lambda it: min(it[0]))
+        # Binnen de week ma→do op oogstvolgorde (harde bodem), vaknummer als
+        # tiebreak: het vak dat het eerst vrijkomt op maandag, enz. Zo krijgt
+        # datzelfde vak volgende ronde weer de maandag en blijft het ritme
+        # rond.
+        items_op_volgorde = sorted(items, key=lambda it: (it[1], min(it[0])))
         basis, rest = divmod(len(items_op_volgorde), 4)
         dag_offsets = []
         for dag in range(4):
