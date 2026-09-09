@@ -237,6 +237,19 @@ def init_db():
         cursor.execute("ALTER TABLE klimaatdata_dag ADD COLUMN IF NOT EXISTS gem_rv_dag REAL")
         cursor.execute("ALTER TABLE klimaatdata_dag ADD COLUMN IF NOT EXISTS gem_rv_nacht REAL")
 
+        # Watergift per vak per dag (liter/m²), opgehaald uit Priva
+        # (KRAAN.VERBRUIKM2). Per vak i.p.v. per afdeling, want de kranen in
+        # Priva komen 1-op-1 overeen met onze vaknummers 1-39.
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS watergift_dag (
+                id SERIAL PRIMARY KEY,
+                vaknummer INTEGER NOT NULL,
+                datum TEXT NOT NULL,
+                liter_per_m2 REAL,
+                UNIQUE (vaknummer, datum)
+            )
+        """)
+
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS teeltplanning (
                 id SERIAL PRIMARY KEY,
@@ -1053,6 +1066,103 @@ def importeer_klimaat_uit_priva(dagen_terug=4, gebruiker=None):
     return verwerkt, overgeslagen
 
 
+# --- WATERGIFT PER VAK (uit Priva) ---
+
+def upsert_watergift_dag(vaknummer, datum, liter_per_m2):
+    """Slaat één vak-dag watergift op (of overschrijft bij een herhaalde ophaal)."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO watergift_dag (vaknummer, datum, liter_per_m2)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (vaknummer, datum)
+            DO UPDATE SET liter_per_m2 = EXCLUDED.liter_per_m2
+        """, (int(vaknummer), str(datum), liter_per_m2))
+        conn.commit()
+
+
+def importeer_watergift_uit_priva(dagen_terug=4, gebruiker=None):
+    """
+    Haalt de daggift (liter/m²) per vak van de laatste afgeronde dagen op uit
+    de Priva Horti API en zet die via upsert in watergift_dag.
+
+    Geeft (aantal geschreven vak-dagen, aantal overgeslagen) terug.
+    """
+    from priva_client import PrivaHortiClient
+
+    rijen = PrivaHortiClient().haal_watergift_dagwaarden(dagen_terug)
+
+    verwerkt = 0
+    overgeslagen = 0
+    for rij in rijen:
+        if rij["datum"] >= date.today():
+            overgeslagen += 1
+            continue
+        upsert_watergift_dag(rij["vaknummer"], rij["datum"], rij["liter_per_m2"])
+        verwerkt += 1
+
+    if rijen:
+        eerste = min(r["datum"] for r in rijen)
+        laatste = max(r["datum"] for r in rijen)
+        periode = f"{format_datum(eerste)} t/m {format_datum(laatste)}"
+    else:
+        periode = "geen data"
+    log_wijziging(
+        gebruiker, "opgehaald", "watergift_priva", None,
+        f"{verwerkt} vak-dagen uit Priva ({periode}), {overgeslagen} overgeslagen"
+    )
+
+    return verwerkt, overgeslagen
+
+
+def get_watergift_voor_periode(vaknummer, datum_start, datum_eind):
+    """
+    Geeft het totaal aan watergift (liter/m²) en het aantal gemeten dagen
+    terug voor een vak binnen een periode. Geeft None als er geen data is.
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT SUM(liter_per_m2), COUNT(*)
+            FROM watergift_dag
+            WHERE vaknummer = %s AND datum BETWEEN %s AND %s
+        """, (int(vaknummer), str(datum_start), str(datum_eind)))
+        rij = cursor.fetchone()
+
+    if not rij or rij[1] == 0:
+        return None
+    return {"totaal_liter_per_m2": rij[0] or 0.0, "aantal_dagen": rij[1]}
+
+
+def get_watergift_dagen_voor_periode(vaknummer, datum_start, datum_eind):
+    """Losse dagregels (datum, liter_per_m2) voor grafieken, gesorteerd op datum."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT datum, liter_per_m2
+            FROM watergift_dag
+            WHERE vaknummer = %s AND datum BETWEEN %s AND %s
+            ORDER BY datum
+        """, (int(vaknummer), str(datum_start), str(datum_eind)))
+        return cursor.fetchall()
+
+
+def get_watergift_dekking():
+    """
+    Per vak: (vaknummer, eerste_datum, laatste_datum, aantal_dagen). Gesorteerd
+    op vaknummer (laag naar hoog).
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT vaknummer, MIN(datum), MAX(datum), COUNT(*)
+            FROM watergift_dag
+            GROUP BY vaknummer
+            ORDER BY vaknummer
+        """)
+        return [(v, str(mn), str(mx), n) for v, mn, mx, n in cursor.fetchall()]
+
+
 def get_klimaat_voor_periode(afdeling, datum_start, datum_eind):
     """
     Geeft de gemiddelde temperatuur, gemiddelde RV en gemiddelde dagstralingssom
@@ -1147,6 +1257,8 @@ def get_klimaat_overzicht_dataframe():
         if not klimaat:
             continue
 
+        water = get_watergift_voor_periode(vaknummer, start, eind) if vaknummer else None
+
         rijen.append((
             code if code else f"ID{teelt_id}",
             naam,
@@ -1156,10 +1268,12 @@ def get_klimaat_overzicht_dataframe():
             round(klimaat["gem_temperatuur"], 1) if klimaat["gem_temperatuur"] is not None else "-",
             round(klimaat["gem_rv"], 1) if klimaat["gem_rv"] is not None else "-",
             round(klimaat["gem_stralingssom_dag"]) if klimaat["gem_stralingssom_dag"] is not None else "-",
+            round(water["totaal_liter_per_m2"], 1) if water else "-",
         ))
 
     kolommen = ["Code", "Teeltvak", "Afdeling", "Startdatum", "Oogstdatum",
-                "Gem. temperatuur (°C)", "Gem. RV (%)", "Gem. stralingssom (per dag)"]
+                "Gem. temperatuur (°C)", "Gem. RV (%)", "Gem. stralingssom (per dag)",
+                "Totaal water (l/m²)"]
     return kolommen, rijen
 
 
@@ -1629,11 +1743,32 @@ def get_strokenplanning(weken_terug=8):
 
     Geeft een lijst dicts terug met: vaknummer, soort ('teelt'/'concept'),
     status ('afgerond'/'lopend'/'concept'), label (code of 'concept'),
-    start (date), eind (date). Teelten die meer dan `weken_terug` weken
-    geleden zijn geoogst worden weggelaten; concept-planningen altijd getoond.
+    start (date), eind (date), water_l_m2 (totaal liter/m² over de looptijd
+    tot nu toe, of None). Teelten die meer dan `weken_terug` weken geleden zijn
+    geoogst worden weggelaten; concept-planningen altijd getoond.
     """
     ondergrens = date.today() - timedelta(weeks=weken_terug)
+    vandaag = date.today()
     rijen = []
+
+    # Watergift in één keer ophalen en per vak groeperen (datum -> liter/m²).
+    water_per_vak = {}
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT vaknummer, datum, liter_per_m2 FROM watergift_dag
+            WHERE datum >= %s
+        """, (str(ondergrens),))
+        for vak, datum, liter in cursor.fetchall():
+            water_per_vak.setdefault(vak, {})[str(datum)] = liter or 0.0
+
+    def _water_som(vaknummer, start, eind):
+        dagen = water_per_vak.get(vaknummer)
+        if not dagen:
+            return None
+        tot = min(eind, vandaag)
+        som = sum(l for d, l in dagen.items() if str(start) <= d <= str(tot))
+        return round(som, 1) if som else None
 
     for t in get_alle_teelten_detail():
         start = datetime.strptime(t["datum_teelt_start"], "%Y-%m-%d").date()
@@ -1653,6 +1788,7 @@ def get_strokenplanning(weken_terug=8):
             "label": t["code"] or f"ID{t['id']}",
             "start": start,
             "eind": eind,
+            "water_l_m2": _water_som(t["vaknummer"], start, eind),
         })
 
     for _pid, vaknummer, start, _duur, eind, _notitie in get_planning():
@@ -1668,6 +1804,7 @@ def get_strokenplanning(weken_terug=8):
             "label": "concept",
             "start": start_d,
             "eind": eind_d,
+            "water_l_m2": None,
         })
 
     rijen.sort(key=lambda r: (r["vaknummer"], r["start"]))

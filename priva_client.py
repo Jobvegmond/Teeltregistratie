@@ -68,10 +68,21 @@ AGGREGATIE_STAARTEN = {
     STAART_RV_NACHT: "rv_nacht",
 }
 
-# Priva geeft UTC-tijdstempels. Voor het per-kalenderdag optellen van de
-# straling gebruiken we een vaste offset van +2 uur (CEST). De 1-uurs
-# onnauwkeurigheid rond de zomer-/wintertijdgrens valt altijd in donkere uren
-# (straling = 0) en heeft dus geen effect op een dagsom.
+# Watergift wordt per vak (Priva "Valve" 1-39 = ons vaknummer 1-39) bijgehouden
+# als oplopende meterstand `KRAAN.VERBRUIKM2` (liter/m²). De variableId heeft de
+# vorm 000001c2-<vak in hex, 4 cijfers>-0000-0000-<staart>. De daggift is het
+# verschil van de meterstand over de dag; Priva logt tijdens een gietbeurt elke
+# ~5 s, dus de toename valt vrijwel volledig binnen de juiste kalenderdag.
+VAKKEN = tuple(range(1, 40))
+STAART_WATER_METERSTAND = "000000003461"  # KRAAN.VERBRUIKM2 - liter/m² (cumulatief)
+
+# Grote negatieve sprong in de meterstand = reset; die increment overslaan.
+WATER_RESET_DREMPEL = -1.0
+
+# Priva geeft UTC-tijdstempels. Voor het per-kalenderdag optellen van straling
+# en watergift gebruiken we een vaste offset van +2 uur (CEST). De 1-uurs
+# onnauwkeurigheid rond de zomer-/wintertijdgrens valt in uren zonder straling
+# of gietbeurt en heeft dus geen effect op een dagtotaal.
 LOKALE_OFFSET = timedelta(hours=2)
 
 # Gratis Priva-abonnement: max 5 dagen historie, en endTime moet vóór
@@ -251,6 +262,95 @@ class PrivaHortiClient:
         resultaat.sort(key=lambda r: (r["datum"], r["afdeling"]))
         return resultaat
 
+    # -- watergift per vak --------------------------------------------
+
+    def haal_watergift_dagwaarden(self, dagen_terug=MAX_DAGEN_TERUG):
+        """
+        Haalt in één API-call de daggift (liter/m²) per vak (1-39) op voor de
+        laatste afgeronde dagen, uit de oplopende meterstand KRAAN.VERBRUIKM2.
+
+        Geeft een lijst dicts terug, gesorteerd op (datum, vaknummer):
+            {"vaknummer": 25, "datum": date(2026, 9, 6), "liter_per_m2": 14.0}
+
+        De oudste dag van het venster wordt weggelaten: daarvoor ontbreekt een
+        meterstand van vóór middernacht, dus die zou te laag uitvallen.
+        """
+        dagen_terug = max(1, min(int(dagen_terug), MAX_DAGEN_TERUG))
+
+        nu = datetime.now(timezone.utc)
+        middernacht = nu.replace(hour=0, minute=0, second=0, microsecond=0)
+        eind = middernacht - timedelta(seconds=1)
+        begin = middernacht - timedelta(days=dagen_terug)
+        oudste_volledige_dag = (begin + LOKALE_OFFSET).date() + timedelta(days=1)
+
+        datapoints = [
+            {
+                "deviceGroupId": "none",
+                "deviceId": self.device_id,
+                "variableId": f"000001c2-{vak:04x}-0000-0000-{STAART_WATER_METERSTAND}",
+            }
+            for vak in VAKKEN
+        ]
+        body = {
+            "startTime": begin.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "endTime": eind.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "timeType": "sensortime",
+            "datapoints": datapoints,
+        }
+
+        resp = requests.post(
+            f"{BASE_URL}/api/sites/{self.site_id}/data",
+            headers=self._headers(),
+            json=body,
+            timeout=120,
+        )
+        if not resp.ok:
+            raise RuntimeError(f"Priva watergift-call mislukt ({resp.status_code}): {resp.text[:500]}")
+
+        payload = resp.json()
+        resultaat = []
+        for entry in payload.get("data", []):
+            dp = entry.get("datapoint", {})
+            vid = dp.get("variableId") or dp.get("id") or ""
+            try:
+                vak = int(vid.split("-")[1], 16)
+            except (IndexError, ValueError):
+                continue
+
+            reeks = []
+            for meting in entry.get("measurements", []):
+                ruwe = meting.get("value")
+                if ruwe is None or ruwe == "":
+                    continue
+                try:
+                    reeks.append((
+                        datetime.fromisoformat(meting["timestampUtc"].replace("Z", "+00:00")),
+                        float(ruwe),
+                    ))
+                except (TypeError, ValueError):
+                    continue
+            reeks.sort()
+
+            per_dag = {}
+            for (t0, v0), (t1, v1) in zip(reeks, reeks[1:]):
+                toename = v1 - v0
+                if toename < WATER_RESET_DREMPEL:
+                    continue
+                datum = (t0 + LOKALE_OFFSET).date()
+                per_dag[datum] = per_dag.get(datum, 0.0) + max(0.0, toename)
+
+            for datum, liter in per_dag.items():
+                if datum < oudste_volledige_dag:
+                    continue
+                resultaat.append({
+                    "vaknummer": vak,
+                    "datum": datum,
+                    "liter_per_m2": round(liter, 1),
+                })
+
+        resultaat.sort(key=lambda r: (r["datum"], r["vaknummer"]))
+        return resultaat
+
 
 def _rond(waarde, decimalen):
     if waarde is None:
@@ -265,6 +365,7 @@ def _cli():
     except Exception:
         pass
     client = PrivaHortiClient()
+    print("--- etmaalklimaat ---")
     for rij in client.haal_etmaal_dagwaarden():
         print(
             f"{rij['datum']}  afd {rij['afdeling']}  "
@@ -272,6 +373,10 @@ def _cli():
             f"RV={rij['gem_rv']} (d {rij['gem_rv_dag']} / n {rij['gem_rv_nacht']})  "
             f"straling={rij['stralingssom_dag']}"
         )
+    print("--- watergift (liter/m² per vak) ---")
+    for rij in client.haal_watergift_dagwaarden():
+        if rij["liter_per_m2"]:
+            print(f"{rij['datum']}  vak {rij['vaknummer']:2}  {rij['liter_per_m2']}")
 
 
 if __name__ == "__main__":

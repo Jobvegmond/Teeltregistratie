@@ -32,6 +32,10 @@ from database import (
     get_klimaatdata_dagen_voor_periode,
     get_klimaatdata_dekking,
     get_klimaat_voor_periode,
+    importeer_watergift_uit_priva,
+    get_watergift_dekking,
+    get_watergift_voor_periode,
+    get_watergift_dagen_voor_periode,
     get_teeltduur,
     get_alle_teelten_detail,
     get_isojaar_week,
@@ -803,7 +807,7 @@ with tab_detail:
         # Teeltduur en klimaat worden per teelt (dus per planting, op basis
         # van de eigen afdeling en periode) berekend en pas daarna gemiddeld
         # over de groep — niet als één vast afdeling/vak-gemiddelde.
-        dagen_lijst, temp_lijst, rv_lijst, straling_lijst = [], [], [], []
+        dagen_lijst, temp_lijst, rv_lijst, straling_lijst, water_lijst = [], [], [], [], []
         for t in teelten_groep:
             if not t["datum_oogst"] and t["datum_teelt_start"] > vandaag_detail:
                 continue  # nog niet gestart: geen teeltduur/klimaat "tot nu toe" om te middelen
@@ -824,6 +828,11 @@ with tab_detail:
                     if klimaat_t["gem_stralingssom_dag"] is not None:
                         straling_lijst.append(klimaat_t["gem_stralingssom_dag"])
 
+            if t["vaknummer"]:
+                water_t = get_watergift_voor_periode(t["vaknummer"], t["datum_teelt_start"], eind_t)
+                if water_t:
+                    water_lijst.append(water_t["totaal_liter_per_m2"])
+
         if dagen_lijst:
             gem_dagen = sum(dagen_lijst) / len(dagen_lijst)
             gem_weken = round(gem_dagen / 7 * 2) / 2
@@ -837,7 +846,7 @@ with tab_detail:
         rij_data[2].metric("Gem. teeltduur", teeltduur_tekst)
         rij_data[3].metric("Status", status_tekst)
 
-        rij_klimaat = st.columns(3)
+        rij_klimaat = st.columns(4)
         rij_klimaat[0].metric(
             "Gem. temperatuur", f"{sum(temp_lijst) / len(temp_lijst):.1f} °C" if temp_lijst else "-"
         )
@@ -846,6 +855,9 @@ with tab_detail:
         )
         rij_klimaat[2].metric(
             "Gem. lichtsom (per dag)", f"{sum(straling_lijst) / len(straling_lijst):.0f}" if straling_lijst else "-"
+        )
+        rij_klimaat[3].metric(
+            "Gem. water per vak", f"{sum(water_lijst) / len(water_lijst):.0f} l/m²" if water_lijst else "-"
         )
 
         if aantal_afgerond > 0:
@@ -946,6 +958,20 @@ with tab_detail:
                 st.caption("Nog geen klimaatdata gekoppeld aan deze plantweek.")
         else:
             st.caption("Onbekend vaknummer; kan geen afdeling/klimaatdata bepalen.")
+
+        st.write("**Watergift tijdens deze plantweek**")
+        eind_water = max(t["datum_oogst"] or vandaag_detail for t in teelten_groep)
+        records_water = []
+        for vak in vakken_groep:
+            for datum, liter in get_watergift_dagen_voor_periode(vak, start_datums[0], eind_water):
+                records_water.append({"datum": datum, f"Vak {vak}": liter})
+        if records_water:
+            df_water = pd.DataFrame(records_water).groupby("datum", as_index=True).first().sort_index()
+            df_water.index = pd.to_datetime(df_water.index)
+            st.caption("Watergift per vak (l/m² per dag)")
+            st.bar_chart(df_water)
+        else:
+            st.caption("Nog geen watergift gekoppeld aan deze plantweek.")
     else:
         st.info("Nog geen teelten geregistreerd.")
 
@@ -967,6 +993,9 @@ with tab_planning:
         df_stroken = pd.DataFrame(stroken)
         df_stroken["start"] = pd.to_datetime(df_stroken["start"])
         df_stroken["eind"] = pd.to_datetime(df_stroken["eind"])
+        df_stroken["water_tekst"] = df_stroken["water_l_m2"].apply(
+            lambda x: f"{x:.0f} l/m²" if pd.notna(x) else "–"
+        )
 
         kleur = alt.Color(
             "status:N",
@@ -996,6 +1025,7 @@ with tab_planning:
                     alt.Tooltip("status:N", title="Status"),
                     alt.Tooltip("start:T", title="Start", format="%d-%m-%y"),
                     alt.Tooltip("eind:T", title="Oogst", format="%d-%m-%y"),
+                    alt.Tooltip("water_tekst:N", title="Water tot nu toe"),
                 ],
             )
         )
@@ -1011,7 +1041,8 @@ with tab_planning:
         st.caption(
             "Strokenplanning: grijs = afgerond, groen = lopende teelt, blauw = concept-planning. "
             "Getal op de as = ISO-weeknummer; rode stippellijn = vandaag. Oogstdatum van lopende "
-            "teelten en concepten is de verwachte datum uit de teeltduur-tabel."
+            "teelten en concepten is de verwachte datum uit de teeltduur-tabel. Beweeg over een "
+            "balk voor de watergift (l/m²) tot nu toe."
         )
         st.markdown("---")
 
@@ -1200,18 +1231,25 @@ with tab_klimaat:
     # --- Rechtstreeks ophalen uit de Priva Horti API ---
     if os.environ.get("PRIVA_CLIENT_ID"):
         st.caption(
-            "Of haal de laatste afgeronde dagen rechtstreeks uit Priva (tuin 3, afdeling 1-4). "
-            "Historische CSV-data blijft staan; alleen de opgehaalde dagen worden bijgewerkt."
+            "Of haal de laatste afgeronde dagen rechtstreeks uit Priva (tuin 3): klimaat per "
+            "afdeling en watergift (l/m²) per vak. Historische CSV-data blijft staan; alleen de "
+            "opgehaalde dagen worden bijgewerkt."
         )
         if st.button("📡 Haal laatste dagen op uit Priva"):
             try:
-                aantal, aantal_over = importeer_klimaat_uit_priva(gebruiker=huidige_gebruiker())
-                if aantal:
-                    st.success(f"✅ {aantal} afdeling-dagen opgehaald uit Priva.")
-                else:
-                    st.info("Geen nieuwe afgeronde dagen beschikbaar in Priva.")
+                aantal_k, _ = importeer_klimaat_uit_priva(gebruiker=huidige_gebruiker())
+                aantal_w, _ = importeer_watergift_uit_priva(gebruiker=huidige_gebruiker())
+                st.success(
+                    f"✅ {aantal_k} afdeling-dagen klimaat en {aantal_w} vak-dagen watergift "
+                    "opgehaald uit Priva."
+                )
             except Exception as e:
                 st.error(f"❌ Kon niet uit Priva ophalen: {e}")
+
+        water_dekking = get_watergift_dekking()
+        if water_dekking:
+            laatste_water = max(r[2] for r in water_dekking)
+            st.caption(f"Watergift geregistreerd voor {len(water_dekking)} vakken, tot {format_datum(laatste_water)}.")
     else:
         st.caption("Priva-koppeling niet geconfigureerd (PRIVA_CLIENT_ID ontbreekt).")
 
