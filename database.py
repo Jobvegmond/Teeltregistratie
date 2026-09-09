@@ -1689,15 +1689,33 @@ def _plan_een_ronde(horizon_eind, weekdoelen, geen_geschiedenis, gebruiker):
         else:
             eenheden_ruw.append((vaknummer, [vaknummer], bodem))
 
-    # Plant in de volgorde waarin de vakken vrijkomen: op harde bodem
-    # (verwachte oogst van de vorige teelt/ronde), met vaknummer als tiebreak.
-    # Bij stabiele of langer wordende teeltduur (najaar) is dat gewoon de vaste
-    # oplopende vaknummer-rotatie; wordt de teeltduur korter (voorjaar), dan
-    # loopt de oogst niet meer gelijk met het vaknummer en volgt de
-    # plantvolgorde de oogstvolgorde (later geplant = eerder klaar = eerder
-    # herplant).
-    eenheden_ruw.sort(key=lambda e: (e[2], e[0]))
+    # De onderlinge volgorde ligt vast: vak 2 vóór 3 vóór 4 … vóór 39, en dan
+    # weer vanaf 2 — planten én oogsten gebeuren altijd in die cyclus. Het enige
+    # dat verschuift is wáár de cyclus in de tijd begint. Die rotatie-start:
+    # - verse start: het vak waarvan de huidige teelt het eerst klaar is;
+    # - vervolgronde: het vak dat in de vorige ronde als eerste geplant is —
+    #   daar hervat de cyclus.
+    eenheden_ruw.sort(key=lambda e: e[0])  # strikte vaknummer-volgorde
+    keten_vakken = {v for _rep, vakken, _b in eenheden_ruw for v in vakken}
+    vorige_ronde = {v: d for v, d in al_gepland.items() if v in keten_vakken}
+    if vorige_ronde:
+        vroegste = min(vorige_ronde, key=lambda v: (vorige_ronde[v], v))
+        start_rep = gecombineerd_laag if vroegste == gecombineerd_hoog else vroegste
+    else:
+        start_rep = min(eenheden_ruw, key=lambda e: (e[2], e[0]))[0]
+
+    reps = [e[0] for e in eenheden_ruw]
+    if start_rep in reps:
+        start_idx = reps.index(start_rep)
+    else:
+        latere = [i for i, r in enumerate(reps) if r >= start_rep]
+        start_idx = latere[0] if latere else 0
+    eenheden_ruw = eenheden_ruw[start_idx:] + eenheden_ruw[:start_idx]
     eenheden = [(vakken, bodem) for _rep, vakken, bodem in eenheden_ruw]
+
+    # Rotatie-rang per vak (positie in de cyclus), voor de volgorde binnen een
+    # week. Vak 1 (eigen ritme) krijgt rang -1 zodat het vooraan staat.
+    rang_van_vak = {v: i for i, (_rep, vakken, _b) in enumerate(eenheden_ruw) for v in vakken}
 
     # --- Pass 1: greedy, met een vast streefaantal per week ---
     # Begint bij de laatst al bestaande week (indien aanwezig), zodat een
@@ -1808,17 +1826,17 @@ def _plan_een_ronde(horizon_eind, weekdoelen, geen_geschiedenis, gebruiker):
             w1, w2 = afwijking
             c1, c2 = len(plan.get(w1, [])), len(plan.get(w2, []))
             if c1 > c2:
-                eenheid = plan[w1].pop()
-                plan.setdefault(w2, []).insert(0, eenheid)
+                # De laatste eenheid van w1 (verst in de cyclus) schuift naar w2.
+                plan.setdefault(w2, []).append(plan[w1].pop())
             else:
-                # Schuif naar de eerstvolgende week die nog niet vol zit
+                # w2 is te vol (of w1 te leeg): de laatste eenheid van w2
+                # schuift door naar de eerstvolgende week die nog niet vol zit
                 # volgens een eventueel handmatig streefaantal.
                 volgende = w2 + timedelta(days=7)
                 while weekdoelen.get(volgende) is not None and \
                         len(plan.get(volgende, [])) >= weekdoelen[volgende]:
                     volgende += timedelta(days=7)
-                eenheid = plan[w2].pop(0)
-                plan.setdefault(volgende, []).append(eenheid)
+                plan.setdefault(volgende, []).append(plan[w2].pop())
             plan = {k: v for k, v in plan.items() if v}
         return plan
 
@@ -1836,13 +1854,21 @@ def _plan_een_ronde(horizon_eind, weekdoelen, geen_geschiedenis, gebruiker):
             )
             verplaatst = False
             for w in andere:
-                for idx, (vakken, bodem) in enumerate(weekplan[w]):
-                    if bodem - timedelta(days=bodem.weekday()) <= doelweek:
-                        weekplan.setdefault(doelweek, []).append(weekplan[w].pop(idx))
-                        verplaatst = True
-                        break
-                if verplaatst:
-                    break
+                haalbaar = [
+                    (i, vk) for i, (vk, bd) in enumerate(weekplan[w])
+                    if bd - timedelta(days=bd.weekday()) <= doelweek
+                ]
+                if not haalbaar:
+                    continue
+                # Uit een latere week: het vak dat het eerst aan de beurt is
+                # (laagste rang) naar voren halen. Uit een eerdere week: juist
+                # het vak dat het laatst aan de beurt is (hoogste rang)
+                # uitstellen. Zo blijft de cyclusvolgorde zo veel mogelijk heel.
+                sleutel = (lambda t: rang_van_vak.get(min(t[1]), 0))
+                idx = (min if w > doelweek else max)(haalbaar, key=sleutel)[0]
+                weekplan.setdefault(doelweek, []).append(weekplan[w].pop(idx))
+                verplaatst = True
+                break
             weekplan = {k: v for k, v in weekplan.items() if v}
             if not verplaatst:
                 break  # niets meer te verschuiven; waarschuwing volgt later
@@ -1878,18 +1904,17 @@ def _plan_een_ronde(horizon_eind, weekdoelen, geen_geschiedenis, gebruiker):
                 beste_penalty, beste_week = penalty, w
         weekplan.setdefault(beste_week, []).append(([VAK_VOLGORDE_UITZONDERING], bodem_1))
 
-    # --- Horizon toepassen: alleen weken t/m de gekozen horizon wegschrijven ---
-    # Binnen een plantweek worden de vakken over ma/di/wo/do verdeeld i.p.v.
-    # allemaal op maandag: het eerste vak (laagste nummer) op maandag, het
-    # tweede op dinsdag, enz. Zijn er meer dan 4 eenheden, dan stapelen de
-    # extra's vooraan (maandag krijgt er als eerste een bij, dan dinsdag, ...).
+    # --- Horizon toepassen: alleen plantingen t/m de gekozen horizon
+    # wegschrijven. Binnen een plantweek worden de eenheden over ma→do
+    # verdeeld, in rotatievolgorde (vak 2 vóór 3 vóór 4, ook rond de
+    # cyclus-overgang 39 → 2). `loopdatum` houdt de plantdatums in díe
+    # volgorde monotoon: een later-in-de-cyclus vak wordt nooit vóór een
+    # eerder vak geplant, ook niet als zijn harde bodem eerder valt.
     geplaatst = 0
-    for week_start, items in weekplan.items():
-        # Binnen de week ma→do op oogstvolgorde (harde bodem), vaknummer als
-        # tiebreak: het vak dat het eerst vrijkomt op maandag, enz. Zo krijgt
-        # datzelfde vak volgende ronde weer de maandag en blijft het ritme
-        # rond.
-        items_op_volgorde = sorted(items, key=lambda it: (it[1], min(it[0])))
+    loopdatum = None
+    for week_start in sorted(weekplan):
+        items = weekplan[week_start]
+        items_op_volgorde = sorted(items, key=lambda it: rang_van_vak.get(min(it[0]), -1))
         basis, rest = divmod(len(items_op_volgorde), 4)
         dag_offsets = []
         for dag in range(4):
@@ -1897,6 +1922,9 @@ def _plan_een_ronde(horizon_eind, weekdoelen, geen_geschiedenis, gebruiker):
 
         for dag_offset, (vakken, bodem) in zip(dag_offsets, items_op_volgorde):
             gekozen_start = max(bodem, week_start + timedelta(days=dag_offset))
+            if loopdatum is not None and gekozen_start < loopdatum:
+                gekozen_start = loopdatum
+            loopdatum = gekozen_start
             if gekozen_start > horizon_eind:
                 continue
             for vaknummer in vakken:
