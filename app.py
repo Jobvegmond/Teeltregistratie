@@ -1059,17 +1059,18 @@ with tab_planning:
         buiten_horizon = [r for r in resultaten if r[1] == "buiten_horizon"]
         geen_geschiedenis = [r for r in resultaten if r[1] == "geen_geschiedenis"]
 
+        totaal_concepten = len(get_planning())
         if gepland:
             st.success(
-                f"✅ {len(gepland)} vakken gepland: "
-                + ", ".join(f"vak {v} ({format_datum(d)})" for v, _, d in gepland)
+                f"✅ {len(gepland)} vakken ingepland — {totaal_concepten} concept-plantingen in totaal "
+                "(meerdere teeltrondes per vak tot de horizon)."
             )
         else:
             st.info("Geen nieuwe vakken gepland binnen deze horizon.")
         if buiten_horizon:
             st.info(
-                f"ℹ️ {len(buiten_horizon)} vakken vallen buiten deze horizon — druk nogmaals op de "
-                "knop (evt. met meer weken) om verder te plannen: "
+                f"ℹ️ {len(buiten_horizon)} vakken komen pas ná de horizon vrij — vergroot 'Aantal weken "
+                "vooruit' om ook die in te plannen: "
                 + ", ".join(str(v) for v, _, _ in buiten_horizon)
             )
         if geen_geschiedenis:
@@ -1105,7 +1106,6 @@ with tab_planning:
         {
             "Week": f"Week {r['week']} - {r['jaar']}",
             "Voorgesteld": r["concepten"],
-            "Vrij die week": r["vrij"],
             "Jouw aantal": r["weekdoel"],
         }
         for r in weekoverzicht
@@ -1116,10 +1116,7 @@ with tab_planning:
         column_config={
             "Week": st.column_config.TextColumn(disabled=True),
             "Voorgesteld": st.column_config.NumberColumn(
-                disabled=True, help="Aantal concept-vakken dat nu voor die week gepland staat"
-            ),
-            "Vrij die week": st.column_config.NumberColumn(
-                disabled=True, help="Vak-eenheden waarvan de vorige teelt die week (of eerder) klaar is"
+                disabled=True, help="Aantal poot-eenheden dat nu voor die week gepland staat"
             ),
             "Jouw aantal": st.column_config.NumberColumn(
                 min_value=0, max_value=20, step=1, help="Leeg = planner bepaalt zelf"
