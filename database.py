@@ -1711,6 +1711,18 @@ def _plan_een_ronde(horizon_eind, weekdoelen, geen_geschiedenis, gebruiker):
         latere = [i for i, r in enumerate(reps) if r >= start_rep]
         start_idx = latere[0] if latere else 0
     eenheden_ruw = eenheden_ruw[start_idx:] + eenheden_ruw[:start_idx]
+
+    # Bodems monotoon maken langs de cyclus: vak N komt nooit eerder vrij dan
+    # vak N-1, want we oogsten de rij in volgorde af. Voorkomt dat een
+    # teeltduur-verschil rond een plantweek-grens de volgorde omdraait.
+    mono = None
+    eenheden_ruw_mono = []
+    for rep, vakken, bodem in eenheden_ruw:
+        if mono is not None and bodem < mono:
+            bodem = mono
+        mono = bodem
+        eenheden_ruw_mono.append((rep, vakken, bodem))
+    eenheden_ruw = eenheden_ruw_mono
     eenheden = [(vakken, bodem) for _rep, vakken, bodem in eenheden_ruw]
 
     # Rotatie-rang per vak (positie in de cyclus), voor de volgorde binnen een
@@ -1818,25 +1830,48 @@ def _plan_een_ronde(horizon_eind, weekdoelen, geen_geschiedenis, gebruiker):
                 return w1, w2
         return None
 
+    def _rang(item):
+        return rang_van_vak.get(min(item[0]), -1)
+
+    def _schuif(plan, bron, doel):
+        # Verplaats de eenheid met de hoogste rotatierang uit `bron` naar `doel`
+        # (die zit het dichtst bij de latere week, dus de cyclusvolgorde blijft
+        # heel). Houd beide lijsten op rang gesorteerd.
+        item = max(plan[bron], key=_rang)
+        plan[bron].remove(item)
+        plan.setdefault(doel, []).append(item)
+        plan[doel].sort(key=_rang)
+
     def _egaliseer(plan):
-        for _ in range(2000):
+        for _ in range(4000):
             afwijking = _grootste_afwijking(plan)
             if afwijking is None:
                 break
             w1, w2 = afwijking
             c1, c2 = len(plan.get(w1, [])), len(plan.get(w2, []))
             if c1 > c2:
-                # De laatste eenheid van w1 (verst in de cyclus) schuift naar w2.
-                plan.setdefault(w2, []).append(plan[w1].pop())
+                # w1 te vol: hoogste rang van w1 (dichtst bij w2) naar w2.
+                _schuif(plan, w1, w2)
             else:
-                # w2 is te vol (of w1 te leeg): de laatste eenheid van w2
-                # schuift door naar de eerstvolgende week die nog niet vol zit
-                # volgens een eventueel handmatig streefaantal.
-                volgende = w2 + timedelta(days=7)
-                while weekdoelen.get(volgende) is not None and \
-                        len(plan.get(volgende, [])) >= weekdoelen[volgende]:
-                    volgende += timedelta(days=7)
-                plan.setdefault(volgende, []).append(plan[w2].pop())
+                # w2 te vol / w1 te leeg. Liefst een eenheid van w2 terug naar
+                # w1 (mag als de harde bodem die week toelaat) — de laagste
+                # rang, die het meest aan de beurt is. Kan dat niet, dan de
+                # hoogste rang van w2 doorschuiven naar de volgende week.
+                terug = [
+                    it for it in plan[w2]
+                    if it[1] - timedelta(days=it[1].weekday()) <= w1
+                ]
+                if terug:
+                    item = min(terug, key=_rang)
+                    plan[w2].remove(item)
+                    plan.setdefault(w1, []).append(item)
+                    plan[w1].sort(key=_rang)
+                else:
+                    volgende = w2 + timedelta(days=7)
+                    while weekdoelen.get(volgende) is not None and \
+                            len(plan.get(volgende, [])) >= weekdoelen[volgende]:
+                        volgende += timedelta(days=7)
+                    _schuif(plan, w2, volgende)
             plan = {k: v for k, v in plan.items() if v}
         return plan
 
@@ -1904,32 +1939,39 @@ def _plan_een_ronde(horizon_eind, weekdoelen, geen_geschiedenis, gebruiker):
                 beste_penalty, beste_week = penalty, w
         weekplan.setdefault(beste_week, []).append(([VAK_VOLGORDE_UITZONDERING], bodem_1))
 
-    # --- Horizon toepassen: alleen plantingen t/m de gekozen horizon
-    # wegschrijven. Binnen een plantweek worden de eenheden over ma→do
-    # verdeeld, in rotatievolgorde (vak 2 vóór 3 vóór 4, ook rond de
-    # cyclus-overgang 39 → 2). `loopdatum` houdt de plantdatums in díe
-    # volgorde monotoon: een later-in-de-cyclus vak wordt nooit vóór een
-    # eerder vak geplant, ook niet als zijn harde bodem eerder valt.
-    geplaatst = 0
-    loopdatum = None
-    for week_start in sorted(weekplan):
-        items = weekplan[week_start]
-        items_op_volgorde = sorted(items, key=lambda it: rang_van_vak.get(min(it[0]), -1))
-        basis, rest = divmod(len(items_op_volgorde), 4)
-        dag_offsets = []
-        for dag in range(4):
-            dag_offsets += [dag] * (basis + (1 if dag < rest else 0))
+    # --- Dag-toewijzing en wegschrijven ---
+    # Pass 1/2 hebben per week het aantal eenheden bepaald (±1-glad). Hier
+    # krijgt elke eenheid binnen die week een dag (ma→do, op cyclusvolgorde:
+    # laagste rotatierang op maandag). De weken lopen chronologisch en de
+    # rang loopt op, dus vak 2 blijft vóór 3 vóór 4. Een eenheid schuift naar
+    # een latere week als zijn (monotone) harde bodem daar valt.
+    def _naar_plantdag(d):
+        while d.weekday() > 3:  # 4=vr, 5=za, 6=zo -> door naar maandag
+            d += timedelta(days=1)
+        return d
 
-        for dag_offset, (vakken, bodem) in zip(dag_offsets, items_op_volgorde):
-            gekozen_start = max(bodem, week_start + timedelta(days=dag_offset))
-            if loopdatum is not None and gekozen_start < loopdatum:
-                gekozen_start = loopdatum
-            loopdatum = gekozen_start
-            if gekozen_start > horizon_eind:
+    geplaatst = 0
+    vorige_week_laatste = None
+    for pass1_week in sorted(weekplan):
+        items = sorted(weekplan[pass1_week], key=lambda it: rang_van_vak.get(min(it[0]), -1))
+        week_basis = pass1_week
+        if vorige_week_laatste is not None:
+            week_basis = max(week_basis, vorige_week_laatste - timedelta(days=vorige_week_laatste.weekday()))
+        laatste_in_week = None
+        for i, (vakken, bodem) in enumerate(items):
+            w = week_basis
+            bodem_week = bodem - timedelta(days=bodem.weekday())
+            if bodem_week > w:
+                w = bodem_week
+            datum = _naar_plantdag(w + timedelta(days=min(i, 3)))
+            laatste_in_week = datum if laatste_in_week is None else max(laatste_in_week, datum)
+            if datum > horizon_eind:
                 continue
             for vaknummer in vakken:
-                voeg_planning_toe(vaknummer, gekozen_start, gebruiker=gebruiker)
+                voeg_planning_toe(vaknummer, datum, gebruiker=gebruiker)
             geplaatst += 1
+        if laatste_in_week is not None:
+            vorige_week_laatste = laatste_in_week
 
     return geplaatst
 
