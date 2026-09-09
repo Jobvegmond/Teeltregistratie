@@ -1007,6 +1007,49 @@ def verwerk_klimaat_csv(bestand, gebruiker=None):
     return verwerkt, overgeslagen
 
 
+def importeer_klimaat_uit_priva(dagen_terug=4, gebruiker=None):
+    """
+    Haalt de etmaalklimaatcijfers (etmaaltemperatuur, gemiddelde RV,
+    stralingssom) van de laatste afgeronde dagen rechtstreeks op uit de Priva
+    Horti API en zet ze via upsert in klimaatdata_dag — het alternatief voor de
+    handmatige klimaatcomputer-CSV. Historische CSV-rijen blijven ongemoeid;
+    alleen dagen die de API teruggeeft worden geschreven/overschreven.
+
+    Dag/nacht-splitsingen kent de API niet, die blijven leeg voor Priva-dagen.
+
+    Geeft (aantal geschreven afdeling-dagen, aantal overgeslagen) terug.
+    Overgeslagen = dagen die nog niet compleet in het verleden liggen.
+    """
+    from priva_client import PrivaHortiClient
+
+    rijen = PrivaHortiClient().haal_etmaal_dagwaarden(dagen_terug)
+
+    verwerkt = 0
+    overgeslagen = 0
+    for rij in rijen:
+        if rij["datum"] >= date.today():
+            overgeslagen += 1
+            continue
+        upsert_klimaatdata_dag(
+            rij["afdeling"], rij["datum"],
+            rij["gem_temperatuur"], rij["gem_rv"], rij["stralingssom_dag"],
+        )
+        verwerkt += 1
+
+    if rijen:
+        eerste = min(r["datum"] for r in rijen)
+        laatste = max(r["datum"] for r in rijen)
+        periode = f"{format_datum(eerste)} t/m {format_datum(laatste)}"
+    else:
+        periode = "geen data"
+    log_wijziging(
+        gebruiker, "opgehaald", "klimaatdata_priva", None,
+        f"{verwerkt} afdeling-dagen uit Priva ({periode}), {overgeslagen} overgeslagen"
+    )
+
+    return verwerkt, overgeslagen
+
+
 def get_klimaat_voor_periode(afdeling, datum_start, datum_eind):
     """
     Geeft de gemiddelde temperatuur, gemiddelde RV en gemiddelde dagstralingssom

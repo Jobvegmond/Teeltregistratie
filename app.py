@@ -26,6 +26,7 @@ from database import (
     markeer_teelt_afgerond,
     get_gebruikers_credentials,
     verwerk_klimaat_csv,
+    importeer_klimaat_uit_priva,
     get_klimaat_overzicht_dataframe,
     afdeling_van_vaknummer,
     get_klimaatdata_dagen_voor_periode,
@@ -1195,6 +1196,24 @@ with tab_klimaat:
             st.success(melding)
         except Exception as e:
             st.error(f"❌ Kon de CSV niet verwerken: {e}")
+
+    # --- Rechtstreeks ophalen uit de Priva Horti API ---
+    if os.environ.get("PRIVA_CLIENT_ID"):
+        st.caption(
+            "Of haal de laatste afgeronde dagen rechtstreeks uit Priva (tuin 3, afdeling 1-4). "
+            "Historische CSV-data blijft staan; alleen de opgehaalde dagen worden bijgewerkt."
+        )
+        if st.button("📡 Haal laatste dagen op uit Priva"):
+            try:
+                aantal, aantal_over = importeer_klimaat_uit_priva(gebruiker=huidige_gebruiker())
+                if aantal:
+                    st.success(f"✅ {aantal} afdeling-dagen opgehaald uit Priva.")
+                else:
+                    st.info("Geen nieuwe afgeronde dagen beschikbaar in Priva.")
+            except Exception as e:
+                st.error(f"❌ Kon niet uit Priva ophalen: {e}")
+    else:
+        st.caption("Priva-koppeling niet geconfigureerd (PRIVA_CLIENT_ID ontbreekt).")
 
     dekking = get_klimaatdata_dekking()
 

@@ -7,3 +7,9 @@ teeltdata.db.bak-*
 
 # Lokale geheimen - nooit meecommitten
 .env
+
+# Apart project, hoort niet in deze repo
+_brandweerrooster_wip/
+priva.env.example
+priva.gitignore
+priva_horti.py
