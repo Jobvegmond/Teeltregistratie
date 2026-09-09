@@ -262,6 +262,16 @@ def init_db():
             )
         """)
 
+        # Handmatig streefaantal te poten vakken per plantweek. Als een week
+        # hierin staat, houdt plan_x_weken_vooruit dat aantal aan en geldt de
+        # "max 1 vak verschil met de buurweek"-regel niet meer voor die week.
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS planning_weekdoel (
+                week_start TEXT PRIMARY KEY,
+                aantal_vakken INTEGER NOT NULL
+            )
+        """)
+
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS wijzigingenlog (
                 id SERIAL PRIMARY KEY,
@@ -1354,6 +1364,118 @@ def _harde_bodem_vak(vaknummer):
     return verwacht
 
 
+def _maandag(datum):
+    """De maandag van de week waarin `datum` valt (date-object)."""
+    if isinstance(datum, str):
+        datum = datetime.strptime(datum, "%Y-%m-%d").date()
+    return datum - timedelta(days=datum.weekday())
+
+
+def get_planning_weekdoelen():
+    """
+    Handmatig ingestelde streefaantallen te poten vakken per plantweek.
+    Geeft {week_start (maandag-date): aantal_vakken} terug.
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT week_start, aantal_vakken FROM planning_weekdoel")
+        return {
+            datetime.strptime(w, "%Y-%m-%d").date(): int(a)
+            for w, a in cursor.fetchall()
+        }
+
+
+def set_planning_weekdoel(week_start, aantal_vakken, gebruiker=None):
+    """
+    Zet (of wist bij aantal_vakken=None) het handmatige streefaantal vakken
+    voor de plantweek waarin `week_start` valt.
+    """
+    week = _maandag(week_start)
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        if aantal_vakken is None:
+            cursor.execute("DELETE FROM planning_weekdoel WHERE week_start = %s", (str(week),))
+        else:
+            cursor.execute("""
+                INSERT INTO planning_weekdoel (week_start, aantal_vakken)
+                VALUES (%s, %s)
+                ON CONFLICT (week_start) DO UPDATE SET aantal_vakken = EXCLUDED.aantal_vakken
+            """, (str(week), int(aantal_vakken)))
+        conn.commit()
+    log_wijziging(
+        gebruiker, "gewijzigd", "planning_weekdoel", str(week),
+        f"Streefaantal gezet op {aantal_vakken}" if aantal_vakken is not None
+        else "Streefaantal gewist"
+    )
+
+
+def wis_planning_weekdoelen(gebruiker=None):
+    """Wist alle handmatige weekstreefaantallen."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM planning_weekdoel")
+        conn.commit()
+    log_wijziging(gebruiker, "verwijderd", "planning_weekdoel", None,
+                  "Alle handmatige weekstreefaantallen gewist")
+
+
+def get_planning_weekoverzicht(aantal_weken=8):
+    """
+    Per plantweek vanaf deze week t/m de horizon een dict met:
+      week_start (maandag-date), jaar, week (ISO), concepten (aantal
+      concept-planningen die week, in poot-eenheden: vak 19+20 telt als 1),
+      vrij (aantal vak-eenheden waarvan de vorige teelt die week of eerder
+      klaar is en die nog geen concept hebben), weekdoel (handmatig
+      ingesteld streefaantal of None).
+    Voedt de handmatige "vakken per week"-tabel in de planningsmodule.
+    """
+    maandag_nu = _maandag(date.today())
+    weekdoelen = get_planning_weekdoelen()
+
+    concept_vakken = set()
+    concept_vak_per_week = {}
+    for _pid, vaknummer, start, _d, _e, _n in get_planning():
+        concept_vakken.add(vaknummer)
+        w = _maandag(start)
+        concept_vak_per_week.setdefault(w, []).append(vaknummer)
+
+    concept_per_week = {}
+    for w, vakken in concept_vak_per_week.items():
+        aantal = len(vakken)
+        if VAK_GECOMBINEERD[0] in vakken and VAK_GECOMBINEERD[1] in vakken:
+            aantal -= 1  # 19+20 samen = 1 poot-eenheid
+        concept_per_week[w] = aantal
+
+    # vak-eenheden: 19+20 samen als één, vak 1 apart, rest los
+    eenheden = [[v] for v in range(2, 40) if v not in VAK_GECOMBINEERD]
+    eenheden.append(list(VAK_GECOMBINEERD))
+    eenheden.append([VAK_VOLGORDE_UITZONDERING])
+
+    vrij_per_week = {}
+    for vakken in eenheden:
+        if any(v in concept_vakken for v in vakken):
+            continue
+        bodems = [_harde_bodem_vak(v) for v in vakken]
+        if any(b is None for b in bodems):
+            continue
+        bw = max(_maandag(max(bodems)), maandag_nu)
+        vrij_per_week[bw] = vrij_per_week.get(bw, 0) + 1
+
+    resultaat = []
+    for i in range(max(1, aantal_weken)):
+        w = maandag_nu + timedelta(weeks=i)
+        jaar, week, _ = w.isocalendar()
+        resultaat.append({
+            "week_start": w,
+            "jaar": jaar,
+            "week": week,
+            "concepten": concept_per_week.get(w, 0),
+            "vrij": vrij_per_week.get(w, 0),
+            "weekdoel": weekdoelen.get(w),
+        })
+    return resultaat
+
+
 def voeg_planning_toe(vaknummer, verwachte_startdatum, notitie=None, gebruiker=None):
     """Maakt een concept-planningsregel aan voor een vak; duur/oogst worden automatisch berekend."""
     duur_weken, eind = bereken_verwachte_oogstdatum(verwachte_startdatum)
@@ -1467,7 +1589,7 @@ def bevestig_planning(planning_id, aantal_planten=None, gebruiker=None):
     return teelt_id, code
 
 
-def plan_x_weken_vooruit(aantal_weken, gebruiker=None):
+def plan_x_weken_vooruit(aantal_weken, gebruiker=None, verwijder_bestaande=False):
     """
     Plant vakken vooruit voor de komende `aantal_weken` weken (vanaf
     vandaag), doorplannend vanaf waar de huidige teelt van elk vak en de
@@ -1482,6 +1604,15 @@ def plan_x_weken_vooruit(aantal_weken, gebruiker=None):
     - het aantal vakken per week verschilt nooit meer dan 1 met de vorige
       of volgende week (voor een werkbare, continue arbeidsplanning).
 
+    Handmatige weekstreefaantallen (planning_weekdoel) gaan vóór: staat een
+    week daarin, dan houdt de planner dat aantal aan (voor zover er genoeg
+    vakken vrij zijn) en geldt de "max 1 vak verschil"-regel niet meer voor
+    die week — alleen nog tussen weken die niet handmatig zijn ingevuld.
+
+    Met verwijder_bestaande=True worden eerst alle bestaande concept-
+    planningen gewist, zodat er volledig opnieuw gepland wordt op basis van
+    de (handmatige) streefaantallen.
+
     Vakken die al een openstaand concept hebben, worden overgeslagen maar
     tellen mee als anker voor de volgorde/spreiding van de rest. Vakken
     zonder teeltgeschiedenis worden ook overgeslagen. Vakken die niet
@@ -1489,10 +1620,26 @@ def plan_x_weken_vooruit(aantal_weken, gebruiker=None):
     ongepland — druk de knop nogmaals in (evt. met een groter aantal
     weken) om verder te plannen.
 
-    Geeft een lijst van tuples (vaknummer, status, verwachte_startdatum)
-    terug, met status 'gepland', 'al_gepland', 'geen_geschiedenis' of
-    'buiten_horizon'.
+    Geeft (resultaten, weekdoel_waarschuwingen) terug:
+    - resultaten: lijst tuples (vaknummer, status, verwachte_startdatum) met
+      status 'gepland', 'al_gepland', 'geen_geschiedenis' of 'buiten_horizon';
+    - weekdoel_waarschuwingen: lijst tuples (week_start, gevraagd, geplant)
+      voor weken waar het handmatige streefaantal niet gehaald kon worden.
     """
+    if verwijder_bestaande:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM teeltplanning")
+            conn.commit()
+        log_wijziging(gebruiker, "verwijderd", "planning", None,
+                      "Alle concept-planningen gewist om opnieuw te plannen")
+
+    weekdoelen = get_planning_weekdoelen()
+
+    def _cap(week):
+        doel = weekdoelen.get(week)
+        return doel if doel is not None else streefaantal
+
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT vaknummer, verwachte_startdatum FROM teeltplanning")
@@ -1581,18 +1728,32 @@ def plan_x_weken_vooruit(aantal_weken, gebruiker=None):
     if eenheden and cursor_week is not None:
         laatste_bodem = max(bodem for _vakken, bodem in eenheden)
         weken_beschikbaar = max(1, (laatste_bodem + timedelta(days=WISSELTIJD_DAGEN) - cursor_week).days // 7 + 1)
-        streefaantal = max(1, -(-len(eenheden) // weken_beschikbaar))
+        # Weken met een handmatig streefaantal nemen hun eigen aantal; de rest
+        # van de eenheden verdeelt zich gelijkmatig over de overige weken.
+        venster = {cursor_week + timedelta(weeks=i) for i in range(weken_beschikbaar)}
+        doelen_in_venster = {w: n for w, n in weekdoelen.items() if w in venster}
+        rest_eenheden = max(0, len(eenheden) - sum(doelen_in_venster.values()))
+        rest_weken = max(1, weken_beschikbaar - len(doelen_in_venster))
+        streefaantal = max(1, -(-rest_eenheden // rest_weken))
 
     for vakken, bodem in eenheden:
         bodem_week = bodem - timedelta(days=bodem.weekday())
-        kandidaat = bodem_week if cursor_week is None else max(bodem_week, cursor_week)
+        if cursor_week is None:
+            cursor_week = bodem_week
+            huidige_week_count = 0
 
-        if cursor_week is not None and kandidaat == cursor_week and huidige_week_count >= streefaantal:
-            kandidaat = cursor_week + timedelta(days=7)
+        # Schuif door zolang de kandidaatweek al "vol" is (streefaantal of het
+        # handmatige weekdoel bereikt); zo blijven weken met doel 0 leeg.
+        kandidaat = max(bodem_week, cursor_week)
+        while True:
+            bezet = huidige_week_count if kandidaat == cursor_week else len(weekplan.get(kandidaat, []))
+            if bezet < _cap(kandidaat):
+                break
+            kandidaat += timedelta(days=7)
 
         if kandidaat != cursor_week:
             cursor_week = kandidaat
-            huidige_week_count = 0
+            huidige_week_count = len(weekplan.get(cursor_week, []))
 
         weekplan.setdefault(cursor_week, []).append((vakken, bodem))
         huidige_week_count += 1
@@ -1615,28 +1776,67 @@ def plan_x_weken_vooruit(aantal_weken, gebruiker=None):
     def _grootste_afwijking(plan):
         reeks = _volledige_weekreeks(plan)
         for i in range(len(reeks) - 1):
-            c1 = len(plan.get(reeks[i], []))
-            c2 = len(plan.get(reeks[i + 1], []))
+            w1, w2 = reeks[i], reeks[i + 1]
+            # De "max 1 vak verschil"-regel geldt alleen tussen twee weken die
+            # geen van beide een handmatig streefaantal hebben.
+            if w1 in weekdoelen or w2 in weekdoelen:
+                continue
+            c1 = len(plan.get(w1, []))
+            c2 = len(plan.get(w2, []))
             if c1 == 0 and c2 == 0:
                 continue  # niets om te verschuiven tussen twee lege weken
             if c2 == 0 or abs(c1 - c2) > 1:
-                return reeks[i], reeks[i + 1]
+                return w1, w2
         return None
 
-    for _ in range(2000):
-        afwijking = _grootste_afwijking(weekplan)
-        if afwijking is None:
-            break
-        w1, w2 = afwijking
-        c1, c2 = len(weekplan.get(w1, [])), len(weekplan.get(w2, []))
-        if c1 > c2:
-            eenheid = weekplan[w1].pop()
-            weekplan.setdefault(w2, []).insert(0, eenheid)
-        else:
-            volgende = w2 + timedelta(days=7)
-            eenheid = weekplan[w2].pop(0)
-            weekplan.setdefault(volgende, []).append(eenheid)
-        weekplan = {k: v for k, v in weekplan.items() if v}
+    def _egaliseer(plan):
+        for _ in range(2000):
+            afwijking = _grootste_afwijking(plan)
+            if afwijking is None:
+                break
+            w1, w2 = afwijking
+            c1, c2 = len(plan.get(w1, [])), len(plan.get(w2, []))
+            if c1 > c2:
+                eenheid = plan[w1].pop()
+                plan.setdefault(w2, []).insert(0, eenheid)
+            else:
+                # Schuif naar de eerstvolgende week die nog niet vol zit
+                # volgens een eventueel handmatig streefaantal.
+                volgende = w2 + timedelta(days=7)
+                while weekdoelen.get(volgende) is not None and \
+                        len(plan.get(volgende, [])) >= weekdoelen[volgende]:
+                    volgende += timedelta(days=7)
+                eenheid = plan[w2].pop(0)
+                plan.setdefault(volgende, []).append(eenheid)
+            plan = {k: v for k, v in plan.items() if v}
+        return plan
+
+    weekplan = _egaliseer(weekplan)
+
+    # --- Pass 2b: handmatige weekdoelen die hoger liggen dan wat Pass 1
+    #     plaatste, aanvullen door eenheden uit andere weken te verschuiven —
+    #     mits hun harde bodem de doelweek toelaat. Eerst uit latere weken
+    #     (dan planten we ze vroeger), daarna uit eerdere weken (later). ---
+    for doelweek, doel in sorted(weekdoelen.items()):
+        while len(weekplan.get(doelweek, [])) < doel:
+            andere = sorted(
+                (w for w in weekplan if w != doelweek and weekplan[w]),
+                key=lambda w: (0 if w > doelweek else 1, abs((w - doelweek).days)),
+            )
+            verplaatst = False
+            for w in andere:
+                for idx, (vakken, bodem) in enumerate(weekplan[w]):
+                    if bodem - timedelta(days=bodem.weekday()) <= doelweek:
+                        weekplan.setdefault(doelweek, []).append(weekplan[w].pop(idx))
+                        verplaatst = True
+                        break
+                if verplaatst:
+                    break
+            weekplan = {k: v for k, v in weekplan.items() if v}
+            if not verplaatst:
+                break  # niets meer te verschuiven; waarschuwing volgt later
+
+    weekplan = _egaliseer(weekplan)
 
     # --- Pass 3: vak 1 (indien nog te plannen) apart invoegen ---
     if VAK_VOLGORDE_UITZONDERING not in al_gepland:
@@ -1646,8 +1846,14 @@ def plan_x_weken_vooruit(aantal_weken, gebruiker=None):
         else:
             bodem_1_week = bodem_1 - timedelta(days=bodem_1.weekday())
             kandidaten = sorted(w for w in weekplan if w >= bodem_1_week) or [bodem_1_week]
+            # Weken die al op hun handmatige streefaantal zitten niet nog
+            # verder vullen met vak 1 (tenzij er geen andere optie is).
+            def _vol(w):
+                doel = weekdoelen.get(w)
+                return doel is not None and len(weekplan.get(w, [])) >= doel
+            opties = [w for w in [bodem_1_week] + kandidaten if not _vol(w)] or [bodem_1_week]
             beste_week, beste_penalty = None, None
-            for w in [bodem_1_week] + kandidaten:
+            for w in opties:
                 proef = {k: list(v) for k, v in weekplan.items()}
                 proef.setdefault(w, []).append(([VAK_VOLGORDE_UITZONDERING], bodem_1))
                 weken_sorted = sorted(proef)
@@ -1695,7 +1901,17 @@ def plan_x_weken_vooruit(aantal_weken, gebruiker=None):
         elif vaknummer in geen_geschiedenis:
             resultaten.append((vaknummer, "geen_geschiedenis", None))
 
-    return resultaten
+    # Handmatige weekdoelen die niet gehaald konden worden (te weinig vrije
+    # vakken die week).
+    weekdoel_waarschuwingen = []
+    for week, doel in sorted(weekdoelen.items()):
+        gepland = len(weekplan.get(week, []))
+        gepland += sum(1 for d in al_gepland.values()
+                       if week <= d < week + timedelta(days=7))
+        if gepland < doel:
+            weekdoel_waarschuwingen.append((week, doel, gepland))
+
+    return resultaten, weekdoel_waarschuwingen
 
 
 def get_lege_vakken_per_week(aantal_weken=12):
