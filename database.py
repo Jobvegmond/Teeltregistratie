@@ -1801,20 +1801,27 @@ def plan_x_weken_vooruit(aantal_weken, gebruiker=None, verwijder_bestaande=False
         laatste_week = wk if laatste_week is None else max(laatste_week, wk)
         sweep_vanaf = max(sweep_vanaf, s + timedelta(days=1))
 
+    earliest = {}  # planning_id -> vroegste plantdatum (voor de dagverdeling)
+
     def _plaats(vakken, vroegst):
-        """Wijst een eenheid toe aan de eerstvolgende niet-volle maandag-week
-        vanaf `vroegst`, nooit vóór de vorige. Geeft die maandag terug; de
-        dagverdeling ma→do gebeurt achteraf in _naverwerk_planning."""
+        """Wijst een eenheid toe aan de eerstvolgende maandag-week die (a) niet
+        vol zit, (b) een ma–do-dag heeft die ≥ `vroegst` ligt, en (c) als deze
+        eenheid de eerste van die week zou zijn: op maandag kan starten. Geeft
+        die maandag terug; de exacte dag ma→do volgt in _naverwerk_planning."""
         nonlocal laatste_week
         vroegst = max(vroegst, sweep_vanaf)
         week = _maandag(vroegst)
-        if week < vroegst:  # vroegst valt na maandag
-            week += timedelta(days=7)
         if laatste_week is not None and week < laatste_week:
             week = laatste_week
-        while week_teller.get(week, 0) >= _cap(week):
+        while True:
+            bezet = week_teller.get(week, 0)
+            past = (bezet < _cap(week)
+                    and vroegst <= week + timedelta(days=3)
+                    and not (bezet == 0 and vroegst > week))
+            if past:
+                break
             week += timedelta(days=7)
-        week_teller[week] = week_teller.get(week, 0) + 1
+        week_teller[week] = bezet + 1
         laatste_week = week
         return week
 
@@ -1836,7 +1843,8 @@ def plan_x_weken_vooruit(aantal_weken, gebruiker=None, verwijder_bestaande=False
         if datum > horizon_eind:
             break
         for v in vakken:
-            voeg_planning_toe(v, datum, gebruiker=gebruiker)
+            pid = voeg_planning_toe(v, datum, gebruiker=gebruiker)
+            earliest[pid] = max(vroegst, sweep_vanaf)
         vorige_datum = datum
         _, nieuwe_oogst = bereken_verwachte_oogstdatum(datum)
         front[rep] = nieuwe_oogst or (datum + timedelta(weeks=13))
@@ -1847,7 +1855,8 @@ def plan_x_weken_vooruit(aantal_weken, gebruiker=None, verwijder_bestaande=False
                 and _maandag(max(vak1_vroegst, sweep_vanaf)) <= horizon_eind:
             d1 = _plaats([VAK_VOLGORDE_UITZONDERING], max(vak1_vroegst, sweep_vanaf))
             if d1 <= horizon_eind:
-                voeg_planning_toe(VAK_VOLGORDE_UITZONDERING, d1, gebruiker=gebruiker)
+                pid = voeg_planning_toe(VAK_VOLGORDE_UITZONDERING, d1, gebruiker=gebruiker)
+                earliest[pid] = max(vak1_vroegst, sweep_vanaf)
                 _, o1 = bereken_verwachte_oogstdatum(d1)
                 vak1_front = o1 or (d1 + timedelta(weeks=13))
                 if d1 > vorige_datum:
@@ -1855,16 +1864,17 @@ def plan_x_weken_vooruit(aantal_weken, gebruiker=None, verwijder_bestaande=False
 
         pos += 1
 
-    _naverwerk_planning(vaste_ids)
+    _naverwerk_planning(vaste_ids, earliest)
     return _planresultaat(weekdoelen, geen_geschiedenis)
 
 
-def _naverwerk_planning(vaste_ids=None):
+def _naverwerk_planning(vaste_ids=None, earliest=None):
     """
     Naverwerking van de concept-planning (behalve `vaste_ids`), per maandag-week
     in cyclusvolgorde (= id-volgorde van de sweep):
     - dagverdeling ma→do: t/m 4 op ma/di/wo/do, meer eerst de maandag dubbel,
-      dan de dinsdag, enz.; nooit vr/za/zo;
+      dan de dinsdag, enz.; nooit vr/za/zo; een vak nooit vóór zijn eigen
+      vroegste dag (`earliest`), oplopend zodat er geen twee op één dag botsen;
     - teeltduur soepel latend overlopen: de k-de van n krijgt
       tabel[W] + (tabel[W+1]-tabel[W]) * (k-(n-1)/2)/n;
     - verwachte oogstdatum op ma–vr en monotoon in cyclusvolgorde (altijd in
@@ -1872,6 +1882,7 @@ def _naverwerk_planning(vaste_ids=None):
       telt niet mee in die keten.
     """
     vaste_ids = vaste_ids or set()
+    earliest = earliest or {}
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT id, vaknummer, verwachte_startdatum FROM teeltplanning ORDER BY id")
@@ -1895,12 +1906,18 @@ def _naverwerk_planning(vaste_ids=None):
     for i, pid in enumerate(v1p):
         vak1_volgende[pid] = vak1_maandagen[i + 1] if i + 1 < len(vak1_maandagen) else None
 
-    def _naar_werkdag(d):  # za/zo -> maandag
+    def _naar_werkdag(d):  # za/zo -> vrijdag ervoor (oogsten kan ma-vr)
         while d.weekday() > 4:
+            d -= timedelta(days=1)
+        return d
+
+    def _naar_plantdag(d):  # vr/za/zo -> volgende maandag
+        while d.weekday() > 3:
             d += timedelta(days=1)
         return d
 
     vorige_oogst = None
+    laatste_oogst_vak = {}  # vaknummer -> verwachte oogst vorige ronde in dit plan
     with get_connection() as conn:
         cursor = conn.cursor()
         for maandag in sorted(per_week):
@@ -1910,8 +1927,21 @@ def _naverwerk_planning(vaste_ids=None):
             offsets = [d for d in range(4) for _ in range(basis + (1 if d < rest else 0))]
             d0 = teeltduur_voor_plantweek(get_weeknummer(maandag))
             d1 = teeltduur_voor_plantweek(get_weeknummer(maandag + timedelta(days=7))) or d0
+            laatste_start = None
             for k, ((pid, vak), offset) in enumerate(zip(leden, offsets)):
                 start = maandag + timedelta(days=offset)
+                vr = earliest.get(pid)
+                if vr is not None and start < vr:
+                    start = _naar_plantdag(vr)
+                # nooit planten vóór de oogst van de vorige ronde in ditzelfde vak
+                vorige_vak_oogst = laatste_oogst_vak.get(vak)
+                if vorige_vak_oogst is not None and start <= vorige_vak_oogst:
+                    start = _naar_plantdag(vorige_vak_oogst + timedelta(days=1))
+                # cyclusvolgorde binnen de week: nooit vóór de vorige planting
+                # (dubbel op één dag mag wél, dat is de "maandag dubbel"-regel).
+                if laatste_start is not None and start < laatste_start:
+                    start = laatste_start
+                laatste_start = start
                 if d0 is None:
                     cursor.execute("UPDATE teeltplanning SET verwachte_startdatum = %s WHERE id = %s",
                                    (start.isoformat(), pid))
@@ -1928,6 +1958,7 @@ def _naverwerk_planning(vaste_ids=None):
                     if vorige_oogst is not None and oogst <= vorige_oogst:
                         oogst = _naar_werkdag(vorige_oogst + timedelta(days=1))
                     vorige_oogst = oogst
+                laatste_oogst_vak[vak] = oogst
                 cursor.execute(
                     "UPDATE teeltplanning SET verwachte_startdatum = %s, verwachte_duur_weken = %s, "
                     "verwachte_oogstdatum = %s WHERE id = %s",
