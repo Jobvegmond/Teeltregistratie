@@ -50,6 +50,8 @@ from database import (
     get_planning_weekoverzicht,
     set_planning_weekdoel,
     wis_planning_weekdoelen,
+    get_planning_besteld_tot,
+    set_planning_besteld_tot,
     bereken_verwachte_oogstdatum,
     get_lege_vakken_per_week,
     get_strokenplanning,
@@ -75,7 +77,8 @@ st.markdown("""
 AFDELING_KLEUR = {1: "#2a78d6", 2: "#eb6834", 3: "#1baf7a", 4: "#eda100"}
 
 
-def klimaat_grafieken(dagen_records, toon_dagnacht=False, temp_max=30, licht_max=2500):
+def klimaat_grafieken(dagen_records, toon_dagnacht=False, toon_trend=False,
+                      temp_max=30, licht_max=2500):
     """
     Tekent twee grafieken uit dagrecords (dicts met datum, afdeling, temp_24h,
     temp_dag, temp_nacht, rv_24h, rv_dag, rv_nacht, lichtsom):
@@ -83,7 +86,9 @@ def klimaat_grafieken(dagen_records, toon_dagnacht=False, temp_max=30, licht_max
        lichtsom per dag als staaf (rechter-as 0..licht_max, gemiddeld over de
        gekozen afdelingen);
     2) relatieve luchtvochtigheid als lijn.
-    De assen zijn temporeel, dus altijd chronologisch.
+    Met toon_trend loopt er een dik voortschrijdend 14-daags gemiddelde door de
+    temperatuur- en lichtsomlijn. De assen zijn temporeel, dus altijd
+    chronologisch.
     """
     if not dagen_records:
         st.caption("Geen klimaatdata in deze periode.")
@@ -135,9 +140,35 @@ def klimaat_grafieken(dagen_records, toon_dagnacht=False, temp_max=30, licht_max
         tooltip=[alt.Tooltip("datum:T", title="datum", format="%d-%m-%y"),
                  "Afdeling:N", "Deel:N", alt.Tooltip("waarde:Q", title="°C", format=".1f")],
     )
-    st.caption("Temperatuur (lijn, links) + lichtsom per dag (staaf, gemiddeld over de afdelingen, rechts)")
+
+    temp_lagen = [licht_laag, temp_laag]
+    if toon_trend:
+        temp_trend_df = (
+            df.groupby("datum", as_index=False)["temp_24h"].mean().dropna(subset=["temp_24h"])
+            .sort_values("datum")
+        )
+        temp_trend_df["trend"] = (
+            temp_trend_df["temp_24h"].rolling(14, center=True, min_periods=3).mean()
+        )
+        licht_trend = licht.sort_values("datum").copy()
+        licht_trend["trend"] = licht_trend["lichtsom"].rolling(14, center=True, min_periods=3).mean()
+        temp_lagen += [
+            alt.Chart(licht_trend).mark_line(color="#c79a3e", strokeWidth=3).encode(
+                x=x_as, y=alt.Y("trend:Q", scale=alt.Scale(domain=[0, licht_max], clamp=True)),
+            ),
+            alt.Chart(temp_trend_df).mark_line(color="#333", strokeWidth=3).encode(
+                x=x_as, y=alt.Y("trend:Q", scale=alt.Scale(domain=[0, temp_max], clamp=True)),
+                tooltip=[alt.Tooltip("datum:T", title="datum", format="%d-%m-%y"),
+                         alt.Tooltip("trend:Q", title="trend °C", format=".1f")],
+            ),
+        ]
+
+    st.caption(
+        "Temperatuur (lijn, links) + lichtsom per dag (staaf, gemiddeld over de afdelingen, rechts)"
+        + (" — dikke lijn = 14-daags voortschrijdend gemiddelde" if toon_trend else "")
+    )
     st.altair_chart(
-        alt.layer(licht_laag, temp_laag).resolve_scale(y="independent"),
+        alt.layer(*temp_lagen).resolve_scale(y="independent"),
         use_container_width=True,
     )
 
@@ -716,24 +747,15 @@ with tab_overzicht:
         # Maak een DataFrame van de rijen (zonder de ID-kolom voor display)
         df = pd.DataFrame(rijen, columns=kolommen)
 
-        # Rijen komen al gesorteerd uit de database (op code, laag naar hoog).
-        # Lopende teelten + nog te starten altijd zichtbaar; afgeronde teelten
-        # in een dichtgeklapte uitklapper zodat de tabel opent op de scheiding
-        # tussen de laatste afgeronde en de eerste lopende teelt.
+        # Afgeronde teelten bovenaan (nieuwste startdatum eerst), daaronder de
+        # lopende en nog te starten teelten (op code, laag naar hoog).
         verborgen = ['ID', '_startdatum_iso']
         mask_afgerond = df['Status'] == 'Afgerond'
-        df_ov_actief = df.loc[~mask_afgerond].drop(columns=verborgen)
-        df_ov_afgerond = (
-            df.loc[mask_afgerond]
-            .sort_values('_startdatum_iso', ascending=False)
-            .drop(columns=verborgen)
-        )
+        df_ov_afgerond = df.loc[mask_afgerond].sort_values('_startdatum_iso', ascending=False)
+        df_ov_actief = df.loc[~mask_afgerond]
+        df_ov = pd.concat([df_ov_afgerond, df_ov_actief]).drop(columns=verborgen)
 
-        st.dataframe(df_ov_actief, use_container_width=True, hide_index=True)
-
-        if not df_ov_afgerond.empty:
-            with st.expander(f"Toon afgeronde teelten ({len(df_ov_afgerond)}) — nieuwste startdatum eerst"):
-                st.dataframe(df_ov_afgerond, use_container_width=True, hide_index=True)
+        st.dataframe(df_ov, use_container_width=True, hide_index=True)
 
         # Statistieken
         col1, col2, col3, col4 = st.columns(4)
@@ -777,7 +799,22 @@ with tab_detail:
             return f"Week {week} - {jaar} ({len(teelten_groep)} vak(ken): {vakken_tekst})"
 
         keuzes_weken = {_label_plantweek(sleutel): sleutel for sleutel in sorted(groepen_detail.keys())}
-        week_label = st.selectbox("Kies een plantweek", list(keuzes_weken.keys()), key="detail_week_selectie")
+
+        # Open standaard op de plantweek met de meest recent geoogste teelt.
+        laatste_oogst, standaard_sleutel = None, None
+        for sleutel, groep in groepen_detail.items():
+            for t in groep:
+                if t["datum_oogst"] and (laatste_oogst is None or t["datum_oogst"] > laatste_oogst):
+                    laatste_oogst, standaard_sleutel = t["datum_oogst"], sleutel
+        labels = list(keuzes_weken.keys())
+        standaard_index = 0
+        if standaard_sleutel is not None:
+            standaard_label = next(lbl for lbl, s in keuzes_weken.items() if s == standaard_sleutel)
+            standaard_index = labels.index(standaard_label)
+
+        week_label = st.selectbox(
+            "Kies een plantweek", labels, index=standaard_index, key="detail_week_selectie"
+        )
         teelten_groep = groepen_detail[keuzes_weken[week_label]]
 
         vandaag_detail = str(datetime.today().date())
@@ -1049,10 +1086,31 @@ with tab_planning:
         )
         st.markdown("---")
 
+    st.write("**Planten besteld t/m**")
+    besteld_tot_huidig = get_planning_besteld_tot()
+    st.caption(
+        "Tot en met deze datum staat de concept-planning vast (planten besteld). "
+        "'Plan opnieuw' laat die weken staan en plant er alleen achteraan. Leeg = niets vast."
+    )
+    col_bt, col_bt2 = st.columns([1, 1])
+    besteld_tot_nieuw = col_bt.date_input(
+        "Besteld t/m", value=besteld_tot_huidig, format="DD-MM-YYYY", key="plan_besteld_tot",
+    )
+    with col_bt2:
+        st.write("")
+        cb1, cb2 = st.columns(2)
+        if cb1.button("💾 Vastzetten", key="plan_besteld_opslaan"):
+            set_planning_besteld_tot(besteld_tot_nieuw, gebruiker=huidige_gebruiker())
+            st.rerun()
+        if cb2.button("🔓 Vrijgeven", key="plan_besteld_wissen", disabled=besteld_tot_huidig is None):
+            set_planning_besteld_tot(None, gebruiker=huidige_gebruiker())
+            st.rerun()
+
+    st.markdown("---")
     st.write("**X weken vooruit plannen**")
     col_weken, col_knop = st.columns([1, 2])
     aantal_weken_vooruit = col_weken.number_input(
-        "Aantal weken vooruit", min_value=1, max_value=52, value=8, step=1, key="plan_weken_vooruit"
+        "Aantal weken vooruit", min_value=1, max_value=78, value=52, step=1, key="plan_weken_vooruit"
     )
     def _toon_planresultaat(resultaten, weekdoel_waarschuwingen):
         gepland = [r for r in resultaten if r[1] == "gepland"]
@@ -1201,6 +1259,8 @@ with tab_planning:
         keuzes_bulk = {
             f"Vak {vaknummer} — week {get_weeknummer(start)} ({format_datum(start)})": planning_id
             for planning_id, vaknummer, start, _duur, _eind, _notitie in planning_rijen
+            if not (besteld_tot_huidig is not None
+                    and datetime.strptime(start, "%Y-%m-%d").date() <= besteld_tot_huidig)
         }
         geselecteerde_bulk = st.multiselect(
             "Selecteer concept-planningen om in één keer te verwijderen",
@@ -1221,6 +1281,8 @@ with tab_planning:
 
         huidige_weeksleutel = None
         for planning_id, vaknummer, start, duur, eind, notitie in planning_rijen:
+            start_d = datetime.strptime(start, "%Y-%m-%d").date()
+            vast = besteld_tot_huidig is not None and start_d <= besteld_tot_huidig
             weeksleutel = get_isojaar_week(start)
             if weeksleutel != huidige_weeksleutel:
                 jaar_kop, week_kop = weeksleutel
@@ -1230,12 +1292,13 @@ with tab_planning:
             col1, col2, col2b, col3, col4, col5, col6, col7 = st.columns(
                 [0.8, 1.6, 0.6, 1, 1.6, 1.5, 0.8, 0.8]
             )
-            col1.write(f"Vak {vaknummer}")
+            col1.write(f"{'🔒 ' if vast else ''}Vak {vaknummer}")
             nieuwe_datum_plan = col2.date_input(
-                "Startdatum", value=datetime.strptime(start, "%Y-%m-%d").date(),
+                "Startdatum", value=start_d, disabled=vast,
                 key=f"plan_datum_{planning_id}", format="DD-MM-YYYY", label_visibility="collapsed",
             )
-            if col2b.button("💾", key=f"plan_datum_opslaan_{planning_id}", help="Startdatum aanpassen"):
+            if col2b.button("💾", key=f"plan_datum_opslaan_{planning_id}", help="Startdatum aanpassen",
+                            disabled=vast):
                 wijzig_planning(planning_id, nieuwe_datum_plan, gebruiker=huidige_gebruiker())
                 st.rerun()
             col3.write(f"{duur:g} wk" if duur is not None else "-")
@@ -1258,7 +1321,8 @@ with tab_planning:
                     teelt_id, code = resultaat
                     st.success(f"✅ Vak {vaknummer} gestart - code **{code}** (teelt-ID {teelt_id}).")
                 st.rerun()
-            if col7.button("🗑️", key=f"plan_verwijder_{planning_id}", help="Concept-planning verwijderen"):
+            if col7.button("🗑️", key=f"plan_verwijder_{planning_id}", help="Concept-planning verwijderen",
+                           disabled=vast):
                 verwijder_planning(planning_id, gebruiker=huidige_gebruiker())
                 st.rerun()
     else:
@@ -1314,22 +1378,17 @@ with tab_klimaat:
         st.caption("Priva-koppeling niet geconfigureerd (PRIVA_CLIENT_ID ontbreekt).")
 
     dekking = get_klimaatdata_dekking()
-
     kolommen_klimaat, rijen_klimaat = get_klimaat_overzicht_dataframe()
-    if rijen_klimaat:
-        st.write("**Gemiddelden per teelt**")
-        df_klimaat = pd.DataFrame(rijen_klimaat, columns=kolommen_klimaat)
-        st.dataframe(df_klimaat, use_container_width=True, hide_index=True)
-    else:
+
+    if not dekking and not rijen_klimaat:
         st.info(
-            "Nog geen gekoppelde klimaatdata. Upload hierboven een CSV-export uit de klimaatcomputer; "
-            "de gemiddelde temperatuur, gemiddelde RV en gemiddelde dagstralingssom worden automatisch "
+            "Nog geen gekoppelde klimaatdata. Upload hierboven een CSV-export uit de klimaatcomputer "
+            "of haal 'm uit Priva; de gemiddelde temperatuur, RV en dagstralingssom worden automatisch "
             "gekoppeld aan elke teelt op basis van vaknummer (→ afdeling) en teeltperiode."
         )
 
     # --- Grafieken: klimaatverloop per afdeling over een vrije periode ---
     if dekking:
-        st.markdown("---")
         st.write("**Grafieken**")
         alle_afdelingen = [r[0] for r in dekking]
         data_eerste = datetime.strptime(min(r[1] for r in dekking), "%Y-%m-%d").date()
@@ -1348,8 +1407,12 @@ with tab_klimaat:
             "Tot en met", value=data_laatste, min_value=data_eerste, max_value=data_laatste,
             key="klimaat_grafiek_tot", format="DD-MM-YYYY",
         )
-        toon_dagnacht = st.checkbox(
+        col_dn, col_tr = st.columns(2)
+        toon_dagnacht = col_dn.checkbox(
             "Toon ook dag- en nachtgemiddelde", value=False, key="klimaat_grafiek_dagnacht"
+        )
+        toon_trend = col_tr.checkbox(
+            "Toon trendlijn (voortschrijdend gemiddelde)", value=False, key="klimaat_grafiek_trend"
         )
 
         if gekozen_afdelingen and datum_van <= datum_tot:
@@ -1363,9 +1426,16 @@ with tab_klimaat:
                         "rv_24h": rv, "rv_dag": rv_dag, "rv_nacht": rv_nacht,
                         "lichtsom": straling,
                     })
-            klimaat_grafieken(records, toon_dagnacht=toon_dagnacht)
+            klimaat_grafieken(records, toon_dagnacht=toon_dagnacht, toon_trend=toon_trend)
         elif datum_van > datum_tot:
             st.warning("'Van' ligt na 'Tot en met'.")
+
+    # --- Gemiddelden per teelt (onder de grafieken) ---
+    if rijen_klimaat:
+        st.markdown("---")
+        st.write("**Gemiddelden per teelt**")
+        df_klimaat = pd.DataFrame(rijen_klimaat, columns=kolommen_klimaat)
+        st.dataframe(df_klimaat, use_container_width=True, hide_index=True)
 
     # --- Geïmporteerd t/m: per afdeling tot welke dag er data is (onderaan) ---
     if dekking:

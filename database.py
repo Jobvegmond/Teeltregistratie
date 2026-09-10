@@ -262,6 +262,16 @@ def init_db():
             )
         """)
 
+        # Losse app-instellingen (sleutel/waarde). Bijv. 'planning_besteld_tot':
+        # concept-planningen met startdatum t/m die datum staan vast (planten
+        # besteld) en worden door plan_x_weken_vooruit niet meer aangepast.
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS app_instelling (
+                sleutel TEXT PRIMARY KEY,
+                waarde TEXT
+            )
+        """)
+
         # Handmatig streefaantal te poten vakken per plantweek. Als een week
         # hierin staat, houdt plan_x_weken_vooruit dat aantal aan en geldt de
         # "max 1 vak verschil met de buurweek"-regel niet meer voor die week.
@@ -1407,6 +1417,50 @@ def _maandag(datum):
     return datum - timedelta(days=datum.weekday())
 
 
+def get_instelling(sleutel, standaard=None):
+    """Leest een app-instelling (sleutel/waarde). Geeft `standaard` als hij er niet is."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT waarde FROM app_instelling WHERE sleutel = %s", (sleutel,))
+        rij = cursor.fetchone()
+    return rij[0] if rij and rij[0] is not None else standaard
+
+
+def set_instelling(sleutel, waarde, gebruiker=None):
+    """Zet of wist (waarde None) een app-instelling."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        if waarde is None:
+            cursor.execute("DELETE FROM app_instelling WHERE sleutel = %s", (sleutel,))
+        else:
+            cursor.execute("""
+                INSERT INTO app_instelling (sleutel, waarde) VALUES (%s, %s)
+                ON CONFLICT (sleutel) DO UPDATE SET waarde = EXCLUDED.waarde
+            """, (sleutel, str(waarde)))
+        conn.commit()
+    log_wijziging(gebruiker, "gewijzigd", "app_instelling", sleutel,
+                  f"{sleutel} = {waarde}" if waarde is not None else f"{sleutel} gewist")
+
+
+def get_planning_besteld_tot():
+    """
+    Datum (date) t/m wanneer de planten besteld zijn: concept-planningen met
+    startdatum t/m deze datum staan vast. Geeft None als er niets is ingesteld.
+    """
+    waarde = get_instelling("planning_besteld_tot")
+    if not waarde:
+        return None
+    try:
+        return datetime.strptime(waarde, "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def set_planning_besteld_tot(datum, gebruiker=None):
+    set_instelling("planning_besteld_tot",
+                   datum.isoformat() if datum else None, gebruiker=gebruiker)
+
+
 def get_planning_weekdoelen():
     """
     Handmatig ingestelde streefaantallen te poten vakken per plantweek.
@@ -1628,9 +1682,10 @@ def plan_x_weken_vooruit(aantal_weken, gebruiker=None, verwijder_bestaande=False
     vakken vrij zijn) en geldt de "max 1 vak verschil"-regel niet meer voor
     die week — alleen nog tussen weken die niet handmatig zijn ingevuld.
 
-    Met verwijder_bestaande=True worden eerst alle bestaande concept-
-    planningen gewist. Zonder dat worden bestaande concepten met rust gelaten
-    en alleen rondes daarná toegevoegd.
+    Met verwijder_bestaande=True worden bestaande concept-planningen gewist —
+    behalve de concepten met startdatum t/m "planten besteld t/m" (die staan
+    vast). Zonder verwijder_bestaande worden alle bestaande concepten met rust
+    gelaten en alleen plantingen daarná toegevoegd.
 
     Geeft (resultaten, weekdoel_waarschuwingen) terug:
     - resultaten: lijst tuples (vaknummer, status, eerste_startdatum) met
@@ -1638,13 +1693,23 @@ def plan_x_weken_vooruit(aantal_weken, gebruiker=None, verwijder_bestaande=False
     - weekdoel_waarschuwingen: lijst tuples (week_start, gevraagd, geplant)
       voor weken waar het handmatige streefaantal niet gehaald kon worden.
     """
+    besteld_tot = get_planning_besteld_tot()
+
     if verwijder_bestaande:
         with get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("DELETE FROM teeltplanning")
+            if besteld_tot is not None:
+                cursor.execute(
+                    "DELETE FROM teeltplanning WHERE verwachte_startdatum > %s",
+                    (besteld_tot.isoformat(),),
+                )
+            else:
+                cursor.execute("DELETE FROM teeltplanning")
             conn.commit()
-        log_wijziging(gebruiker, "verwijderd", "planning", None,
-                      "Alle concept-planningen gewist om opnieuw te plannen")
+        log_wijziging(
+            gebruiker, "verwijderd", "planning", None,
+            "Concept-planningen gewist om opnieuw te plannen"
+            + (f" (besteld t/m {besteld_tot} blijft staan)" if besteld_tot else ""))
 
     weekdoelen = get_planning_weekdoelen()
     vandaag = date.today()
@@ -1676,13 +1741,38 @@ def plan_x_weken_vooruit(aantal_weken, gebruiker=None, verwijder_bestaande=False
     bruikbaar = [e for e in eenheden if e[0] in front]
     if not bruikbaar:
         return _planresultaat(weekdoelen, geen_geschiedenis)
+    reps = [e[0] for e in bruikbaar]
+    vak_naar_rep = {v: rep for rep, vakken in bruikbaar for v in vakken}
+
+    # Vaste (besteld) concepten: startdatum t/m `besteld_tot`. Die staan vast;
+    # de cyclus hervat na de laatste vaste planting.
+    vaste = []  # (vaknummer, startdatum)
+    if besteld_tot is not None:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT vaknummer, verwachte_startdatum FROM teeltplanning "
+                "WHERE verwachte_startdatum <= %s",
+                (besteld_tot.isoformat(),),
+            )
+            for vak, s in cursor.fetchall():
+                vaste.append((vak, datetime.strptime(s, "%Y-%m-%d").date()))
 
     # De cyclus begint bij de eenheid die het eerst geoogst wordt (het
     # oogstfront), en draait van daaruit strikt op vaknummer door: 35, 36, ...,
     # 39, 2, 3, ..., 34, 35, ... — vak N wordt altijd vóór N+1 geplant en
-    # geoogst, en vak N's volgende beurt komt pas ná een hele ronde.
-    start_rep = min(bruikbaar, key=lambda e: (front[e[0]], e[0]))[0]
-    reps = [e[0] for e in bruikbaar]
+    # geoogst, en vak N's volgende beurt komt pas ná een hele ronde. Als er
+    # vaste (besteld) concepten zijn, hervat de cyclus bij het vak ná het
+    # laatst vastgezette vak.
+    if vaste:
+        laatste_vast_vak, _ = max(vaste, key=lambda x: (x[1], x[0]))
+        laatste_rep = vak_naar_rep.get(laatste_vast_vak)
+        if laatste_rep in reps:
+            start_rep = reps[(reps.index(laatste_rep) + 1) % len(reps)]
+        else:
+            start_rep = min(bruikbaar, key=lambda e: (front[e[0]], e[0]))[0]
+    else:
+        start_rep = min(bruikbaar, key=lambda e: (front[e[0]], e[0]))[0]
     si = reps.index(start_rep)
     cyclus = bruikbaar[si:] + bruikbaar[:si]
     n_eenh = len(bruikbaar)
@@ -1710,15 +1800,23 @@ def plan_x_weken_vooruit(aantal_weken, gebruiker=None, verwijder_bestaande=False
         doel = weekdoelen.get(week)
         return doel if doel is not None else streef_map.get(week, laatste_streef)
 
+    # Weken waarin al vaste (besteld) plantingen staan meetellen voor de
+    # capaciteit, en de sweep hervat na de laatste vaste planting.
     week_teller = {}
     laatste_week = None
+    sweep_vanaf = vandaag
+    for _vak, s in vaste:
+        wk = _maandag(s)
+        week_teller[wk] = week_teller.get(wk, 0) + 1
+        laatste_week = wk if laatste_week is None else max(laatste_week, wk)
+        sweep_vanaf = max(sweep_vanaf, s + timedelta(days=1))
 
     def _plaats(vakken, vroegst):
         """Kies een plantdag (ma→do) vanaf `vroegst`, in de eerstvolgende week
         die nog niet vol zit (streefaantal of handmatig weekdoel), en nooit
         vóór de vorige planting in de cyclus."""
         nonlocal laatste_week
-        vroegst = max(vroegst, vandaag)
+        vroegst = max(vroegst, sweep_vanaf)
         week = _maandag(vroegst)
         if laatste_week is not None and week < laatste_week:
             week = laatste_week
@@ -1747,7 +1845,7 @@ def plan_x_weken_vooruit(aantal_weken, gebruiker=None, verwijder_bestaande=False
         vroegst = front[rep]
         if vorige_datum is not None and vroegst < vorige_datum:
             vroegst = vorige_datum
-        if _maandag(max(vroegst, vandaag)) > horizon_eind:
+        if _maandag(max(vroegst, sweep_vanaf)) > horizon_eind:
             break
         datum = _plaats(vakken, vroegst)
         if datum > horizon_eind:
@@ -1761,8 +1859,8 @@ def plan_x_weken_vooruit(aantal_weken, gebruiker=None, verwijder_bestaande=False
         # Vak 1 tussenvoegen zodra het klaar is (maar niet de cyclus laten
         # blokkeren als vak 1's teelt lang loopt).
         if vak1_front is not None and vak1_front <= (vorige_datum + timedelta(days=1)) \
-                and _maandag(max(vak1_front, vandaag)) <= horizon_eind:
-            d1 = _plaats([VAK_VOLGORDE_UITZONDERING], max(vak1_front, vandaag))
+                and _maandag(max(vak1_front, sweep_vanaf)) <= horizon_eind:
+            d1 = _plaats([VAK_VOLGORDE_UITZONDERING], max(vak1_front, sweep_vanaf))
             if d1 <= horizon_eind:
                 voeg_planning_toe(VAK_VOLGORDE_UITZONDERING, d1, gebruiker=gebruiker)
                 _, o1 = bereken_verwachte_oogstdatum(d1)
