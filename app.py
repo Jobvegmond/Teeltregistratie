@@ -1021,10 +1021,12 @@ with tab_planning:
     st.caption(
         "Concept-planning voor toekomstige teelten: plant vooruit vanaf waar de huidige teelt van "
         "elk vak en de bestaande concept-planning gebleven zijn. Vak 19+20 worden als één eenheid "
-        "gepland, vak 1 is een uitzondering op de vaste onderlinge volgorde, en het aantal vakken "
-        "per week verschilt nooit meer dan 1 met de vorige/volgende week. Binnen een week worden de "
-        "vakken over maandag t/m donderdag verdeeld (laagste vaknummer op maandag). Een vak wordt "
-        "nooit eerder gepland dan de (verwachte) oogst van de lopende teelt in dat vak."
+        "gepland, vak 1 is een uitzondering op de vaste onderlinge volgorde, het aantal vakken "
+        "per week verschilt nooit meer dan 1 met de vorige/volgende week en er worden nooit meer "
+        "dan 5 vakken per week gepoot. Binnen een week worden de vakken over maandag t/m donderdag "
+        "verdeeld (laagste vaknummer op maandag); kan een week niet op maandag beginnen doordat de "
+        "grond nog bezet is, dan start die week op di/wo/do i.p.v. een week over te slaan. Een vak "
+        "wordt nooit eerder gepland dan de (verwachte) oogst van de lopende teelt in dat vak."
     )
 
     # --- Strokenplanning (Gantt): vakken verticaal, weken horizontaal ---
@@ -1161,8 +1163,8 @@ with tab_planning:
     st.markdown("---")
     st.write("**Vakken per week handmatig sturen**")
     st.caption(
-        "Vul per week in hoeveel poot-eenheden je wilt (vak 19+20 = 1). De planner houdt dat "
-        "aantal aan zolang er genoeg vakken vrij zijn; de regel 'max 1 vak verschil met de "
+        "Vul per week in hoeveel poot-eenheden je wilt (vak 19+20 = 1, max 5). De planner houdt "
+        "dat aantal aan zolang er genoeg vakken vrij zijn; de regel 'max 1 vak verschil met de "
         "buurweek' geldt dan alleen nog tussen weken die je niet zelf hebt ingevuld. Laat een "
         "cel leeg om de planner die week zelf te laten bepalen."
     )
@@ -1184,7 +1186,7 @@ with tab_planning:
                 disabled=True, help="Aantal poot-eenheden dat nu voor die week gepland staat"
             ),
             "Jouw aantal": st.column_config.NumberColumn(
-                min_value=0, max_value=20, step=1, help="Leeg = planner bepaalt zelf"
+                min_value=0, max_value=5, step=1, help="Leeg = planner bepaalt zelf; max 5 per week"
             ),
         },
     )
