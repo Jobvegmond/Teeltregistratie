@@ -1775,6 +1775,18 @@ def plan_x_weken_vooruit(aantal_weken, gebruiker=None, verwijder_bestaande=False
         streef_map[w] = max(1, s)
     laatste_streef = streef_map[weken_reeks[-1]] if weken_reeks else 3
 
+    # Handmatig weekdoel dat hoger is dan het natuurlijke tempo: de weken
+    # ervóór minder laten planten zodat de eenheden opsparen en het doel echt
+    # gehaald wordt.
+    for wd_week in sorted(weekdoelen):
+        tekort = weekdoelen[wd_week] - streef_map.get(wd_week, laatste_streef)
+        w = wd_week - timedelta(days=7)
+        while tekort > 0 and w in streef_map:
+            if w not in weekdoelen and streef_map[w] > 1:
+                streef_map[w] -= 1
+                tekort -= 1
+            w -= timedelta(days=7)
+
     def _cap(week):
         doel = weekdoelen.get(week)
         return doel if doel is not None else streef_map.get(week, laatste_streef)
@@ -1855,43 +1867,67 @@ def _naverwerk_planning(vaste_ids=None):
       dan de dinsdag, enz.; nooit vr/za/zo;
     - teeltduur soepel latend overlopen: de k-de van n krijgt
       tabel[W] + (tabel[W+1]-tabel[W]) * (k-(n-1)/2)/n;
-    - verwachte oogstdatum monotoon in cyclusvolgorde (altijd in dezelfde
-      volgorde geoogst als geplant).
+    - verwachte oogstdatum op ma–vr en monotoon in cyclusvolgorde (altijd in
+      dezelfde volgorde geoogst als geplant). Vak 1 loopt op een eigen ritme en
+      telt niet mee in die keten.
     """
     vaste_ids = vaste_ids or set()
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT id, verwachte_startdatum FROM teeltplanning ORDER BY id")
+        cursor.execute("SELECT id, vaknummer, verwachte_startdatum FROM teeltplanning ORDER BY id")
         rijen = cursor.fetchall()
 
     per_week = {}
-    for pid, s in rijen:
+    for pid, vak, s in rijen:
         if pid in vaste_ids:
             continue
         d = datetime.strptime(s, "%Y-%m-%d").date()
-        per_week.setdefault(_maandag(d), []).append(pid)
+        per_week.setdefault(_maandag(d), []).append((pid, vak))
+
+    # Voor vak 1: de maandag van de eerstvolgende vak-1-planting, zodat z'n
+    # oogst daar nooit overheen loopt.
+    vak1_maandagen = [_maandag(datetime.strptime(s, "%Y-%m-%d").date())
+                      for pid, vak, s in rijen
+                      if vak == VAK_VOLGORDE_UITZONDERING and pid not in vaste_ids]
+    vak1_volgende = {}
+    v1p = [pid for pid, vak, _s in rijen
+           if vak == VAK_VOLGORDE_UITZONDERING and pid not in vaste_ids]
+    for i, pid in enumerate(v1p):
+        vak1_volgende[pid] = vak1_maandagen[i + 1] if i + 1 < len(vak1_maandagen) else None
+
+    def _naar_werkdag(d):  # za/zo -> maandag
+        while d.weekday() > 4:
+            d += timedelta(days=1)
+        return d
 
     vorige_oogst = None
     with get_connection() as conn:
         cursor = conn.cursor()
         for maandag in sorted(per_week):
-            ids = per_week[maandag]
-            n = len(ids)
+            leden = per_week[maandag]
+            n = len(leden)
             basis, rest = divmod(n, 4)
             offsets = [d for d in range(4) for _ in range(basis + (1 if d < rest else 0))]
             d0 = teeltduur_voor_plantweek(get_weeknummer(maandag))
             d1 = teeltduur_voor_plantweek(get_weeknummer(maandag + timedelta(days=7))) or d0
-            for k, (pid, offset) in enumerate(zip(ids, offsets)):
+            for k, ((pid, vak), offset) in enumerate(zip(leden, offsets)):
                 start = maandag + timedelta(days=offset)
                 if d0 is None:
                     cursor.execute("UPDATE teeltplanning SET verwachte_startdatum = %s WHERE id = %s",
                                    (start.isoformat(), pid))
                     continue
                 duur = d0 + (d1 - d0) * (k - (n - 1) / 2) / n
-                oogst = start + timedelta(days=round(duur * 7))
-                if vorige_oogst is not None and oogst <= vorige_oogst:
-                    oogst = vorige_oogst + timedelta(days=1)
-                vorige_oogst = oogst
+                oogst = _naar_werkdag(start + timedelta(days=round(duur * 7)))
+                if vak == VAK_VOLGORDE_UITZONDERING:
+                    grens = vak1_volgende.get(pid)
+                    if grens is not None and oogst >= grens:
+                        oogst = grens - timedelta(days=1)
+                        while oogst.weekday() > 4:  # terug naar vrijdag
+                            oogst -= timedelta(days=1)
+                else:
+                    if vorige_oogst is not None and oogst <= vorige_oogst:
+                        oogst = _naar_werkdag(vorige_oogst + timedelta(days=1))
+                    vorige_oogst = oogst
                 cursor.execute(
                     "UPDATE teeltplanning SET verwachte_startdatum = %s, verwachte_duur_weken = %s, "
                     "verwachte_oogstdatum = %s WHERE id = %s",
