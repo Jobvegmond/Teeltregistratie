@@ -1661,37 +1661,22 @@ def bevestig_planning(planning_id, aantal_planten=None, gebruiker=None):
 
 def plan_x_weken_vooruit(aantal_weken, gebruiker=None, verwijder_bestaande=False):
     """
-    Plant vakken vooruit tot `aantal_weken` weken vanaf vandaag als één
-    doorlopende teeltcyclus:
-    - de cyclus is 2, 3, ..., 39, 2, 3, ... (met 19+20 als één eenheid); vak N
-      wordt altijd vóór N+1 geplant én geoogst, en vak N's volgende beurt komt
-      pas ná een hele ronde langs alle vakken;
-    - de cyclus begint bij de eenheid die het eerst geoogst wordt (het
-      oogstfront) of, bij verwijder_bestaande=False, waar de bestaande
-      concept-planning gebleven is;
-    - een eenheid wordt nooit eerder gepland dan de verwachte oogst van de
-      vorige teelt/ronde in dat vak;
-    - vak 1 loopt op een eigen ritme en wordt ertussen gevoegd zodra het klaar
-      is, zonder de cyclus te blokkeren;
-    - het aantal poot-eenheden per week verschilt nooit meer dan 1 met de
-      vorige/volgende week (streefaantal ~ n / teeltduur, dus sneller in de
-      zomer), tenzij een week een handmatig weekdoel heeft.
+    Plant vakken tot `aantal_weken` weken vooruit als één doorlopende cyclus
+    2, 3, ..., 39, 2, ... (met 19+20 als één eenheid, vak 1 op eigen ritme
+    ertussen). Vak N wordt altijd vóór N+1 geplant én geoogst; een eenheid pas
+    na de verwachte oogst van de vorige teelt + WISSELTIJD_DAGEN. Het aantal
+    per week verschilt hooguit 1 met de buurweek (streefaantal ~ n/teeltduur),
+    tenzij een week een handmatig weekdoel (planning_weekdoel) heeft.
 
-    Handmatige weekstreefaantallen (planning_weekdoel) gaan vóór: staat een
-    week daarin, dan houdt de planner dat aantal aan (voor zover er genoeg
-    vakken vrij zijn) en geldt de "max 1 vak verschil"-regel niet meer voor
-    die week — alleen nog tussen weken die niet handmatig zijn ingevuld.
+    verwijder_bestaande=True wist de concepten en plant opnieuw, behalve de
+    concepten t/m "planten besteld t/m" (die blijven vast). Zonder de vlag
+    blijven alle concepten staan en wordt er alleen achteraan bijgepland.
 
-    Met verwijder_bestaande=True worden bestaande concept-planningen gewist —
-    behalve de concepten met startdatum t/m "planten besteld t/m" (die staan
-    vast). Zonder verwijder_bestaande worden alle bestaande concepten met rust
-    gelaten en alleen plantingen daarná toegevoegd.
-
-    Geeft (resultaten, weekdoel_waarschuwingen) terug:
-    - resultaten: lijst tuples (vaknummer, status, eerste_startdatum) met
-      status 'gepland', 'geen_geschiedenis' of 'buiten_horizon';
-    - weekdoel_waarschuwingen: lijst tuples (week_start, gevraagd, geplant)
-      voor weken waar het handmatige streefaantal niet gehaald kon worden.
+    Geeft (resultaten, weekdoel_waarschuwingen):
+    - resultaten: [(vaknummer, 'gepland'|'geen_geschiedenis'|'buiten_horizon',
+      eerste_startdatum)];
+    - weekdoel_waarschuwingen: [(week_start, gevraagd, geplant)] voor niet
+      gehaalde weekdoelen.
     """
     besteld_tot = get_planning_besteld_tot()
 
@@ -1717,9 +1702,7 @@ def plan_x_weken_vooruit(aantal_weken, gebruiker=None, verwijder_bestaande=False
     gecombineerd_laag, gecombineerd_hoog = VAK_GECOMBINEERD
     geen_geschiedenis = set()
 
-    # --- Cyclus-eenheden: vak 2 t/m 39, met 19+20 als één eenheid. In vaste
-    #     oplopende volgorde; vak 1 loopt op een eigen ritme en wordt apart
-    #     tussengevoegd. ---
+    # Cyclus-eenheden vak 2..39 (19+20 samen). Vak 1 apart, zie onder.
     eenheden = []  # (representatief_vaknummer, [vakken])
     for v in range(2, 40):
         if v == gecombineerd_hoog:
@@ -1729,8 +1712,7 @@ def plan_x_weken_vooruit(aantal_weken, gebruiker=None, verwijder_bestaande=False
         else:
             eenheden.append((v, [v]))
 
-    # Oogstfront per eenheid: oogst van de laatste echte teelt of, bij
-    # verwijder_bestaande=False, van de laatste concept-planning.
+    # Oogstfront per eenheid = oogst laatste echte teelt of laatste concept.
     front = {}
     for rep, vakken in eenheden:
         obs = [_bodem_incl_concept(v) for v in vakken]
@@ -1744,10 +1726,10 @@ def plan_x_weken_vooruit(aantal_weken, gebruiker=None, verwijder_bestaande=False
     reps = [e[0] for e in bruikbaar]
     vak_naar_rep = {v: rep for rep, vakken in bruikbaar for v in vakken}
 
-    # Vaste (besteld) concepten: startdatum t/m `besteld_tot`. Die staan vast;
-    # de cyclus hervat na de laatste vaste planting.
-    vaste = []          # (vaknummer, startdatum) van de al bestaande vaste concepten
-    vaste_ids = set()   # hun id's — de post-passes laten die met rust
+    # Vaste (besteld) concepten: staan vast; de cyclus hervat erna. Op id
+    # herkend zodat de post-passes ze met rust laten.
+    vaste = []          # (vaknummer, startdatum)
+    vaste_ids = set()
     if besteld_tot is not None:
         with get_connection() as conn:
             cursor = conn.cursor()
@@ -1760,12 +1742,8 @@ def plan_x_weken_vooruit(aantal_weken, gebruiker=None, verwijder_bestaande=False
                 vaste.append((vak, datetime.strptime(s, "%Y-%m-%d").date()))
                 vaste_ids.add(pid)
 
-    # De cyclus begint bij de eenheid die het eerst geoogst wordt (het
-    # oogstfront), en draait van daaruit strikt op vaknummer door: 35, 36, ...,
-    # 39, 2, 3, ..., 34, 35, ... — vak N wordt altijd vóór N+1 geplant en
-    # geoogst, en vak N's volgende beurt komt pas ná een hele ronde. Als er
-    # vaste (besteld) concepten zijn, hervat de cyclus bij het vak ná het
-    # laatst vastgezette vak.
+    # Cyclus-startpunt: het vak ná het laatst vastgezette (besteld), anders het
+    # vak met het vroegste oogstfront.
     if vaste:
         laatste_vast_vak, _ = max(vaste, key=lambda x: (x[1], x[0]))
         laatste_rep = vak_naar_rep.get(laatste_vast_vak)
@@ -1777,13 +1755,12 @@ def plan_x_weken_vooruit(aantal_weken, gebruiker=None, verwijder_bestaande=False
         start_rep = min(bruikbaar, key=lambda e: (front[e[0]], e[0]))[0]
     si = reps.index(start_rep)
     cyclus = bruikbaar[si:] + bruikbaar[:si]
-    n_eenh = len(bruikbaar)
 
-    # --- Streefaantal poot-eenheden per week: ~ n / teeltduur (kort in de
-    #     zomer -> sneller planten), maar van week op week hooguit 1 verschil. ---
+    # Streefaantal per week ~ n/teeltduur (sneller in de zomer), maar van week
+    # op week hooguit 1 verschil.
     def _ideaal(week_start):
         duur = teeltduur_voor_plantweek(get_weeknummer(week_start)) or 13.0
-        return max(1, round(n_eenh / max(6.0, duur)))
+        return max(1, round(len(bruikbaar) / max(6.0, duur)))
 
     weken_reeks = []
     w = _maandag(vandaag)
@@ -1794,7 +1771,7 @@ def plan_x_weken_vooruit(aantal_weken, gebruiker=None, verwijder_bestaande=False
     s = _ideaal(weken_reeks[0]) if weken_reeks else 3
     for w in weken_reeks:
         ideaal = _ideaal(w)
-        s = s + (1 if ideaal > s else -1 if ideaal < s else 0)
+        s += (1 if ideaal > s else -1 if ideaal < s else 0)
         streef_map[w] = max(1, s)
     laatste_streef = streef_map[weken_reeks[-1]] if weken_reeks else 3
 
@@ -1802,8 +1779,7 @@ def plan_x_weken_vooruit(aantal_weken, gebruiker=None, verwijder_bestaande=False
         doel = weekdoelen.get(week)
         return doel if doel is not None else streef_map.get(week, laatste_streef)
 
-    # Weken waarin al vaste (besteld) plantingen staan meetellen voor de
-    # capaciteit, en de sweep hervat na de laatste vaste planting.
+    # Vaste weken meetellen voor de capaciteit; sweep hervat na de laatste.
     week_teller = {}
     laatste_week = None
     sweep_vanaf = vandaag
@@ -1814,14 +1790,13 @@ def plan_x_weken_vooruit(aantal_weken, gebruiker=None, verwijder_bestaande=False
         sweep_vanaf = max(sweep_vanaf, s + timedelta(days=1))
 
     def _plaats(vakken, vroegst):
-        """Wijst een eenheid toe aan de eerstvolgende maandag-week vanaf
-        `vroegst` die nog niet vol zit (streefaantal of handmatig weekdoel), en
-        nooit vóór de vorige toegewezen week. Geeft de maandag van die week
-        terug — de dagverdeling ma→do gebeurt achteraf in _verdeel_plantdagen."""
+        """Wijst een eenheid toe aan de eerstvolgende niet-volle maandag-week
+        vanaf `vroegst`, nooit vóór de vorige. Geeft die maandag terug; de
+        dagverdeling ma→do gebeurt achteraf in _naverwerk_planning."""
         nonlocal laatste_week
         vroegst = max(vroegst, sweep_vanaf)
         week = _maandag(vroegst)
-        if week < vroegst:  # vroegst valt na maandag -> pas volgende maandag kan
+        if week < vroegst:  # vroegst valt na maandag
             week += timedelta(days=7)
         if laatste_week is not None and week < laatste_week:
             week = laatste_week
@@ -1831,12 +1806,11 @@ def plan_x_weken_vooruit(aantal_weken, gebruiker=None, verwijder_bestaande=False
         laatste_week = week
         return week
 
-    # --- Vak 1 (eigen ritme) ---
     vak1_front = _bodem_incl_concept(VAK_VOLGORDE_UITZONDERING)
     if vak1_front is None:
         geen_geschiedenis.add(VAK_VOLGORDE_UITZONDERING)
 
-    # --- Doorlopende sweep ---
+    # Doorlopende sweep langs de cyclus.
     pos = 0
     vorige_datum = None
     for _ in range(4000):
@@ -1855,8 +1829,7 @@ def plan_x_weken_vooruit(aantal_weken, gebruiker=None, verwijder_bestaande=False
         _, nieuwe_oogst = bereken_verwachte_oogstdatum(datum)
         front[rep] = nieuwe_oogst or (datum + timedelta(weeks=13))
 
-        # Vak 1 tussenvoegen zodra het klaar is (maar niet de cyclus laten
-        # blokkeren als vak 1's teelt lang loopt).
+        # Vak 1 tussenvoegen zodra het klaar is, zonder de cyclus te blokkeren.
         vak1_vroegst = None if vak1_front is None else vak1_front + timedelta(days=WISSELTIJD_DAGEN)
         if vak1_vroegst is not None and vak1_vroegst <= (vorige_datum + timedelta(days=1)) \
                 and _maandag(max(vak1_vroegst, sweep_vanaf)) <= horizon_eind:
@@ -1870,93 +1843,66 @@ def plan_x_weken_vooruit(aantal_weken, gebruiker=None, verwijder_bestaande=False
 
         pos += 1
 
-    _verdeel_plantdagen(vaste_ids)
-    _interpoleer_teeltduur(vaste_ids)
+    _naverwerk_planning(vaste_ids)
     return _planresultaat(weekdoelen, geen_geschiedenis)
 
 
-def _concepten_per_week(vaste_ids):
+def _naverwerk_planning(vaste_ids=None):
     """
-    Alle concept-planningen behalve de vaste (`vaste_ids`), gegroepeerd per
-    maandag-week, binnen elke week op cyclusvolgorde (= id-volgorde, waarin de
-    sweep ze aanmaakte). Geeft {maandag-date: [(id, startdatum), ...]}.
+    Naverwerking van de concept-planning (behalve `vaste_ids`), per maandag-week
+    in cyclusvolgorde (= id-volgorde van de sweep):
+    - dagverdeling ma→do: t/m 4 op ma/di/wo/do, meer eerst de maandag dubbel,
+      dan de dinsdag, enz.; nooit vr/za/zo;
+    - teeltduur soepel latend overlopen: de k-de van n krijgt
+      tabel[W] + (tabel[W+1]-tabel[W]) * (k-(n-1)/2)/n;
+    - verwachte oogstdatum monotoon in cyclusvolgorde (altijd in dezelfde
+      volgorde geoogst als geplant).
     """
     vaste_ids = vaste_ids or set()
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT id, verwachte_startdatum FROM teeltplanning ORDER BY id")
         rijen = cursor.fetchall()
+
     per_week = {}
     for pid, s in rijen:
         if pid in vaste_ids:
             continue
-        start = datetime.strptime(s, "%Y-%m-%d").date()
-        per_week.setdefault(_maandag(start), []).append((pid, start))
-    return per_week
+        d = datetime.strptime(s, "%Y-%m-%d").date()
+        per_week.setdefault(_maandag(d), []).append(pid)
 
-
-def _verdeel_plantdagen(vaste_ids=None):
-    """
-    Verdeelt de plantingen van elke week strikt ma→do, in cyclus/plantvolgorde.
-    Bij t/m 4 plantingen: ma, di, wo, do. Bij meer: eerst de maandag dubbel,
-    dan de dinsdag, enz. Nooit op vrijdag/zaterdag/zondag; een week begint
-    altijd op maandag.
-    """
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        for maandag, lst in _concepten_per_week(vaste_ids).items():
-            n = len(lst)
-            basis, rest = divmod(n, 4)
-            dag_offsets = []
-            for dag in range(4):
-                dag_offsets += [dag] * (basis + (1 if dag < rest else 0))
-            for (pid, _oud), offset in zip(lst, dag_offsets):
-                cursor.execute(
-                    "UPDATE teeltplanning SET verwachte_startdatum = %s WHERE id = %s",
-                    ((maandag + timedelta(days=offset)).isoformat(), pid),
-                )
-        conn.commit()
-
-
-def _interpoleer_teeltduur(vaste_ids=None):
-    """
-    Laat de teeltduur binnen elke plantweek soepel overlopen naar de volgende
-    week: de k-de van n plantingen krijgt tabel[W] + (tabel[W+1]-tabel[W]) *
-    (k - (n-1)/2) / n, zodat opeenvolgende plantingen niet allemaal exact
-    dezelfde oogstdatum-sprong hebben. De verwachte oogstdatum wordt daarnaast
-    monotoon in cyclusvolgorde gehouden: er wordt altijd in dezelfde volgorde
-    geoogst als geplant. Herberekent verwachte_duur_weken en
-    verwachte_oogstdatum van alle (niet-vaste) concept-planningen.
-    """
-    per_week = _concepten_per_week(vaste_ids)
     vorige_oogst = None
     with get_connection() as conn:
         cursor = conn.cursor()
         for maandag in sorted(per_week):
-            lst = per_week[maandag]
-            n = len(lst)
+            ids = per_week[maandag]
+            n = len(ids)
+            basis, rest = divmod(n, 4)
+            offsets = [d for d in range(4) for _ in range(basis + (1 if d < rest else 0))]
             d0 = teeltduur_voor_plantweek(get_weeknummer(maandag))
-            if d0 is None:
-                continue
             d1 = teeltduur_voor_plantweek(get_weeknummer(maandag + timedelta(days=7))) or d0
-            for k, (pid, start) in enumerate(lst):
+            for k, (pid, offset) in enumerate(zip(ids, offsets)):
+                start = maandag + timedelta(days=offset)
+                if d0 is None:
+                    cursor.execute("UPDATE teeltplanning SET verwachte_startdatum = %s WHERE id = %s",
+                                   (start.isoformat(), pid))
+                    continue
                 duur = d0 + (d1 - d0) * (k - (n - 1) / 2) / n
                 oogst = start + timedelta(days=round(duur * 7))
                 if vorige_oogst is not None and oogst <= vorige_oogst:
                     oogst = vorige_oogst + timedelta(days=1)
                 vorige_oogst = oogst
                 cursor.execute(
-                    "UPDATE teeltplanning SET verwachte_duur_weken = %s, verwachte_oogstdatum = %s "
-                    "WHERE id = %s",
-                    (round(duur, 2), oogst.isoformat(), pid),
-                )
+                    "UPDATE teeltplanning SET verwachte_startdatum = %s, verwachte_duur_weken = %s, "
+                    "verwachte_oogstdatum = %s WHERE id = %s",
+                    (start.isoformat(), round(duur, 2), oogst.isoformat(), pid))
         conn.commit()
 
 
 def _planresultaat(weekdoelen, geen_geschiedenis):
     """
     Bouwt (resultaten, weekdoel_waarschuwingen) op uit de uiteindelijke
-    concept-planning in de database, na alle rondes.
+    concept-planning in de database.
     """
     with get_connection() as conn:
         cursor = conn.cursor()

@@ -141,6 +141,28 @@ class PrivaHortiClient:
     def _variable_id(self, afdeling, staart):
         return f"00000002-000{afdeling}-0000-0000-{staart}"
 
+    def _venster(self, dagen_terug):
+        """(begin, eind) UTC: de laatste `dagen_terug` volledig afgeronde dagen."""
+        dagen_terug = max(1, min(int(dagen_terug), MAX_DAGEN_TERUG))
+        middernacht = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        return middernacht - timedelta(days=dagen_terug), middernacht - timedelta(seconds=1)
+
+    def _data_call(self, begin, eind, datapoints, wat="data"):
+        resp = requests.post(
+            f"{BASE_URL}/api/sites/{self.site_id}/data",
+            headers=self._headers(),
+            json={
+                "startTime": begin.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "endTime": eind.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "timeType": "sensortime",
+                "datapoints": datapoints,
+            },
+            timeout=120,
+        )
+        if not resp.ok:
+            raise RuntimeError(f"Priva {wat}-call mislukt ({resp.status_code}): {resp.text[:500]}")
+        return resp.json()
+
     # -- publieke API --------------------------------------------------
 
     def haal_etmaal_dagwaarden(self, dagen_terug=MAX_DAGEN_TERUG):
@@ -158,39 +180,14 @@ class PrivaHortiClient:
         Ontbrekende waarden zijn None; bij een volgende ophaalronde worden ze
         via de upsert alsnog aangevuld.
         """
-        dagen_terug = max(1, min(int(dagen_terug), MAX_DAGEN_TERUG))
-
-        nu = datetime.now(timezone.utc)
-        middernacht = nu.replace(hour=0, minute=0, second=0, microsecond=0)
-        eind = middernacht - timedelta(seconds=1)
-        begin = middernacht - timedelta(days=dagen_terug)
-
-        datapoints = []
-        for afd in AFDELINGEN:
-            for staart in list(AGGREGATIE_STAARTEN) + [STAART_STRALING_MOMENT]:
-                datapoints.append({
-                    "deviceGroupId": "none",
-                    "deviceId": self.device_id,
-                    "variableId": self._variable_id(afd, staart),
-                })
-
-        body = {
-            "startTime": begin.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "endTime": eind.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "timeType": "sensortime",
-            "datapoints": datapoints,
-        }
-
-        resp = requests.post(
-            f"{BASE_URL}/api/sites/{self.site_id}/data",
-            headers=self._headers(),
-            json=body,
-            timeout=120,
-        )
-        if not resp.ok:
-            raise RuntimeError(f"Priva data-call mislukt ({resp.status_code}): {resp.text[:500]}")
-
-        return self._verwerk_payload(resp.json())
+        begin, eind = self._venster(dagen_terug)
+        datapoints = [
+            {"deviceGroupId": "none", "deviceId": self.device_id,
+             "variableId": self._variable_id(afd, staart)}
+            for afd in AFDELINGEN
+            for staart in list(AGGREGATIE_STAARTEN) + [STAART_STRALING_MOMENT]
+        ]
+        return self._verwerk_payload(self._data_call(begin, eind, datapoints, "klimaat"))
 
     # -- payload -> dagwaarden ----------------------------------------
 
@@ -275,39 +272,15 @@ class PrivaHortiClient:
         De oudste dag van het venster wordt weggelaten: daarvoor ontbreekt een
         meterstand van vóór middernacht, dus die zou te laag uitvallen.
         """
-        dagen_terug = max(1, min(int(dagen_terug), MAX_DAGEN_TERUG))
-
-        nu = datetime.now(timezone.utc)
-        middernacht = nu.replace(hour=0, minute=0, second=0, microsecond=0)
-        eind = middernacht - timedelta(seconds=1)
-        begin = middernacht - timedelta(days=dagen_terug)
+        begin, eind = self._venster(dagen_terug)
         oudste_volledige_dag = (begin + LOKALE_OFFSET).date() + timedelta(days=1)
-
         datapoints = [
-            {
-                "deviceGroupId": "none",
-                "deviceId": self.device_id,
-                "variableId": f"000001c2-{vak:04x}-0000-0000-{STAART_WATER_METERSTAND}",
-            }
+            {"deviceGroupId": "none", "deviceId": self.device_id,
+             "variableId": f"000001c2-{vak:04x}-0000-0000-{STAART_WATER_METERSTAND}"}
             for vak in VAKKEN
         ]
-        body = {
-            "startTime": begin.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "endTime": eind.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "timeType": "sensortime",
-            "datapoints": datapoints,
-        }
+        payload = self._data_call(begin, eind, datapoints, "watergift")
 
-        resp = requests.post(
-            f"{BASE_URL}/api/sites/{self.site_id}/data",
-            headers=self._headers(),
-            json=body,
-            timeout=120,
-        )
-        if not resp.ok:
-            raise RuntimeError(f"Priva watergift-call mislukt ({resp.status_code}): {resp.text[:500]}")
-
-        payload = resp.json()
         resultaat = []
         for entry in payload.get("data", []):
             dp = entry.get("datapoint", {})
