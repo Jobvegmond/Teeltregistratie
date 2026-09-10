@@ -1311,10 +1311,10 @@ TEELTDUUR_PER_PLANTWEEK = {
     50: 14.0, 51: 14.0, 52: 13.0,
 }
 
-# Vaste wisseltijd (schoonmaak/omschakelen) tussen de oogst van de ene teelt
-# en het planten van de volgende in hetzelfde vak; wordt als flexibele
-# marge (0 tot dit maximum) gebruikt om de planning gelijkmatiger te maken.
-WISSELTIJD_DAGEN = 4
+# Wisseltijd (schoonmaak/omschakelen) tussen de oogst van de ene teelt en het
+# planten van de volgende in hetzelfde vak: de volgende planting kan pas zoveel
+# dagen ná de verwachte oogst.
+WISSELTIJD_DAGEN = 1
 
 # Vak 19 en 20 zijn qua formaat/aantal samen gelijk aan één regulier vak
 # en worden daarom als één eenheid gepland (altijd dezelfde week).
@@ -1842,7 +1842,7 @@ def plan_x_weken_vooruit(aantal_weken, gebruiker=None, verwijder_bestaande=False
     vorige_datum = None
     for _ in range(4000):
         rep, vakken = cyclus[pos % len(cyclus)]
-        vroegst = front[rep]
+        vroegst = front[rep] + timedelta(days=WISSELTIJD_DAGEN)
         if vorige_datum is not None and vroegst < vorige_datum:
             vroegst = vorige_datum
         if _maandag(max(vroegst, sweep_vanaf)) > horizon_eind:
@@ -1858,9 +1858,10 @@ def plan_x_weken_vooruit(aantal_weken, gebruiker=None, verwijder_bestaande=False
 
         # Vak 1 tussenvoegen zodra het klaar is (maar niet de cyclus laten
         # blokkeren als vak 1's teelt lang loopt).
-        if vak1_front is not None and vak1_front <= (vorige_datum + timedelta(days=1)) \
-                and _maandag(max(vak1_front, sweep_vanaf)) <= horizon_eind:
-            d1 = _plaats([VAK_VOLGORDE_UITZONDERING], max(vak1_front, sweep_vanaf))
+        vak1_vroegst = None if vak1_front is None else vak1_front + timedelta(days=WISSELTIJD_DAGEN)
+        if vak1_vroegst is not None and vak1_vroegst <= (vorige_datum + timedelta(days=1)) \
+                and _maandag(max(vak1_vroegst, sweep_vanaf)) <= horizon_eind:
+            d1 = _plaats([VAK_VOLGORDE_UITZONDERING], max(vak1_vroegst, sweep_vanaf))
             if d1 <= horizon_eind:
                 voeg_planning_toe(VAK_VOLGORDE_UITZONDERING, d1, gebruiker=gebruiker)
                 _, o1 = bereken_verwachte_oogstdatum(d1)
