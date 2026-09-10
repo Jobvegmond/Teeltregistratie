@@ -2051,32 +2051,15 @@ def get_strokenplanning(weken_terug=8):
 
     Geeft een lijst dicts terug met: vaknummer, soort ('teelt'/'concept'),
     status ('afgerond'/'lopend'/'concept'), label (code of 'concept'),
-    start (date), eind (date), water_l_m2 (totaal liter/m² over de looptijd
-    tot nu toe, of None). Teelten die meer dan `weken_terug` weken geleden zijn
-    geoogst worden weggelaten; concept-planningen altijd getoond.
+    start (date), eind (date), teeltduur_weken (float, looptijd start→oogst).
+    Teelten die meer dan `weken_terug` weken geleden zijn geoogst worden
+    weggelaten; concept-planningen altijd getoond.
     """
     ondergrens = date.today() - timedelta(weeks=weken_terug)
-    vandaag = date.today()
     rijen = []
 
-    # Watergift in één keer ophalen en per vak groeperen (datum -> liter/m²).
-    water_per_vak = {}
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT vaknummer, datum, liter_per_m2 FROM watergift_dag
-            WHERE datum >= %s
-        """, (str(ondergrens),))
-        for vak, datum, liter in cursor.fetchall():
-            water_per_vak.setdefault(vak, {})[str(datum)] = liter or 0.0
-
-    def _water_som(vaknummer, start, eind):
-        dagen = water_per_vak.get(vaknummer)
-        if not dagen:
-            return None
-        tot = min(eind, vandaag)
-        som = sum(l for d, l in dagen.items() if str(start) <= d <= str(tot))
-        return round(som, 1) if som else None
+    def _duur_weken(start, eind):
+        return round((eind - start).days / 7, 1)
 
     for t in get_alle_teelten_detail():
         start = datetime.strptime(t["datum_teelt_start"], "%Y-%m-%d").date()
@@ -2096,10 +2079,10 @@ def get_strokenplanning(weken_terug=8):
             "label": t["code"] or f"ID{t['id']}",
             "start": start,
             "eind": eind,
-            "water_l_m2": _water_som(t["vaknummer"], start, eind),
+            "teeltduur_weken": _duur_weken(start, eind),
         })
 
-    for _pid, vaknummer, start, _duur, eind, _notitie in get_planning():
+    for _pid, vaknummer, start, duur, eind, _notitie in get_planning():
         start_d = datetime.strptime(start, "%Y-%m-%d").date()
         eind_d = (
             datetime.strptime(eind, "%Y-%m-%d").date() if eind
@@ -2112,7 +2095,7 @@ def get_strokenplanning(weken_terug=8):
             "label": "concept",
             "start": start_d,
             "eind": eind_d,
-            "water_l_m2": None,
+            "teeltduur_weken": round(duur, 1) if duur else _duur_weken(start_d, eind_d),
         })
 
     rijen.sort(key=lambda r: (r["vaknummer"], r["start"]))

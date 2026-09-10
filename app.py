@@ -1033,8 +1033,15 @@ with tab_planning:
         df_stroken = pd.DataFrame(stroken)
         df_stroken["start"] = pd.to_datetime(df_stroken["start"])
         df_stroken["eind"] = pd.to_datetime(df_stroken["eind"])
-        df_stroken["water_tekst"] = df_stroken["water_l_m2"].apply(
-            lambda x: f"{x:.0f} l/m²" if pd.notna(x) else "–"
+        _dagen_nl = ["ma", "di", "wo", "do", "vr", "za", "zo"]
+
+        def _week_dag(ts):
+            return f"wk {ts.isocalendar().week} {_dagen_nl[ts.weekday()]}"
+
+        df_stroken["start_tekst"] = df_stroken["start"].apply(_week_dag)
+        df_stroken["eind_tekst"] = df_stroken["eind"].apply(_week_dag)
+        df_stroken["duur_tekst"] = df_stroken["teeltduur_weken"].apply(
+            lambda x: f"{x:.1f} wk" if pd.notna(x) else "–"
         )
 
         kleur = alt.Color(
@@ -1063,9 +1070,9 @@ with tab_planning:
                     alt.Tooltip("vaknummer:O", title="Vak"),
                     alt.Tooltip("label:N", title="Teelt"),
                     alt.Tooltip("status:N", title="Status"),
-                    alt.Tooltip("start:T", title="Start", format="%d-%m-%y"),
-                    alt.Tooltip("eind:T", title="Oogst", format="%d-%m-%y"),
-                    alt.Tooltip("water_tekst:N", title="Water tot nu toe"),
+                    alt.Tooltip("start_tekst:N", title="Start"),
+                    alt.Tooltip("eind_tekst:N", title="Oogst"),
+                    alt.Tooltip("duur_tekst:N", title="Teeltduur"),
                 ],
             )
         )
@@ -1082,7 +1089,7 @@ with tab_planning:
             "Strokenplanning: grijs = afgerond, groen = lopende teelt, blauw = concept-planning. "
             "Getal op de as = ISO-weeknummer; rode stippellijn = vandaag. Oogstdatum van lopende "
             "teelten en concepten is de verwachte datum uit de teeltduur-tabel. Beweeg over een "
-            "balk voor de watergift (l/m²) tot nu toe."
+            "balk voor weeknummer + dag van start en oogst en de teeltduur in weken."
         )
         st.markdown("---")
 
