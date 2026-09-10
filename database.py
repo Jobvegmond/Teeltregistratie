@@ -1746,17 +1746,19 @@ def plan_x_weken_vooruit(aantal_weken, gebruiker=None, verwijder_bestaande=False
 
     # Vaste (besteld) concepten: startdatum t/m `besteld_tot`. Die staan vast;
     # de cyclus hervat na de laatste vaste planting.
-    vaste = []  # (vaknummer, startdatum)
+    vaste = []          # (vaknummer, startdatum) van de al bestaande vaste concepten
+    vaste_ids = set()   # hun id's — de post-passes laten die met rust
     if besteld_tot is not None:
         with get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT vaknummer, verwachte_startdatum FROM teeltplanning "
+                "SELECT id, vaknummer, verwachte_startdatum FROM teeltplanning "
                 "WHERE verwachte_startdatum <= %s",
                 (besteld_tot.isoformat(),),
             )
-            for vak, s in cursor.fetchall():
+            for pid, vak, s in cursor.fetchall():
                 vaste.append((vak, datetime.strptime(s, "%Y-%m-%d").date()))
+                vaste_ids.add(pid)
 
     # De cyclus begint bij de eenheid die het eerst geoogst wordt (het
     # oogstfront), en draait van daaruit strikt op vaknummer door: 35, 36, ...,
@@ -1812,25 +1814,22 @@ def plan_x_weken_vooruit(aantal_weken, gebruiker=None, verwijder_bestaande=False
         sweep_vanaf = max(sweep_vanaf, s + timedelta(days=1))
 
     def _plaats(vakken, vroegst):
-        """Kies een plantdag (ma→do) vanaf `vroegst`, in de eerstvolgende week
-        die nog niet vol zit (streefaantal of handmatig weekdoel), en nooit
-        vóór de vorige planting in de cyclus."""
+        """Wijst een eenheid toe aan de eerstvolgende maandag-week vanaf
+        `vroegst` die nog niet vol zit (streefaantal of handmatig weekdoel), en
+        nooit vóór de vorige toegewezen week. Geeft de maandag van die week
+        terug — de dagverdeling ma→do gebeurt achteraf in _verdeel_plantdagen."""
         nonlocal laatste_week
         vroegst = max(vroegst, sweep_vanaf)
         week = _maandag(vroegst)
+        if week < vroegst:  # vroegst valt na maandag -> pas volgende maandag kan
+            week += timedelta(days=7)
         if laatste_week is not None and week < laatste_week:
             week = laatste_week
         while week_teller.get(week, 0) >= _cap(week):
             week += timedelta(days=7)
-        n = week_teller.get(week, 0)
-        datum = week + timedelta(days=min(n, 3))
-        if datum < vroegst:
-            datum = vroegst
-            while datum.weekday() > 3:
-                datum += timedelta(days=1)
-        week_teller[week] = n + 1
+        week_teller[week] = week_teller.get(week, 0) + 1
         laatste_week = week
-        return datum
+        return week
 
     # --- Vak 1 (eigen ritme) ---
     vak1_front = _bodem_incl_concept(VAK_VOLGORDE_UITZONDERING)
@@ -1871,40 +1870,81 @@ def plan_x_weken_vooruit(aantal_weken, gebruiker=None, verwijder_bestaande=False
 
         pos += 1
 
-    _interpoleer_teeltduur()
+    _verdeel_plantdagen(vaste_ids)
+    _interpoleer_teeltduur(vaste_ids)
     return _planresultaat(weekdoelen, geen_geschiedenis)
 
 
-def _interpoleer_teeltduur():
+def _concepten_per_week(vaste_ids):
+    """
+    Alle concept-planningen behalve de vaste (`vaste_ids`), gegroepeerd per
+    maandag-week, binnen elke week op cyclusvolgorde (= id-volgorde, waarin de
+    sweep ze aanmaakte). Geeft {maandag-date: [(id, startdatum), ...]}.
+    """
+    vaste_ids = vaste_ids or set()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, verwachte_startdatum FROM teeltplanning ORDER BY id")
+        rijen = cursor.fetchall()
+    per_week = {}
+    for pid, s in rijen:
+        if pid in vaste_ids:
+            continue
+        start = datetime.strptime(s, "%Y-%m-%d").date()
+        per_week.setdefault(_maandag(start), []).append((pid, start))
+    return per_week
+
+
+def _verdeel_plantdagen(vaste_ids=None):
+    """
+    Verdeelt de plantingen van elke week strikt ma→do, in cyclus/plantvolgorde.
+    Bij t/m 4 plantingen: ma, di, wo, do. Bij meer: eerst de maandag dubbel,
+    dan de dinsdag, enz. Nooit op vrijdag/zaterdag/zondag; een week begint
+    altijd op maandag.
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        for maandag, lst in _concepten_per_week(vaste_ids).items():
+            n = len(lst)
+            basis, rest = divmod(n, 4)
+            dag_offsets = []
+            for dag in range(4):
+                dag_offsets += [dag] * (basis + (1 if dag < rest else 0))
+            for (pid, _oud), offset in zip(lst, dag_offsets):
+                cursor.execute(
+                    "UPDATE teeltplanning SET verwachte_startdatum = %s WHERE id = %s",
+                    ((maandag + timedelta(days=offset)).isoformat(), pid),
+                )
+        conn.commit()
+
+
+def _interpoleer_teeltduur(vaste_ids=None):
     """
     Laat de teeltduur binnen elke plantweek soepel overlopen naar de volgende
-    week: de plantingen van week W krijgen de teeltduur lineair verdeeld van
-    tabel[W] (in het midden van de week) naar tabel[W+1], zodat opeenvolgende
-    plantingen niet allemaal exact dezelfde oogstdatum-sprong hebben.
-    Herberekent verwachte_duur_weken en verwachte_oogstdatum van alle
-    concept-planningen.
+    week: de k-de van n plantingen krijgt tabel[W] + (tabel[W+1]-tabel[W]) *
+    (k - (n-1)/2) / n, zodat opeenvolgende plantingen niet allemaal exact
+    dezelfde oogstdatum-sprong hebben. De verwachte oogstdatum wordt daarnaast
+    monotoon in cyclusvolgorde gehouden: er wordt altijd in dezelfde volgorde
+    geoogst als geplant. Herberekent verwachte_duur_weken en
+    verwachte_oogstdatum van alle (niet-vaste) concept-planningen.
     """
+    per_week = _concepten_per_week(vaste_ids)
+    vorige_oogst = None
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT id, verwachte_startdatum FROM teeltplanning")
-        rijen = [(pid, datetime.strptime(s, "%Y-%m-%d").date()) for pid, s in cursor.fetchall()]
-
-    per_week = {}
-    for pid, start in rijen:
-        per_week.setdefault(_maandag(start), []).append((start, pid))
-
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        for maandag, lst in per_week.items():
-            lst.sort()
+        for maandag in sorted(per_week):
+            lst = per_week[maandag]
             n = len(lst)
             d0 = teeltduur_voor_plantweek(get_weeknummer(maandag))
             if d0 is None:
                 continue
             d1 = teeltduur_voor_plantweek(get_weeknummer(maandag + timedelta(days=7))) or d0
-            for k, (start, pid) in enumerate(lst):
+            for k, (pid, start) in enumerate(lst):
                 duur = d0 + (d1 - d0) * (k - (n - 1) / 2) / n
                 oogst = start + timedelta(days=round(duur * 7))
+                if vorige_oogst is not None and oogst <= vorige_oogst:
+                    oogst = vorige_oogst + timedelta(days=1)
+                vorige_oogst = oogst
                 cursor.execute(
                     "UPDATE teeltplanning SET verwachte_duur_weken = %s, verwachte_oogstdatum = %s "
                     "WHERE id = %s",
