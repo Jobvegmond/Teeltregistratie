@@ -1870,7 +1870,46 @@ def plan_x_weken_vooruit(aantal_weken, gebruiker=None, verwijder_bestaande=False
 
         pos += 1
 
+    _interpoleer_teeltduur()
     return _planresultaat(weekdoelen, geen_geschiedenis)
+
+
+def _interpoleer_teeltduur():
+    """
+    Laat de teeltduur binnen elke plantweek soepel overlopen naar de volgende
+    week: de plantingen van week W krijgen de teeltduur lineair verdeeld van
+    tabel[W] (in het midden van de week) naar tabel[W+1], zodat opeenvolgende
+    plantingen niet allemaal exact dezelfde oogstdatum-sprong hebben.
+    Herberekent verwachte_duur_weken en verwachte_oogstdatum van alle
+    concept-planningen.
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, verwachte_startdatum FROM teeltplanning")
+        rijen = [(pid, datetime.strptime(s, "%Y-%m-%d").date()) for pid, s in cursor.fetchall()]
+
+    per_week = {}
+    for pid, start in rijen:
+        per_week.setdefault(_maandag(start), []).append((start, pid))
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        for maandag, lst in per_week.items():
+            lst.sort()
+            n = len(lst)
+            d0 = teeltduur_voor_plantweek(get_weeknummer(maandag))
+            if d0 is None:
+                continue
+            d1 = teeltduur_voor_plantweek(get_weeknummer(maandag + timedelta(days=7))) or d0
+            for k, (start, pid) in enumerate(lst):
+                duur = d0 + (d1 - d0) * (k - (n - 1) / 2) / n
+                oogst = start + timedelta(days=round(duur * 7))
+                cursor.execute(
+                    "UPDATE teeltplanning SET verwachte_duur_weken = %s, verwachte_oogstdatum = %s "
+                    "WHERE id = %s",
+                    (round(duur, 2), oogst.isoformat(), pid),
+                )
+        conn.commit()
 
 
 def _planresultaat(weekdoelen, geen_geschiedenis):
