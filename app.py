@@ -752,17 +752,8 @@ with tab_overzicht:
         # Maak een DataFrame van de rijen (zonder de ID-kolom voor display)
         df = pd.DataFrame(rijen, columns=kolommen)
 
-        # Afgeronde teelten bovenaan (nieuwste startdatum eerst), daaronder de
-        # lopende en nog te starten teelten (op code, laag naar hoog).
-        verborgen = ['ID', '_startdatum_iso']
-        mask_afgerond = df['Status'] == 'Afgerond'
-        df_ov_afgerond = df.loc[mask_afgerond].sort_values('_startdatum_iso', ascending=False)
-        df_ov_actief = df.loc[~mask_afgerond]
-        df_ov = pd.concat([df_ov_afgerond, df_ov_actief]).drop(columns=verborgen)
-
-        st.dataframe(df_ov, use_container_width=True, hide_index=True)
-
-        # Statistieken
+        # Kengetallen bovenaan, zodat je die in 1 oogopslag ziet zonder
+        # eerst langs de (steeds langere) tabel te hoeven scrollen.
         col1, col2, col3, col4 = st.columns(4)
         with col1:
             actieve_teelten = len(df[df['Status'] == 'Lopend'])
@@ -779,6 +770,22 @@ with tab_overzicht:
                 st.metric("Gem. teeltduur (dagen)", f"{gem_duur:.0f}")
             else:
                 st.metric("Gem. teeltduur (dagen)", "-")
+
+        st.markdown("---")
+
+        # Afgeronde teelten staan standaard ingeklapt: de tabel groeit elke
+        # afgeronde teelt door, en dagelijks is vooral het lopende/nog te
+        # starten deel relevant.
+        mask_afgerond = df['Status'] == 'Afgerond'
+        verborgen = ['ID', '_startdatum_iso']
+        df_ov_actief = df.loc[~mask_afgerond].drop(columns=verborgen)
+        df_ov_afgerond = df.loc[mask_afgerond].sort_values('_startdatum_iso', ascending=False).drop(columns=verborgen)
+
+        st.write(f"**Lopend & nog te starten** ({len(df_ov_actief)})")
+        st.dataframe(df_ov_actief, use_container_width=True, hide_index=True)
+
+        with st.expander(f"Afgeronde teelten tonen ({len(df_ov_afgerond)})"):
+            st.dataframe(df_ov_afgerond, use_container_width=True, hide_index=True)
     else:
         st.info("Nog geen teelten geregistreerd. Gebruik de zijbalk om te beginnen.")
 
@@ -909,7 +916,8 @@ with tab_detail:
             "Gem. water per vak", f"{sum(water_lijst) / len(water_lijst):.0f} l/m²" if water_lijst else "-"
         )
         rij_klimaat[4].metric(
-            "Gem. warmte per teelt", f"{sum(warmte_lijst) / len(warmte_lijst):,.0f} MJ".replace(",", ".") if warmte_lijst else "-"
+            "Gem. warmte per teelt",
+            f"{sum(warmte_lijst) / len(warmte_lijst) / 1000:.2f} GJ" if warmte_lijst else "-"
         )
 
         if aantal_afgerond > 0:
@@ -1353,70 +1361,63 @@ with tab_planning:
 with tab_klimaat:
     st.subheader("🌡️ Klimaatdata")
 
-    klimaat_csv = st.file_uploader(
-        "Upload de klimaatcomputer-export (.csv)",
-        type=["csv"],
-        key="klimaat_csv_upload",
-        help="Dagexport met kolommen label, pcu, type_1, idx_1, type_2, idx_2, startdate, enddate, value.",
-    )
+    with st.expander("📤 Data importeren"):
+        col_imp_klimaat, col_imp_energie, col_imp_priva = st.columns(3)
 
-    if klimaat_csv is not None:
-        try:
-            aantal_verwerkt, aantal_overgeslagen = verwerk_klimaat_csv(klimaat_csv, gebruiker=huidige_gebruiker())
-            melding = f"✅ {aantal_verwerkt} afdeling-dagen verwerkt en opgeslagen."
-            if aantal_overgeslagen:
-                melding += (
-                    f" {aantal_overgeslagen} nog niet afgeronde afdeling-dagen zijn overgeslagen "
-                    "(einddatum ligt nog niet in het verleden)."
+        with col_imp_klimaat:
+            klimaat_csv = st.file_uploader(
+                "Klimaatcomputer-export (.csv)",
+                type=["csv"],
+                key="klimaat_csv_upload",
+                help="Dagexport met kolommen label, pcu, type_1, idx_1, type_2, idx_2, startdate, enddate, value.",
+            )
+            if klimaat_csv is not None:
+                try:
+                    aantal_verwerkt, aantal_overgeslagen = verwerk_klimaat_csv(klimaat_csv, gebruiker=huidige_gebruiker())
+                    melding = f"✅ {aantal_verwerkt} afdeling-dagen verwerkt."
+                    if aantal_overgeslagen:
+                        melding += f" {aantal_overgeslagen} overgeslagen (nog niet afgerond)."
+                    st.success(melding)
+                except Exception as e:
+                    st.error(f"❌ Kon de CSV niet verwerken: {e}")
+
+        with col_imp_energie:
+            energie_csv = st.file_uploader(
+                "Energiecomputer-export (.csv)",
+                type=["csv"],
+                key="energie_csv_upload",
+                help="Rapport Energie-export uit Priva; hieruit wordt de Pulsteller (warmteverbruik hele kas) gehaald.",
+            )
+            if energie_csv is not None:
+                try:
+                    aantal_verwerkt_e, aantal_overgeslagen_e = verwerk_energie_csv(energie_csv, gebruiker=huidige_gebruiker())
+                    melding_e = f"✅ {aantal_verwerkt_e} dagen warmteverbruik verwerkt."
+                    if aantal_overgeslagen_e:
+                        melding_e += f" {aantal_overgeslagen_e} overgeslagen (nog niet afgerond)."
+                    st.success(melding_e)
+                except Exception as e:
+                    st.error(f"❌ Kon de CSV niet verwerken: {e}")
+
+        with col_imp_priva:
+            if os.environ.get("PRIVA_CLIENT_ID"):
+                st.caption(
+                    "Of haal de laatste afgeronde dagen rechtstreeks uit Priva (tuin 3): klimaat, "
+                    "watergift. Historische CSV-data blijft staan."
                 )
-            st.success(melding)
-        except Exception as e:
-            st.error(f"❌ Kon de CSV niet verwerken: {e}")
+                if st.button("📡 Haal laatste dagen op uit Priva"):
+                    try:
+                        aantal_k, _ = importeer_klimaat_uit_priva(gebruiker=huidige_gebruiker())
+                        aantal_w, _ = importeer_watergift_uit_priva(gebruiker=huidige_gebruiker())
+                        st.success(f"✅ {aantal_k} afdeling-dagen klimaat, {aantal_w} vak-dagen watergift opgehaald.")
+                    except Exception as e:
+                        st.error(f"❌ Kon niet uit Priva ophalen: {e}")
 
-    energie_csv = st.file_uploader(
-        "Upload de energiecomputer-export (.csv)",
-        type=["csv"],
-        key="energie_csv_upload",
-        help="Rapport Energie-export uit Priva; hieruit wordt de Pulsteller (warmteverbruik hele kas) gehaald.",
-    )
-
-    if energie_csv is not None:
-        try:
-            aantal_verwerkt_e, aantal_overgeslagen_e = verwerk_energie_csv(energie_csv, gebruiker=huidige_gebruiker())
-            melding_e = f"✅ {aantal_verwerkt_e} dagen warmteverbruik verwerkt en opgeslagen."
-            if aantal_overgeslagen_e:
-                melding_e += (
-                    f" {aantal_overgeslagen_e} nog niet afgeronde dagen zijn overgeslagen "
-                    "(einddatum ligt nog niet in het verleden)."
-                )
-            st.success(melding_e)
-        except Exception as e:
-            st.error(f"❌ Kon de CSV niet verwerken: {e}")
-
-    # --- Rechtstreeks ophalen uit de Priva Horti API ---
-    if os.environ.get("PRIVA_CLIENT_ID"):
-        st.caption(
-            "Of haal de laatste afgeronde dagen rechtstreeks uit Priva (tuin 3): klimaat per "
-            "afdeling en watergift (l/m²) per vak. Historische CSV-data blijft staan; alleen de "
-            "opgehaalde dagen worden bijgewerkt."
-        )
-        if st.button("📡 Haal laatste dagen op uit Priva"):
-            try:
-                aantal_k, _ = importeer_klimaat_uit_priva(gebruiker=huidige_gebruiker())
-                aantal_w, _ = importeer_watergift_uit_priva(gebruiker=huidige_gebruiker())
-                st.success(
-                    f"✅ {aantal_k} afdeling-dagen klimaat en {aantal_w} vak-dagen watergift "
-                    "opgehaald uit Priva."
-                )
-            except Exception as e:
-                st.error(f"❌ Kon niet uit Priva ophalen: {e}")
-
-        water_dekking = get_watergift_dekking()
-        if water_dekking:
-            laatste_water = max(r[2] for r in water_dekking)
-            st.caption(f"Watergift geregistreerd voor {len(water_dekking)} vakken, tot {format_datum(laatste_water)}.")
-    else:
-        st.caption("Priva-koppeling niet geconfigureerd (PRIVA_CLIENT_ID ontbreekt).")
+                water_dekking = get_watergift_dekking()
+                if water_dekking:
+                    laatste_water = max(r[2] for r in water_dekking)
+                    st.caption(f"Watergift: {len(water_dekking)} vakken, tot {format_datum(laatste_water)}.")
+            else:
+                st.caption("Priva-koppeling niet geconfigureerd (PRIVA_CLIENT_ID ontbreekt).")
 
     dekking = get_klimaatdata_dekking()
     kolommen_klimaat, rijen_klimaat = get_klimaat_overzicht_dataframe()
@@ -1493,9 +1494,11 @@ with tab_klimaat:
             energie_dagen = get_energiedata_dagen_voor_periode(e_datum_van, e_datum_tot)
             if energie_dagen:
                 df_energie = pd.DataFrame(energie_dagen, columns=["datum", "Totaal MJ", "MJ per m²"])
+                df_energie["Totaal GJ"] = df_energie["Totaal MJ"] / 1000
+                df_energie["GJ per m²"] = df_energie["MJ per m²"] / 1000
                 df_energie["datum"] = pd.to_datetime(df_energie["datum"])
                 df_energie = df_energie.set_index("datum").sort_index()
-                st.bar_chart(df_energie["Totaal MJ"])
+                st.bar_chart(df_energie["Totaal GJ"])
         else:
             st.warning("'Van' ligt na 'Tot en met'.")
         st.caption(
@@ -1507,37 +1510,36 @@ with tab_klimaat:
     # --- Gemiddelden per teelt (onder de grafieken) ---
     if rijen_klimaat:
         st.markdown("---")
-        st.write("**Gemiddelden per teelt**")
-        df_klimaat = pd.DataFrame(rijen_klimaat, columns=kolommen_klimaat)
-        st.dataframe(df_klimaat, use_container_width=True, hide_index=True)
+        with st.expander(f"📋 Gemiddelden per teelt ({len(rijen_klimaat)})"):
+            df_klimaat = pd.DataFrame(rijen_klimaat, columns=kolommen_klimaat)
+            st.dataframe(df_klimaat, use_container_width=True, hide_index=True)
 
     # --- Geïmporteerd t/m: per afdeling tot welke dag er data is (onderaan) ---
     if dekking:
-        st.markdown("---")
-        st.write("**Geïmporteerd t/m**")
-        laatste_alle = max(r[2] for r in dekking)
-        dekking_rijen = []
-        for afdeling, eerste, laatste, aantal, ontbrekend in dekking:
-            achterstand = (
-                datetime.strptime(laatste_alle, "%Y-%m-%d").date()
-                - datetime.strptime(laatste, "%Y-%m-%d").date()
-            ).days
-            dekking_rijen.append({
-                "Afdeling": afdeling,
-                "Eerste dag": format_datum(eerste),
-                "Laatste dag": format_datum(laatste),
-                "Dagen": aantal,
-                "Ontbrekende dagen": ontbrekend,
-                "Loopt achter": f"{achterstand} dg" if achterstand else "-",
-            })
-        st.dataframe(pd.DataFrame(dekking_rijen), use_container_width=True, hide_index=True)
-        dagen_oud = (datetime.today().date() - datetime.strptime(laatste_alle, "%Y-%m-%d").date()).days
-        st.caption(
-            f"Nieuwste geïmporteerde dag: {format_datum(laatste_alle)} ({dagen_oud} dag(en) geleden). "
-            "**Ontbrekende dagen** = dagen tussen de eerste en laatste dag zonder data (bijv. overgeslagen "
-            "omdat de dag nog niet compleet was bij het uploaden). **Loopt achter** = hoeveel dagen die "
-            "afdeling achterloopt op de afdeling met de meest recente data (0 = alles gelijk geïmporteerd)."
-        )
+        with st.expander("🗂️ Geïmporteerd t/m (dekking per afdeling)"):
+            laatste_alle = max(r[2] for r in dekking)
+            dekking_rijen = []
+            for afdeling, eerste, laatste, aantal, ontbrekend in dekking:
+                achterstand = (
+                    datetime.strptime(laatste_alle, "%Y-%m-%d").date()
+                    - datetime.strptime(laatste, "%Y-%m-%d").date()
+                ).days
+                dekking_rijen.append({
+                    "Afdeling": afdeling,
+                    "Eerste dag": format_datum(eerste),
+                    "Laatste dag": format_datum(laatste),
+                    "Dagen": aantal,
+                    "Ontbrekende dagen": ontbrekend,
+                    "Loopt achter": f"{achterstand} dg" if achterstand else "-",
+                })
+            st.dataframe(pd.DataFrame(dekking_rijen), use_container_width=True, hide_index=True)
+            dagen_oud = (datetime.today().date() - datetime.strptime(laatste_alle, "%Y-%m-%d").date()).days
+            st.caption(
+                f"Nieuwste geïmporteerde dag: {format_datum(laatste_alle)} ({dagen_oud} dag(en) geleden). "
+                "**Ontbrekende dagen** = dagen tussen de eerste en laatste dag zonder data (bijv. overgeslagen "
+                "omdat de dag nog niet compleet was bij het uploaden). **Loopt achter** = hoeveel dagen die "
+                "afdeling achterloopt op de afdeling met de meest recente data (0 = alles gelijk geïmporteerd)."
+            )
 
 # --- STATISTIEKEN ---
 with tab_stats:
@@ -1572,8 +1574,8 @@ with tab_stats:
 
             col1, col2, col3 = st.columns(3)
             col1.metric("Gemiddeld", f"{gemiddeld:.0f} dagen")
-            col2.metric("Shortest", f"{minimum:.0f} dagen")
-            col3.metric("Longest", f"{maximum:.0f} dagen")
+            col2.metric("Kortst", f"{minimum:.0f} dagen")
+            col3.metric("Langst", f"{maximum:.0f} dagen")
     else:
         st.info("Geen data beschikbaar voor statistieken.")
 

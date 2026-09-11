@@ -1447,12 +1447,12 @@ def get_klimaat_overzicht_dataframe():
             round(klimaat["gem_rv"], 1) if klimaat["gem_rv"] is not None else "-",
             round(klimaat["gem_stralingssom_dag"]) if klimaat["gem_stralingssom_dag"] is not None else "-",
             round(water["totaal_liter_per_m2"], 1) if water else "-",
-            round(warmte["totaal_mj"]) if warmte else "-",
+            round(warmte["totaal_mj"] / 1000, 2) if warmte else "-",
         ))
 
     kolommen = ["Code", "Teeltvak", "Afdeling", "Startdatum", "Oogstdatum",
                 "Gem. temperatuur (°C)", "Gem. RV (%)", "Gem. stralingssom (per dag)",
-                "Totaal water (l/m²)", "Totaal warmte (MJ)"]
+                "Totaal water (l/m²)", "Totaal warmte (GJ)"]
     return kolommen, rijen
 
 
