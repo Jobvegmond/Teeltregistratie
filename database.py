@@ -250,6 +250,20 @@ def init_db():
             )
         """)
 
+        # Warmteverbruik per dag voor de hele kas (Priva Pulsteller,
+        # label Sum_24h_PtEnergyUse), niet per afdeling of vak — er is één
+        # warmtemeter voor heel tuin 3. warmte_mj_per_m2 wordt bij het
+        # opslaan al berekend (totaal / TUIN3_OPPERVLAKTE_M2) zodat we 'm
+        # per vak kunnen uitrekenen op basis van de oppervlakte van dat vak.
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS energiedata_dag (
+                id SERIAL PRIMARY KEY,
+                datum TEXT NOT NULL UNIQUE,
+                warmte_mj_totaal REAL,
+                warmte_mj_per_m2 REAL
+            )
+        """)
+
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS teeltplanning (
                 id SERIAL PRIMARY KEY,
@@ -1183,6 +1197,149 @@ def get_watergift_dekking():
         return [(v, str(mn), str(mx), n) for v, mn, mx, n in cursor.fetchall()]
 
 
+# --- WARMTEVERBRUIK (KLIMAATCOMPUTER-CSV, PULSTELLER VOOR HELE KAS) ---
+#
+# Vakoppervlaktes tuin 3: vak 1-18 en 21-39 zijn 550 m2, vak 19 en 20 zijn
+# 275 m2 (smallere vakken). Totaal 37 * 550 + 2 * 275 = 20.900 m2.
+#
+# De Pulsteller-export levert Sum_24h_PtEnergyUse in GJ per dag; we slaan
+# alles op in MJ (x 1000).
+
+ENERGIE_LABEL = "Sum_24h_PtEnergyUse"
+ENERGIE_EENHEID_NAAR_MJ = 1000  # ruwe waarde staat in GJ
+
+VAK_OPPERVLAKTE_STANDAARD = 550
+VAK_OPPERVLAKTE_SMAL = 275
+VAKKEN_SMAL = {19, 20}
+
+
+def oppervlakte_van_vaknummer(vaknummer):
+    """Geeft de kasoppervlakte (m2) van een vaknummer (1-39) terug."""
+    if vaknummer is None:
+        return None
+    vaknummer = int(vaknummer)
+    if vaknummer in VAKKEN_SMAL:
+        return VAK_OPPERVLAKTE_SMAL
+    if 1 <= vaknummer <= 39:
+        return VAK_OPPERVLAKTE_STANDAARD
+    return None
+
+
+TUIN3_OPPERVLAKTE_M2 = (39 - len(VAKKEN_SMAL)) * VAK_OPPERVLAKTE_STANDAARD + len(VAKKEN_SMAL) * VAK_OPPERVLAKTE_SMAL
+
+
+def upsert_energiedata_dag(datum, warmte_mj_totaal):
+    """Slaat het totale warmteverbruik (MJ) van de hele kas voor één dag op."""
+    warmte_mj_per_m2 = warmte_mj_totaal / TUIN3_OPPERVLAKTE_M2 if warmte_mj_totaal is not None else None
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO energiedata_dag (datum, warmte_mj_totaal, warmte_mj_per_m2)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (datum)
+            DO UPDATE SET warmte_mj_totaal = EXCLUDED.warmte_mj_totaal,
+                          warmte_mj_per_m2 = EXCLUDED.warmte_mj_per_m2
+        """, (str(datum), warmte_mj_totaal, warmte_mj_per_m2))
+        conn.commit()
+
+
+def verwerk_energie_csv(bestand, gebruiker=None):
+    """
+    Leest een energiecomputer-CSV in (Priva-export "Rapport Energie") en zet
+    de Pulsteller-dagwaarden (Sum_24h_PtEnergyUse, in GJ) om naar het totale
+    warmteverbruik (MJ) per dag voor de hele kas, in energiedata_dag. Er
+    kunnen meerdere Pulsteller-tellers (idx_1) in de export staan; die worden
+    per dag bij elkaar opgeteld tot één totaal voor de kas. Dagen die nog
+    niet helemaal voorbij zijn worden overgeslagen. Geeft (aantal verwerkte
+    dagen, aantal overgeslagen onvolledige dagen) terug.
+    """
+    try:
+        df = pd.read_csv(bestand, sep=None, engine="python", decimal=",")
+    except Exception:
+        bestand.seek(0)
+        df = pd.read_csv(bestand, sep="\t", decimal=",")
+
+    df.columns = df.columns.str.strip()
+    df = df[(df["type_1"] == "Pulsteller") & (df["label"] == ENERGIE_LABEL)].copy()
+
+    df["datum"] = pd.to_datetime(df["startdate"], dayfirst=True, format="mixed").dt.date
+    df["datum_tot"] = pd.to_datetime(df["enddate"], dayfirst=True, format="mixed").dt.date
+    df["value"] = pd.to_numeric(df["value"], errors="coerce")
+
+    alle_dagen = df["datum"].drop_duplicates()
+    df = df[df["datum_tot"] < date.today()]
+    volledige_dagen = df["datum"].drop_duplicates()
+    overgeslagen = len(alle_dagen) - len(volledige_dagen)
+
+    verwerkt = 0
+    for datum, groep in df.groupby("datum"):
+        waarden = groep["value"].dropna()
+        if waarden.empty:
+            continue
+        warmte_mj_totaal = float(waarden.sum()) * ENERGIE_EENHEID_NAAR_MJ
+        upsert_energiedata_dag(datum, warmte_mj_totaal)
+        verwerkt += 1
+
+    log_wijziging(
+        gebruiker, "geupload", "energiedata_csv", None,
+        f"{verwerkt} dagen verwerkt, {overgeslagen} overgeslagen (nog niet afgerond)"
+    )
+
+    return verwerkt, overgeslagen
+
+
+def get_energiedata_dagen_voor_periode(datum_start, datum_eind):
+    """Losse dagregels (datum, warmte_mj_totaal, warmte_mj_per_m2) voor grafieken."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT datum, warmte_mj_totaal, warmte_mj_per_m2
+            FROM energiedata_dag
+            WHERE datum BETWEEN %s AND %s
+            ORDER BY datum
+        """, (str(datum_start), str(datum_eind)))
+        return cursor.fetchall()
+
+
+def get_energiedata_dekking():
+    """(eerste_datum, laatste_datum, aantal_dagen, ontbrekende_dagen) of None."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT MIN(datum), MAX(datum), COUNT(*) FROM energiedata_dag")
+        rij = cursor.fetchone()
+
+    if not rij or rij[0] is None:
+        return None
+    eerste_d = datetime.strptime(str(rij[0]), "%Y-%m-%d").date()
+    laatste_d = datetime.strptime(str(rij[1]), "%Y-%m-%d").date()
+    verwacht = (laatste_d - eerste_d).days + 1
+    ontbrekend = max(verwacht - rij[2], 0)
+    return (str(rij[0]), str(rij[1]), rij[2], ontbrekend)
+
+
+def get_warmte_voor_periode(vaknummer, datum_start, datum_eind):
+    """
+    Geeft het totale warmteverbruik (MJ) van één vak binnen een periode terug,
+    berekend als de kaswaarde per m2 per dag keer de oppervlakte van dat vak.
+    Geeft None als er geen data of geen bekende oppervlakte is.
+    """
+    oppervlakte = oppervlakte_van_vaknummer(vaknummer)
+    if not oppervlakte:
+        return None
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT SUM(warmte_mj_per_m2), COUNT(*)
+            FROM energiedata_dag
+            WHERE datum BETWEEN %s AND %s
+        """, (str(datum_start), str(datum_eind)))
+        rij = cursor.fetchone()
+
+    if not rij or rij[1] == 0:
+        return None
+    return {"totaal_mj": (rij[0] or 0.0) * oppervlakte, "aantal_dagen": rij[1]}
+
+
 def get_klimaat_voor_periode(afdeling, datum_start, datum_eind):
     """
     Geeft de gemiddelde temperatuur, gemiddelde RV en gemiddelde dagstralingssom
@@ -1278,6 +1435,7 @@ def get_klimaat_overzicht_dataframe():
             continue
 
         water = get_watergift_voor_periode(vaknummer, start, eind) if vaknummer else None
+        warmte = get_warmte_voor_periode(vaknummer, start, eind) if vaknummer else None
 
         rijen.append((
             code if code else f"ID{teelt_id}",
@@ -1289,11 +1447,12 @@ def get_klimaat_overzicht_dataframe():
             round(klimaat["gem_rv"], 1) if klimaat["gem_rv"] is not None else "-",
             round(klimaat["gem_stralingssom_dag"]) if klimaat["gem_stralingssom_dag"] is not None else "-",
             round(water["totaal_liter_per_m2"], 1) if water else "-",
+            round(warmte["totaal_mj"]) if warmte else "-",
         ))
 
     kolommen = ["Code", "Teeltvak", "Afdeling", "Startdatum", "Oogstdatum",
                 "Gem. temperatuur (°C)", "Gem. RV (%)", "Gem. stralingssom (per dag)",
-                "Totaal water (l/m²)"]
+                "Totaal water (l/m²)", "Totaal warmte (MJ)"]
     return kolommen, rijen
 
 

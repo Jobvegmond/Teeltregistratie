@@ -36,6 +36,11 @@ from database import (
     get_watergift_dekking,
     get_watergift_voor_periode,
     get_watergift_dagen_voor_periode,
+    verwerk_energie_csv,
+    get_energiedata_dagen_voor_periode,
+    get_energiedata_dekking,
+    get_warmte_voor_periode,
+    TUIN3_OPPERVLAKTE_M2,
     get_teeltduur,
     get_alle_teelten_detail,
     get_isojaar_week,
@@ -847,7 +852,7 @@ with tab_detail:
         # Teeltduur en klimaat worden per teelt (dus per planting, op basis
         # van de eigen afdeling en periode) berekend en pas daarna gemiddeld
         # over de groep — niet als één vast afdeling/vak-gemiddelde.
-        dagen_lijst, temp_lijst, rv_lijst, straling_lijst, water_lijst = [], [], [], [], []
+        dagen_lijst, temp_lijst, rv_lijst, straling_lijst, water_lijst, warmte_lijst = [], [], [], [], [], []
         for t in teelten_groep:
             if not t["datum_oogst"] and t["datum_teelt_start"] > vandaag_detail:
                 continue  # nog niet gestart: geen teeltduur/klimaat "tot nu toe" om te middelen
@@ -873,6 +878,10 @@ with tab_detail:
                 if water_t:
                     water_lijst.append(water_t["totaal_liter_per_m2"])
 
+                warmte_t = get_warmte_voor_periode(t["vaknummer"], t["datum_teelt_start"], eind_t)
+                if warmte_t:
+                    warmte_lijst.append(warmte_t["totaal_mj"])
+
         if dagen_lijst:
             gem_dagen = sum(dagen_lijst) / len(dagen_lijst)
             gem_weken = round(gem_dagen / 7 * 2) / 2
@@ -886,7 +895,7 @@ with tab_detail:
         rij_data[2].metric("Gem. teeltduur", teeltduur_tekst)
         rij_data[3].metric("Status", status_tekst)
 
-        rij_klimaat = st.columns(4)
+        rij_klimaat = st.columns(5)
         rij_klimaat[0].metric(
             "Gem. temperatuur", f"{sum(temp_lijst) / len(temp_lijst):.1f} °C" if temp_lijst else "-"
         )
@@ -898,6 +907,9 @@ with tab_detail:
         )
         rij_klimaat[3].metric(
             "Gem. water per vak", f"{sum(water_lijst) / len(water_lijst):.0f} l/m²" if water_lijst else "-"
+        )
+        rij_klimaat[4].metric(
+            "Gem. warmte per teelt", f"{sum(warmte_lijst) / len(warmte_lijst):,.0f} MJ".replace(",", ".") if warmte_lijst else "-"
         )
 
         if aantal_afgerond > 0:
@@ -1361,6 +1373,26 @@ with tab_klimaat:
         except Exception as e:
             st.error(f"❌ Kon de CSV niet verwerken: {e}")
 
+    energie_csv = st.file_uploader(
+        "Upload de energiecomputer-export (.csv)",
+        type=["csv"],
+        key="energie_csv_upload",
+        help="Rapport Energie-export uit Priva; hieruit wordt de Pulsteller (warmteverbruik hele kas) gehaald.",
+    )
+
+    if energie_csv is not None:
+        try:
+            aantal_verwerkt_e, aantal_overgeslagen_e = verwerk_energie_csv(energie_csv, gebruiker=huidige_gebruiker())
+            melding_e = f"✅ {aantal_verwerkt_e} dagen warmteverbruik verwerkt en opgeslagen."
+            if aantal_overgeslagen_e:
+                melding_e += (
+                    f" {aantal_overgeslagen_e} nog niet afgeronde dagen zijn overgeslagen "
+                    "(einddatum ligt nog niet in het verleden)."
+                )
+            st.success(melding_e)
+        except Exception as e:
+            st.error(f"❌ Kon de CSV niet verwerken: {e}")
+
     # --- Rechtstreeks ophalen uit de Priva Horti API ---
     if os.environ.get("PRIVA_CLIENT_ID"):
         st.caption(
@@ -1438,6 +1470,39 @@ with tab_klimaat:
             klimaat_grafieken(records, toon_dagnacht=toon_dagnacht, toon_trend=toon_trend)
         elif datum_van > datum_tot:
             st.warning("'Van' ligt na 'Tot en met'.")
+
+    # --- Warmteverbruik (Pulsteller, hele kas) ---
+    energie_dekking = get_energiedata_dekking()
+    if energie_dekking:
+        st.markdown("---")
+        st.write("**Warmteverbruik (hele kas)**")
+        e_eerste, e_laatste, e_aantal, e_ontbrekend = energie_dekking
+        e_eerste_d = datetime.strptime(e_eerste, "%Y-%m-%d").date()
+        e_laatste_d = datetime.strptime(e_laatste, "%Y-%m-%d").date()
+        e_standaard_van = max(e_eerste_d, e_laatste_d - timedelta(days=90))
+        col_e_van, col_e_tot = st.columns(2)
+        e_datum_van = col_e_van.date_input(
+            "Van", value=e_standaard_van, min_value=e_eerste_d, max_value=e_laatste_d,
+            key="energie_grafiek_van", format="DD-MM-YYYY",
+        )
+        e_datum_tot = col_e_tot.date_input(
+            "Tot en met", value=e_laatste_d, min_value=e_eerste_d, max_value=e_laatste_d,
+            key="energie_grafiek_tot", format="DD-MM-YYYY",
+        )
+        if e_datum_van <= e_datum_tot:
+            energie_dagen = get_energiedata_dagen_voor_periode(e_datum_van, e_datum_tot)
+            if energie_dagen:
+                df_energie = pd.DataFrame(energie_dagen, columns=["datum", "Totaal MJ", "MJ per m²"])
+                df_energie["datum"] = pd.to_datetime(df_energie["datum"])
+                df_energie = df_energie.set_index("datum").sort_index()
+                st.bar_chart(df_energie["Totaal MJ"])
+        else:
+            st.warning("'Van' ligt na 'Tot en met'.")
+        st.caption(
+            f"Warmteverbruik geregistreerd van {format_datum(e_eerste)} t/m {format_datum(e_laatste)} "
+            f"({e_aantal} dagen, {e_ontbrekend} ontbrekend). Kasoppervlak tuin 3: {TUIN3_OPPERVLAKTE_M2:,.0f} m²."
+            .replace(",", ".")
+        )
 
     # --- Gemiddelden per teelt (onder de grafieken) ---
     if rijen_klimaat:
