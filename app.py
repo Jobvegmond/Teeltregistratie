@@ -41,6 +41,9 @@ from database import (
     get_energiedata_dekking,
     get_warmte_voor_periode,
     TUIN3_OPPERVLAKTE_M2,
+    ideale_etmaaltemperatuur,
+    LICHT_TEMP_FACTOR,
+    LICHT_TEMP_BASIS,
     get_teeltduur,
     get_alle_teelten_detail,
     get_isojaar_week,
@@ -186,6 +189,50 @@ def klimaat_grafieken(dagen_records, toon_dagnacht=False, toon_trend=False,
     )
     st.caption("Relatieve luchtvochtigheid (%)")
     st.altair_chart(rv_chart, use_container_width=True)
+
+
+def licht_temperatuur_grafiek(dagen_records):
+    """
+    Zet de etmaaltemperatuur van elke dag af tegen de lichtsom van diezelfde
+    dag, met de ideale verhouding (LICHT_TEMP_FACTOR x lichtsom +
+    LICHT_TEMP_BASIS) als referentielijn — zo is in 1 oogopslag te zien of
+    er structureel te warm of te koud gestookt wordt bij het gerealiseerde
+    licht.
+    """
+    df = pd.DataFrame(dagen_records).dropna(subset=["lichtsom", "temp_24h"])
+    if df.empty:
+        st.caption("Geen gekoppelde lichtsom/temperatuur in deze periode.")
+        return
+
+    df["datum"] = pd.to_datetime(df["datum"])
+    df["Afdeling"] = "Afd. " + df["afdeling"].astype(str)
+    afdelingen = sorted(df["afdeling"].unique())
+    kleur = alt.Color(
+        "Afdeling:N",
+        scale=alt.Scale(
+            domain=[f"Afd. {a}" for a in afdelingen],
+            range=[AFDELING_KLEUR.get(a, "#8a8a80") for a in afdelingen],
+        ),
+        legend=alt.Legend(title=None, orient="top"),
+    )
+    punten = alt.Chart(df).mark_circle(size=45, opacity=0.55).encode(
+        x=alt.X("lichtsom:Q", title="Lichtsom (per dag)"),
+        y=alt.Y("temp_24h:Q", title="Etmaaltemperatuur (°C)"),
+        color=kleur,
+        tooltip=[alt.Tooltip("datum:T", title="datum", format="%d-%m-%y"), "Afdeling:N",
+                 alt.Tooltip("lichtsom:Q", title="lichtsom", format=".0f"),
+                 alt.Tooltip("temp_24h:Q", title="temp (°C)", format=".1f")],
+    )
+    lijn_df = pd.DataFrame({"lichtsom": [df["lichtsom"].min(), df["lichtsom"].max()]})
+    lijn_df["ideaal"] = ideale_etmaaltemperatuur(lijn_df["lichtsom"])
+    lijn = alt.Chart(lijn_df).mark_line(color="#c0392b", strokeDash=[6, 3], strokeWidth=2).encode(
+        x="lichtsom:Q", y=alt.Y("ideaal:Q", title="Etmaaltemperatuur (°C)"),
+    )
+    st.caption(
+        f"Rode lijn = ideale verhouding ({LICHT_TEMP_FACTOR} x lichtsom + {LICHT_TEMP_BASIS} °C). "
+        "Punten boven de lijn: relatief te warm gestookt voor het licht. Punten eronder: te koud."
+    )
+    st.altair_chart((punten + lijn).properties(height=320), use_container_width=True)
 
 
 # --- INITIALISATIE ---
@@ -860,6 +907,7 @@ with tab_detail:
         # van de eigen afdeling en periode) berekend en pas daarna gemiddeld
         # over de groep — niet als één vast afdeling/vak-gemiddelde.
         dagen_lijst, temp_lijst, rv_lijst, straling_lijst, water_lijst, warmte_lijst = [], [], [], [], [], []
+        delta_temp_lijst = []
         for t in teelten_groep:
             if not t["datum_oogst"] and t["datum_teelt_start"] > vandaag_detail:
                 continue  # nog niet gestart: geen teeltduur/klimaat "tot nu toe" om te middelen
@@ -879,6 +927,9 @@ with tab_detail:
                         rv_lijst.append(klimaat_t["gem_rv"])
                     if klimaat_t["gem_stralingssom_dag"] is not None:
                         straling_lijst.append(klimaat_t["gem_stralingssom_dag"])
+                    if klimaat_t["gem_temperatuur"] is not None and klimaat_t["gem_stralingssom_dag"] is not None:
+                        ideaal_t = ideale_etmaaltemperatuur(klimaat_t["gem_stralingssom_dag"])
+                        delta_temp_lijst.append(klimaat_t["gem_temperatuur"] - ideaal_t)
 
             if t["vaknummer"]:
                 water_t = get_watergift_voor_periode(t["vaknummer"], t["datum_teelt_start"], eind_t)
@@ -904,7 +955,12 @@ with tab_detail:
 
         rij_klimaat = st.columns(5)
         rij_klimaat[0].metric(
-            "Gem. temperatuur", f"{sum(temp_lijst) / len(temp_lijst):.1f} °C" if temp_lijst else "-"
+            "Gem. temperatuur",
+            f"{sum(temp_lijst) / len(temp_lijst):.1f} °C" if temp_lijst else "-",
+            delta=f"{sum(delta_temp_lijst) / len(delta_temp_lijst):+.1f} °C t.o.v. ideaal" if delta_temp_lijst else None,
+            delta_color="off",
+            help="Ideale etmaaltemperatuur op basis van de lichtsom: "
+                 f"{LICHT_TEMP_FACTOR} x lichtsom + {LICHT_TEMP_BASIS} °C.",
         )
         rij_klimaat[1].metric(
             "Gem. RV", f"{sum(rv_lijst) / len(rv_lijst):.0f} %" if rv_lijst else "-"
@@ -1469,6 +1525,10 @@ with tab_klimaat:
                         "lichtsom": straling,
                     })
             klimaat_grafieken(records, toon_dagnacht=toon_dagnacht, toon_trend=toon_trend)
+
+            st.markdown("---")
+            st.write("**Licht/temperatuur-verhouding**")
+            licht_temperatuur_grafiek(records)
         elif datum_van > datum_tot:
             st.warning("'Van' ligt na 'Tot en met'.")
 

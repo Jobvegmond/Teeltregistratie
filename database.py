@@ -947,6 +947,23 @@ KLIMAAT_RV_NACHT_LABEL = "Ave_Night_CompRV"
 KLIMAAT_STRALING_LABELS = ["Sum_Day_CalculatedRadiation", "Sum_Night_CalculatedRadiation"]
 KLIMAAT_GELDIGE_AFDELINGEN = {1, 2, 3, 4}
 
+# Vuistregel licht/temperatuur (Job): bij een hogere lichtsom hoort een
+# hogere etmaaltemperatuur, in een vaste verhouding. Buiten die
+# verhouding wordt er relatief te warm of te koud gestookt t.o.v. het licht.
+LICHT_TEMP_FACTOR = 0.0072
+LICHT_TEMP_BASIS = 11.7
+
+
+def ideale_etmaaltemperatuur(lichtsom):
+    """
+    Streefwaarde voor de etmaaltemperatuur (°C) op basis van de lichtsom:
+    LICHT_TEMP_FACTOR x lichtsom + LICHT_TEMP_BASIS. Werkt ook op een
+    pandas Series (voor grafieken). Geeft None terug bij lichtsom=None.
+    """
+    if lichtsom is None:
+        return None
+    return LICHT_TEMP_FACTOR * lichtsom + LICHT_TEMP_BASIS
+
 
 def afdeling_van_vaknummer(vaknummer):
     """Vertaalt een vaknummer (1-39) naar het bijbehorende afdelingsnummer (1-4)."""
@@ -1437,6 +1454,18 @@ def get_klimaat_overzicht_dataframe():
         water = get_watergift_voor_periode(vaknummer, start, eind) if vaknummer else None
         warmte = get_warmte_voor_periode(vaknummer, start, eind) if vaknummer else None
 
+        ideaal = ideale_etmaaltemperatuur(klimaat["gem_stralingssom_dag"])
+        if ideaal is not None and klimaat["gem_temperatuur"] is not None:
+            verschil = klimaat["gem_temperatuur"] - ideaal
+            if verschil > 0.3:
+                verschil_tekst = f"↑ +{verschil:.1f}"
+            elif verschil < -0.3:
+                verschil_tekst = f"↓ {verschil:.1f}"
+            else:
+                verschil_tekst = f"≈ {verschil:+.1f}"
+        else:
+            verschil_tekst = "-"
+
         rijen.append((
             code if code else f"ID{teelt_id}",
             naam,
@@ -1446,12 +1475,15 @@ def get_klimaat_overzicht_dataframe():
             round(klimaat["gem_temperatuur"], 1) if klimaat["gem_temperatuur"] is not None else "-",
             round(klimaat["gem_rv"], 1) if klimaat["gem_rv"] is not None else "-",
             round(klimaat["gem_stralingssom_dag"]) if klimaat["gem_stralingssom_dag"] is not None else "-",
+            round(ideaal, 1) if ideaal is not None else "-",
+            verschil_tekst,
             round(water["totaal_liter_per_m2"], 1) if water else "-",
             round(warmte["totaal_mj"] / 1000, 2) if warmte else "-",
         ))
 
     kolommen = ["Code", "Teeltvak", "Afdeling", "Startdatum", "Oogstdatum",
                 "Gem. temperatuur (°C)", "Gem. RV (%)", "Gem. stralingssom (per dag)",
+                "Ideale temp (°C)", "Verschil (°C)",
                 "Totaal water (l/m²)", "Totaal warmte (GJ)"]
     return kolommen, rijen
 
