@@ -149,7 +149,15 @@ def klimaat_grafieken(dagen_records, toon_dagnacht=False, toon_trend=False,
                  "Afdeling:N", "Deel:N", alt.Tooltip("waarde:Q", title="°C", format=".1f")],
     )
 
-    temp_lagen = [licht_laag, temp_laag]
+    licht["ideaal"] = ideale_etmaaltemperatuur(licht["lichtsom"])
+    ideaal_laag = alt.Chart(licht).mark_line(color="#c0392b", strokeWidth=3, strokeDash=[6, 3]).encode(
+        x=x_as,
+        y=alt.Y("ideaal:Q", scale=alt.Scale(domain=[0, temp_max], clamp=True)),
+        tooltip=[alt.Tooltip("datum:T", title="datum", format="%d-%m-%y"),
+                 alt.Tooltip("ideaal:Q", title="ideale temp °C", format=".1f")],
+    )
+
+    temp_lagen = [licht_laag, temp_laag, ideaal_laag]
     if toon_trend:
         temp_trend_df = (
             df.groupby("datum", as_index=False)["temp_24h"].mean().dropna(subset=["temp_24h"])
@@ -172,8 +180,10 @@ def klimaat_grafieken(dagen_records, toon_dagnacht=False, toon_trend=False,
         ]
 
     st.caption(
-        "Temperatuur (lijn, links) + lichtsom per dag (staaf, gemiddeld over de afdelingen, rechts)"
-        + (" — dikke lijn = 14-daags voortschrijdend gemiddelde" if toon_trend else "")
+        "Temperatuur (lijn, links) + lichtsom per dag (staaf, gemiddeld over de afdelingen, rechts). "
+        f"Rode stippellijn = ideale temperatuur bij dat licht ({LICHT_TEMP_FACTOR} x lichtsom + "
+        f"{LICHT_TEMP_BASIS} °C) — temperatuurlijn erboven is relatief te warm, eronder te koud."
+        + (" Dikke effen lijn = 14-daags voortschrijdend gemiddelde." if toon_trend else "")
     )
     st.altair_chart(
         alt.layer(*temp_lagen).resolve_scale(y="independent"),
@@ -193,11 +203,11 @@ def klimaat_grafieken(dagen_records, toon_dagnacht=False, toon_trend=False,
 
 def licht_temperatuur_grafiek(dagen_records):
     """
-    Zet de etmaaltemperatuur van elke dag af tegen de lichtsom van diezelfde
-    dag, met de ideale verhouding (LICHT_TEMP_FACTOR x lichtsom +
-    LICHT_TEMP_BASIS) als referentielijn — zo is in 1 oogopslag te zien of
-    er structureel te warm of te koud gestookt wordt bij het gerealiseerde
-    licht.
+    Zet de werkelijke en de ideale etmaaltemperatuur (op basis van de
+    lichtsom van diezelfde dag) als twee lijnen op de tijdlijn — zo is in
+    1 oogopslag te zien wanneer er structureel te warm of te koud gestookt
+    wordt t.o.v. het gerealiseerde licht. Vervangt een eerdere puntenwolk
+    (temperatuur tegen lichtsom), die met meer data onoverzichtelijk werd.
     """
     df = pd.DataFrame(dagen_records).dropna(subset=["lichtsom", "temp_24h"])
     if df.empty:
@@ -206,6 +216,7 @@ def licht_temperatuur_grafiek(dagen_records):
 
     df["datum"] = pd.to_datetime(df["datum"])
     df["Afdeling"] = "Afd. " + df["afdeling"].astype(str)
+    df["ideaal"] = ideale_etmaaltemperatuur(df["lichtsom"])
     afdelingen = sorted(df["afdeling"].unique())
     kleur = alt.Color(
         "Afdeling:N",
@@ -215,24 +226,25 @@ def licht_temperatuur_grafiek(dagen_records):
         ),
         legend=alt.Legend(title=None, orient="top"),
     )
-    punten = alt.Chart(df).mark_circle(size=45, opacity=0.55).encode(
-        x=alt.X("lichtsom:Q", title="Lichtsom (per dag)"),
-        y=alt.Y("temp_24h:Q", title="Etmaaltemperatuur (°C)"),
+    lang = df.melt(
+        id_vars=["datum", "Afdeling"], value_vars=["temp_24h", "ideaal"],
+        var_name="_v", value_name="waarde",
+    ).dropna(subset=["waarde"])
+    lang["Type"] = lang["_v"].map({"temp_24h": "Werkelijk", "ideaal": "Ideaal (obv licht)"})
+
+    chart = alt.Chart(lang).mark_line().encode(
+        x=alt.X("datum:T", title=None),
+        y=alt.Y("waarde:Q", title="Etmaaltemperatuur (°C)"),
         color=kleur,
-        tooltip=[alt.Tooltip("datum:T", title="datum", format="%d-%m-%y"), "Afdeling:N",
-                 alt.Tooltip("lichtsom:Q", title="lichtsom", format=".0f"),
-                 alt.Tooltip("temp_24h:Q", title="temp (°C)", format=".1f")],
-    )
-    lijn_df = pd.DataFrame({"lichtsom": [df["lichtsom"].min(), df["lichtsom"].max()]})
-    lijn_df["ideaal"] = ideale_etmaaltemperatuur(lijn_df["lichtsom"])
-    lijn = alt.Chart(lijn_df).mark_line(color="#c0392b", strokeDash=[6, 3], strokeWidth=2).encode(
-        x="lichtsom:Q", y=alt.Y("ideaal:Q", title="Etmaaltemperatuur (°C)"),
+        strokeDash=alt.StrokeDash("Type:N", legend=alt.Legend(title=None, orient="top")),
+        tooltip=[alt.Tooltip("datum:T", title="datum", format="%d-%m-%y"), "Afdeling:N", "Type:N",
+                 alt.Tooltip("waarde:Q", title="°C", format=".1f")],
     )
     st.caption(
-        f"Rode lijn = ideale verhouding ({LICHT_TEMP_FACTOR} x lichtsom + {LICHT_TEMP_BASIS} °C). "
-        "Punten boven de lijn: relatief te warm gestookt voor het licht. Punten eronder: te koud."
+        f"Ideaal = {LICHT_TEMP_FACTOR} x lichtsom + {LICHT_TEMP_BASIS} °C van diezelfde dag. "
+        "Werkelijk boven ideaal: relatief te warm gestookt voor het licht. Eronder: te koud."
     )
-    st.altair_chart((punten + lijn).properties(height=320), use_container_width=True)
+    st.altair_chart(chart, use_container_width=True)
 
 
 # --- INITIALISATIE ---
@@ -1080,12 +1092,20 @@ with tab_detail:
         records_water = []
         for vak in vakken_groep:
             for datum, liter in get_watergift_dagen_voor_periode(vak, start_datums[0], eind_water):
-                records_water.append({"datum": datum, f"Vak {vak}": liter})
+                records_water.append({"datum": datum, "Vak": f"Vak {vak}", "liter": liter})
         if records_water:
-            df_water = pd.DataFrame(records_water).groupby("datum", as_index=True).first().sort_index()
-            df_water.index = pd.to_datetime(df_water.index)
-            st.caption("Watergift per vak (l/m² per dag)")
-            st.bar_chart(df_water)
+            df_water = pd.DataFrame(records_water)
+            df_water["datum"] = pd.to_datetime(df_water["datum"])
+            st.caption("Watergift per vak (l/m² per dag) — vakken naast elkaar, niet opgeteld")
+            water_chart = alt.Chart(df_water).mark_bar().encode(
+                x=alt.X("datum:T", title=None),
+                xOffset="Vak:N",
+                y=alt.Y("liter:Q", title="Liter/m²"),
+                color=alt.Color("Vak:N", legend=alt.Legend(title=None, orient="top")),
+                tooltip=[alt.Tooltip("datum:T", title="datum", format="%d-%m-%y"), "Vak:N",
+                         alt.Tooltip("liter:Q", title="l/m²", format=".1f")],
+            )
+            st.altair_chart(water_chart, use_container_width=True)
         else:
             st.caption("Nog geen watergift gekoppeld aan deze plantweek.")
     else:
@@ -1636,6 +1656,99 @@ with tab_stats:
             col1.metric("Gemiddeld", f"{gemiddeld:.0f} dagen")
             col2.metric("Kortst", f"{minimum:.0f} dagen")
             col3.metric("Langst", f"{maximum:.0f} dagen")
+
+        # --- Analyse: groeifactoren vs. resultaat ---
+        st.markdown("---")
+        st.write("**Analyse: groeifactoren vs. resultaat (afgeronde teelten)**")
+        st.caption(
+            "Combineert lichtsom, temperatuur en watergift tijdens de teelt met het eindresultaat "
+            "(gewicht, lengte, rijpheid, teeltduur) en zoekt naar de sterkste samenhang."
+        )
+
+        analyse_rijen = []
+        for t in get_alle_teelten_detail():
+            if not t["datum_oogst"]:
+                continue
+            afdeling_a = afdeling_van_vaknummer(t["vaknummer"])
+            klimaat_a = (
+                get_klimaat_voor_periode(afdeling_a, t["datum_teelt_start"], t["datum_oogst"])
+                if afdeling_a else None
+            )
+            water_a = (
+                get_watergift_voor_periode(t["vaknummer"], t["datum_teelt_start"], t["datum_oogst"])
+                if t["vaknummer"] else None
+            )
+            laag, hoog = rijpheid_tekst_naar_bereik(t["rijpheid"]) if t["rijpheid"] else (None, None)
+
+            analyse_rijen.append({
+                "Teeltduur (dagen)": get_teeltduur(t["datum_teelt_start"], t["datum_oogst"]),
+                "Gewicht (g)": t["oogstgewicht"],
+                "Lengte (cm)": t["lengte_eind"],
+                "Rijpheid": (laag + hoog) / 2 if laag is not None else None,
+                "Lichtsom (per dag)": klimaat_a["gem_stralingssom_dag"] if klimaat_a else None,
+                "Temperatuur (°C)": klimaat_a["gem_temperatuur"] if klimaat_a else None,
+                "Water (l/m²)": water_a["totaal_liter_per_m2"] if water_a else None,
+            })
+
+        df_analyse = pd.DataFrame(analyse_rijen).apply(pd.to_numeric, errors="coerce")
+
+        if len(df_analyse) < 5:
+            st.info("Nog te weinig afgeronde teelten voor een zinvolle analyse (minimaal 5 nodig).")
+        else:
+            kolommen_analyse = list(df_analyse.columns)
+            corr = df_analyse.corr(min_periods=5)
+
+            corr_lang = (
+                corr.reset_index().melt(id_vars="index", var_name="Variabele 2", value_name="r")
+                .rename(columns={"index": "Variabele 1"}).dropna(subset=["r"])
+            )
+            heatmap = alt.Chart(corr_lang).mark_rect().encode(
+                x=alt.X("Variabele 1:N", title=None, sort=kolommen_analyse),
+                y=alt.Y("Variabele 2:N", title=None, sort=kolommen_analyse),
+                color=alt.Color("r:Q", title="Correlatie", scale=alt.Scale(scheme="redblue", domain=[-1, 1])),
+                tooltip=["Variabele 1:N", "Variabele 2:N", alt.Tooltip("r:Q", format=".2f")],
+            )
+            tekst = alt.Chart(corr_lang).mark_text(fontSize=11).encode(
+                x=alt.X("Variabele 1:N", sort=kolommen_analyse),
+                y=alt.Y("Variabele 2:N", sort=kolommen_analyse),
+                text=alt.Text("r:Q", format=".2f"),
+                color=alt.condition("abs(datum.r) > 0.5", alt.value("white"), alt.value("black")),
+            )
+            st.altair_chart((heatmap + tekst).properties(height=340), use_container_width=True)
+            st.caption(f"Gebaseerd op {len(df_analyse)} afgeronde teelten.")
+
+            paren = []
+            for i, kol_a in enumerate(kolommen_analyse):
+                for kol_b in kolommen_analyse[i + 1:]:
+                    r = corr.loc[kol_a, kol_b]
+                    n = df_analyse[[kol_a, kol_b]].dropna().shape[0]
+                    if pd.notna(r) and n >= 5:
+                        paren.append((abs(r), r, kol_a, kol_b, n))
+            paren.sort(key=lambda p: p[0], reverse=True)
+
+            if paren:
+                st.write("**Sterkste samenhangen:**")
+                for abs_r, r, kol_a, kol_b, n in paren[:3]:
+                    sterkte = "sterk" if abs_r > 0.7 else "matig" if abs_r > 0.4 else "zwak"
+                    richting = "ook hoger" if r > 0 else "juist lager"
+                    st.write(
+                        f"- **{kol_a}** vs **{kol_b}**: naarmate {kol_a.lower()} hoger is, is "
+                        f"{kol_b.lower()} {richting} (r = {r:+.2f}, {sterkte} verband, n={n})"
+                    )
+                    df_paar = df_analyse.dropna(subset=[kol_a, kol_b])
+                    scatter = alt.Chart(df_paar).mark_circle(size=60, opacity=0.6).encode(
+                        x=alt.X(f"{kol_a}:Q"), y=alt.Y(f"{kol_b}:Q"), tooltip=[kol_a, kol_b],
+                    )
+                    trend = scatter.transform_regression(kol_a, kol_b).mark_line(color="#c0392b")
+                    st.altair_chart((scatter + trend).properties(height=220), use_container_width=True)
+
+                st.caption(
+                    f"Let op: gebaseerd op {len(df_analyse)} teelten — met zo'n kleine steekproef kan een "
+                    "verband ook toeval zijn. Gebruik dit als richting om op te letten, niet als bewijs, "
+                    "en correlatie is geen oorzakelijk verband."
+                )
+            else:
+                st.caption("Geen paren met genoeg overlappende data gevonden.")
     else:
         st.info("Geen data beschikbaar voor statistieken.")
 
