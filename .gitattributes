@@ -1,0 +1,2 @@
+# Shellscripts draaien op de NAS (Linux); Windows-regeleindes breken ze.
+*.sh text eol=lf
