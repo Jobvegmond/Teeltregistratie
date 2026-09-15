@@ -1,0 +1,47 @@
+# Teeltregistratie op de NAS: app en database samen.
+#
+# De app bereikt de database via het interne Docker-netwerk op hostnaam "db";
+# daar komt geen netwerkpoort aan te pas. De poort die wel gepubliceerd wordt
+# is er alleen voor ontwikkelen vanaf een laptop op het eigen netwerk.
+#
+# Wachtwoorden komen uit het .env-bestand naast dit bestand (niet in git).
+
+services:
+  db:
+    # Vastgezet op 18: een automatische sprong naar 19 breekt de datamap.
+    image: postgres:18
+    container_name: vemteelt-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: vem
+      POSTGRES_DB: vem_teelt
+      POSTGRES_PASSWORD: ${DB_WACHTWOORD:?zet DB_WACHTWOORD in .env}
+    volumes:
+      # Dit is de map waar de database nu echt staat. Wijs hem nergens anders
+      # heen: PostgreSQL maakt dan een lege database aan en het lijkt alsof
+      # alle data verdwenen is.
+      - /volume2/docker/pgdata:/var/lib/postgresql
+    ports:
+      # Alleen bereikbaar op het lokale netwerk, niet doorzetten op de router.
+      - "32798:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vem -d vem_teelt"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build: .
+    container_name: vemteelt-app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://vem:${DB_WACHTWOORD}@db:5432/vem_teelt
+      AUTH_COOKIE_KEY: ${AUTH_COOKIE_KEY:?zet AUTH_COOKIE_KEY in .env}
+      PRIVA_CLIENT_ID: ${PRIVA_CLIENT_ID}
+      PRIVA_CLIENT_SECRET: ${PRIVA_CLIENT_SECRET}
+    ports:
+      # De reverse proxy van DSM praat hiermee; niet rechtstreeks doorzetten.
+      - "8501:8501"

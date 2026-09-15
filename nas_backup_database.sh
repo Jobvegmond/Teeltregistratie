@@ -10,15 +10,19 @@
 
 set -euo pipefail
 
-CONTAINER="postgres-vem"
 DB_USER="vem"
 DB_NAAM="vem_teelt"
 DOELMAP="/volume1/backup/postgres"
 BEWAARDAGEN=30
 
-if ! docker ps --format '{{.Names}}' | grep -qx "$CONTAINER"; then
-    echo "FOUT: container '$CONTAINER' draait niet. Draaiende containers:"
-    docker ps --format '  {{.Names}}'
+# Zoek de draaiende postgres-container op zijn image, niet op zijn naam:
+# die naam verandert zodra de container opnieuw wordt aangemaakt.
+CONTAINER=$(docker ps --format '{{.Names}} {{.Image}}' \
+    | awk '$2 ~ /(^|\/)postgres(:|$)/ {print $1; exit}')
+
+if [ -z "$CONTAINER" ]; then
+    echo "FOUT: geen draaiende postgres-container gevonden. Nu actief:"
+    docker ps --format '  {{.Names}}  ({{.Image}})'
     exit 1
 fi
 

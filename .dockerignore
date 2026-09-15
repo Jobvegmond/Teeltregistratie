@@ -1,0 +1,22 @@
+# Geheimen horen nooit in een image; die komen via environment variables.
+.env
+.env.*
+
+.git
+.gitignore
+.vscode
+__pycache__/
+*.pyc
+
+# Databack-ups en werkbestanden hebben in het image niets te zoeken.
+*.db
+*.db.bak-*
+*.xlsx
+*.docx
+Energie*/
+Klimaat*/
+_brandweerrooster_wip/
+
+# Scripts die op je laptop of in DSM draaien, niet in de container.
+migreer_naar_nas.py
+nas_backup_database.sh
