@@ -9,8 +9,9 @@ import sys
 
 import psycopg2
 
-ENV_BESTAND = r"C:\Users\Job\Downloads\VEMteelt.env"
-NAS_ENV_BESTAND = r"C:\Users\Job\OneDrive\Python\.env.nas"
+HIER = os.path.dirname(os.path.abspath(__file__))
+BRON_ENV = os.path.join(HIER, ".env.productie")  # Supabase
+DOEL_ENV = os.path.join(HIER, ".env")  # NAS
 
 # Volgorde is belangrijk: ouders voor kinderen (foreign keys).
 TABELLEN = [
@@ -49,11 +50,15 @@ def lees_database_url(pad):
     sys.exit(f"Geen DATABASE_URL gevonden in {pad}")
 
 
-bron = psycopg2.connect(lees_database_url(ENV_BESTAND))
+doel_url = lees_database_url(DOEL_ENV)
+if "supabase" in doel_url:
+    sys.exit("GESTOPT: .env wijst naar Supabase, niet naar de NAS.")
+
+bron = psycopg2.connect(lees_database_url(BRON_ENV))
 bron.set_session(readonly=True)
 print("Verbonden met Supabase (read-only)")
 
-doel = psycopg2.connect(lees_database_url(NAS_ENV_BESTAND))
+doel = psycopg2.connect(doel_url)
 print("Verbonden met NAS")
 
 bron_cur = bron.cursor()
