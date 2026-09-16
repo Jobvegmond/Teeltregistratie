@@ -774,6 +774,46 @@ def get_totaal_emmers_per_teelt():
         return {teelt_id: totaal for teelt_id, totaal in cursor.fetchall()}
 
 
+def get_oogstregistraties_voor_periode(datum_start, datum_eind):
+    """
+    Geeft alle oogstmomenten (emmers) binnen een periode terug, met vak en
+    teeltcode erbij — voor het weekoverzicht. Lijst van dicts, gesorteerd op
+    vaknummer en datum.
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT o.datum, v.vaknummer, t.code, o.aantal_emmers
+            FROM oogstregistraties o
+            JOIN teelten t ON o.teelt_id = t.id
+            JOIN teeltvakken v ON t.teeltvak_id = v.id
+            WHERE o.datum BETWEEN %s AND %s
+            ORDER BY v.vaknummer, o.datum
+        """, (str(datum_start), str(datum_eind)))
+        return [
+            {"datum": datum, "vaknummer": vaknummer, "code": code, "aantal_emmers": emmers}
+            for datum, vaknummer, code, emmers in cursor.fetchall()
+        ]
+
+
+def get_watergift_per_vak_voor_periode(datum_start, datum_eind):
+    """
+    Totale watergift (liter/m²) per vak binnen een periode, voor alle vakken
+    met data in die periode. Lijst van (vaknummer, totaal_liter_per_m2,
+    aantal_dagen), gesorteerd op vaknummer (laag naar hoog).
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT vaknummer, SUM(liter_per_m2), COUNT(*)
+            FROM watergift_dag
+            WHERE datum BETWEEN %s AND %s
+            GROUP BY vaknummer
+            ORDER BY vaknummer
+        """, (str(datum_start), str(datum_eind)))
+        return cursor.fetchall()
+
+
 # --- GEBRUIKERS (INLOG) ---
 
 def get_gebruikers_credentials():

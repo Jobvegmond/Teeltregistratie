@@ -63,6 +63,8 @@ from database import (
     bereken_verwachte_oogstdatum,
     get_lege_vakken_per_week,
     get_strokenplanning,
+    get_oogstregistraties_voor_periode,
+    get_watergift_per_vak_voor_periode,
 )
 
 # --- PAGINA-INSTELLINGEN ---
@@ -796,9 +798,9 @@ elif actie == "4. Registratie wijzigen of verwijderen":
         st.sidebar.info("Er zijn nog geen registraties om te wijzigen.")
 
 # --- HOOFDSCHERM: TABBLADEN ---
-tab_overzicht, tab_detail, tab_planning, tab_klimaat, tab_stats, tab_log, tab_help = st.tabs([
-    "📊 Overzicht", "🔍 Teelt-detail", "🗓️ Planning", "🌡️ Klimaatdata", "📈 Statistieken", "🧾 Logboek",
-    "ℹ️ Hoe dit werkt",
+tab_overzicht, tab_week, tab_detail, tab_planning, tab_klimaat, tab_stats, tab_log, tab_help = st.tabs([
+    "📊 Overzicht", "📆 Weekoverzicht", "🔍 Teelt-detail", "🗓️ Planning", "🌡️ Klimaatdata",
+    "📈 Statistieken", "🧾 Logboek", "ℹ️ Hoe dit werkt",
 ])
 
 kolommen, rijen = get_overzicht_dataframe()
@@ -847,6 +849,184 @@ with tab_overzicht:
             st.dataframe(df_ov_afgerond, use_container_width=True, hide_index=True)
     else:
         st.info("Nog geen teelten geregistreerd. Gebruik de zijbalk om te beginnen.")
+
+# --- WEEKOVERZICHT ---
+with tab_week:
+    st.subheader("📆 Weekoverzicht")
+
+    def _week_maandag(datum):
+        if isinstance(datum, str):
+            datum = datetime.strptime(datum, "%Y-%m-%d").date()
+        return datum - timedelta(days=datum.weekday())
+
+    def _week_label(week_start):
+        jaar, week, _ = week_start.isocalendar()
+        week_eind = week_start + timedelta(days=6)
+        return f"Week {week} - {jaar} ({format_datum(week_start)} t/m {format_datum(week_eind)})"
+
+    alle_teelten_week = get_alle_teelten_detail()
+
+    # Zo ver terug kunnen we gaan: de vroegste teeltstart die geregistreerd is.
+    startdatums_week = [t["datum_teelt_start"] for t in alle_teelten_week if t["datum_teelt_start"]]
+    vroegste_datum_week = min(startdatums_week) if startdatums_week else str(date.today())
+
+    maandag_nu_week = _week_maandag(date.today())
+    maandag_vroegst_week = _week_maandag(vroegste_datum_week)
+
+    weken_terug = []
+    w = maandag_nu_week
+    while w >= maandag_vroegst_week:
+        weken_terug.append(w)
+        w -= timedelta(weeks=1)
+    if not weken_terug:
+        weken_terug = [maandag_nu_week]
+
+    labels_week = [_week_label(w) for w in weken_terug]
+    gekozen_label_week = st.selectbox("Kies een week", labels_week, index=0, key="week_overzicht_selectie")
+    week_start = weken_terug[labels_week.index(gekozen_label_week)]
+    week_eind = week_start + timedelta(days=6)
+    week_start_s, week_eind_s = str(week_start), str(week_eind)
+
+    # --- Geplant ---
+    geplant_week = sorted(
+        (t for t in alle_teelten_week
+         if t["datum_teelt_start"] and week_start_s <= t["datum_teelt_start"] <= week_eind_s),
+        key=lambda t: (t["vaknummer"] or 0)
+    )
+    st.write(f"**🌱 Geplant deze week** ({len(geplant_week)})")
+    if geplant_week:
+        st.dataframe(pd.DataFrame([{
+            "Vak": t["vaknummer"],
+            "Code": t["code"] or "-",
+            "Startdatum": format_datum(t["datum_teelt_start"]),
+            "Aantal planten": t["aantal_planten"] if t["aantal_planten"] is not None else "-",
+        } for t in geplant_week]), use_container_width=True, hide_index=True)
+    else:
+        st.caption("Geen teelten gestart deze week.")
+
+    st.markdown("---")
+
+    # --- Geoogst ---
+    st.write("**🌾 Geoogst deze week**")
+    emmers_week = get_oogstregistraties_voor_periode(week_start_s, week_eind_s)
+    if emmers_week:
+        totaal_emmers_week = sum(e["aantal_emmers"] for e in emmers_week)
+        st.metric("Totaal emmers deze week", f"{totaal_emmers_week:g}")
+        st.dataframe(pd.DataFrame([{
+            "Datum": format_datum(e["datum"]),
+            "Vak": e["vaknummer"],
+            "Code": e["code"] or "-",
+            "Emmers": e["aantal_emmers"],
+        } for e in emmers_week]), use_container_width=True, hide_index=True)
+    else:
+        st.caption("Geen emmers geregistreerd deze week.")
+
+    afgerond_week = sorted(
+        (t for t in alle_teelten_week
+         if t["datum_oogst"] and week_start_s <= t["datum_oogst"] <= week_eind_s),
+        key=lambda t: (t["vaknummer"] or 0)
+    )
+    if afgerond_week:
+        st.write("**Teelten afgerond (eindoogst) deze week:**")
+        st.dataframe(pd.DataFrame([{
+            "Vak": t["vaknummer"],
+            "Code": t["code"] or "-",
+            "Oogstdatum": format_datum(t["datum_oogst"]),
+            "Lengte (cm)": t["lengte_eind"] if t["lengte_eind"] is not None else "-",
+            "Gewicht (g)": t["oogstgewicht"] if t["oogstgewicht"] is not None else "-",
+            "Rijpheid": t["rijpheid"] or "-",
+        } for t in afgerond_week]), use_container_width=True, hide_index=True)
+
+    st.markdown("---")
+
+    # --- Watergift ---
+    st.write("**💧 Watergift deze week**")
+    water_week = get_watergift_per_vak_voor_periode(week_start_s, week_eind_s)
+    if water_week:
+        df_water_week = pd.DataFrame([{
+            "Vak": v,
+            "Totaal (l/m²)": round(totaal, 1) if totaal is not None else "-",
+            "Dagen met data": dagen,
+        } for v, totaal, dagen in water_week])
+        st.dataframe(df_water_week, use_container_width=True, hide_index=True)
+        gem_water_week = pd.to_numeric(df_water_week["Totaal (l/m²)"], errors="coerce").mean()
+        if pd.notna(gem_water_week):
+            st.caption(f"Gemiddeld {gem_water_week:.1f} l/m² over {len(df_water_week)} vakken.")
+    else:
+        st.caption("Geen watergiftdata beschikbaar voor deze week.")
+
+    st.markdown("---")
+
+    # --- Klimaat ---
+    st.write("**🌡️ Klimaat deze week**")
+    klimaat_rijen_week = []
+    for afdeling_week in (1, 2, 3, 4):
+        k_week = get_klimaat_voor_periode(afdeling_week, week_start_s, week_eind_s)
+        if k_week:
+            klimaat_rijen_week.append({
+                "Afdeling": afdeling_week,
+                "Gem. temperatuur (°C)": round(k_week["gem_temperatuur"], 1) if k_week["gem_temperatuur"] is not None else "-",
+                "Gem. RV (%)": round(k_week["gem_rv"], 1) if k_week["gem_rv"] is not None else "-",
+                "Gem. lichtsom/dag": round(k_week["gem_stralingssom_dag"], 0) if k_week["gem_stralingssom_dag"] is not None else "-",
+            })
+    if klimaat_rijen_week:
+        st.dataframe(pd.DataFrame(klimaat_rijen_week), use_container_width=True, hide_index=True)
+    else:
+        st.caption("Geen klimaatdata beschikbaar voor deze week.")
+
+    st.markdown("---")
+
+    # --- Analyse ---
+    st.subheader("📈 Analyse")
+    st.write("**Lengtegroei: halverwege → oogst**")
+    st.caption(
+        "Factor = oogstlengte / lengte halverwege. Onafhankelijk van de hierboven gekozen week — "
+        "gebaseerd op alle afgeronde teelten met beide metingen."
+    )
+
+    analyse_lengte_rijen = [
+        {
+            "Oogstdatum": t["datum_oogst"],
+            "Vak": t["vaknummer"],
+            "Code": t["code"] or "-",
+            "Lengte halverwege (cm)": t["lengte_half"],
+            "Lengte oogst (cm)": t["lengte_eind"],
+            "Factor (oogst / halverwege)": t["lengte_eind"] / t["lengte_half"],
+        }
+        for t in alle_teelten_week
+        if t["datum_oogst"] and t["lengte_half"] and t["lengte_eind"]
+    ]
+
+    if len(analyse_lengte_rijen) < 2:
+        st.info("Nog te weinig teelten met zowel een halverwege- als oogstlengte voor deze grafiek.")
+    else:
+        df_lengte = pd.DataFrame(analyse_lengte_rijen).sort_values("Oogstdatum")
+        df_lengte["Oogstdatum"] = pd.to_datetime(df_lengte["Oogstdatum"])
+
+        df_lengte_lang = df_lengte.melt(
+            id_vars=["Oogstdatum", "Vak", "Code"],
+            value_vars=["Lengte halverwege (cm)", "Lengte oogst (cm)"],
+            var_name="Meting", value_name="Lengte (cm)",
+        )
+        lijn_lengte = alt.Chart(df_lengte_lang).mark_line(point=True).encode(
+            x=alt.X("Oogstdatum:T", title="Oogstdatum"),
+            y=alt.Y("Lengte (cm):Q", title="Lengte (cm)"),
+            color=alt.Color("Meting:N", title=None),
+            tooltip=["Oogstdatum:T", "Vak:N", "Code:N", "Meting:N", alt.Tooltip("Lengte (cm):Q", format=".1f")],
+        )
+        lijn_factor = alt.Chart(df_lengte).mark_line(point=True, color="#c0392b", strokeDash=[4, 4]).encode(
+            x=alt.X("Oogstdatum:T"),
+            y=alt.Y("Factor (oogst / halverwege):Q", title="Factor (oogst / halverwege)"),
+            tooltip=["Oogstdatum:T", "Vak:N", "Code:N", alt.Tooltip("Factor (oogst / halverwege):Q", format=".2f")],
+        )
+        st.altair_chart(
+            alt.layer(lijn_lengte, lijn_factor).resolve_scale(y="independent"),
+            use_container_width=True,
+        )
+        st.caption(
+            f"Gebaseerd op {len(df_lengte)} afgeronde teelten met zowel een halverwege- als oogstmeting "
+            "(rode stippellijn = factor, rechteras)."
+        )
 
 # --- TEELT-DETAIL (GRAFISCH OVERZICHT PER TEELT) ---
 with tab_detail:
@@ -1097,8 +1277,12 @@ with tab_detail:
             df_water = pd.DataFrame(records_water)
             df_water["datum"] = pd.to_datetime(df_water["datum"])
             st.caption("Watergift per vak (l/m² per dag) — vakken naast elkaar, niet opgeteld")
+            # x als ordinaal (i.p.v. temporeel) zetten, want xOffset heeft een
+            # discrete band-schaal per dag nodig om de vakken naast elkaar te
+            # kunnen zetten — op een continue tijdas vallen de staven anders
+            # gewoon over elkaar heen.
             water_chart = alt.Chart(df_water).mark_bar().encode(
-                x=alt.X("datum:T", title=None),
+                x=alt.X("datum:O", title=None, axis=alt.Axis(format="%d-%m", labelAngle=-45)),
                 xOffset="Vak:N",
                 y=alt.Y("liter:Q", title="Liter/m²"),
                 color=alt.Color("Vak:N", legend=alt.Legend(title=None, orient="top")),
