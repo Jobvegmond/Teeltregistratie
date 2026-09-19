@@ -41,12 +41,12 @@ from database import (
     get_energiedata_dekking,
     get_gasdata_dekking,
     get_warmte_voor_periode,
-    GAS_CALORISCHE_WAARDE_MJ_PER_M3,
     TUIN3_OPPERVLAKTE_M2,
     ideale_etmaaltemperatuur,
     LICHT_TEMP_FACTOR,
     LICHT_TEMP_BASIS,
     get_teeltduur,
+    teeltduur_voor_plantweek,
     get_alle_teelten_detail,
     get_isojaar_week,
     get_wijzigingenlog,
@@ -88,6 +88,15 @@ st.markdown("""
 
 # Vaste kleur per afdeling, zodat afd. 1 overal dezelfde kleur heeft.
 AFDELING_KLEUR = {1: "#2a78d6", 2: "#eb6834", 3: "#1baf7a", 4: "#eda100"}
+
+
+def metric_gekaderd(kolom, label, waarde, delta=None, delta_color="normal", help=None):
+    """
+    st.metric in een gekaderd vakje (i.p.v. los/gecentreerd), zodat een rij
+    kengetallen leesbaarder van elkaar te onderscheiden is.
+    """
+    with kolom.container(border=True):
+        st.metric(label, waarde, delta=delta, delta_color=delta_color, help=help)
 
 
 def klimaat_grafieken(dagen_records, toon_dagnacht=False, toon_trend=False,
@@ -1125,7 +1134,10 @@ with tab_detail:
         week_label = st.selectbox(
             "Kies een plantweek", labels, index=standaard_index, key="detail_week_selectie"
         )
-        teelten_groep = groepen_detail[keuzes_weken[week_label]]
+        sleutel_groep = keuzes_weken[week_label]
+        teelten_groep = groepen_detail[sleutel_groep]
+        _, week_groep = sleutel_groep
+        verwachte_duur_weken = teeltduur_voor_plantweek(week_groep)
 
         vandaag_detail = str(datetime.today().date())
         aantal_afgerond = sum(1 for t in teelten_groep if t["datum_oogst"])
@@ -1198,32 +1210,41 @@ with tab_detail:
         else:
             teeltduur_tekst = "-"
 
+        teeltduur_delta = None
+        if dagen_lijst and verwachte_duur_weken is not None:
+            teeltduur_delta = f"{gem_weken - verwachte_duur_weken:+.1f} weken t.o.v. gepland ({verwachte_duur_weken:g} wk)"
+
         rij_data = st.columns(4)
-        rij_data[0].metric("Eerste startdatum", format_datum(start_datums[0]))
-        rij_data[1].metric("Laatste startdatum", format_datum(start_datums[-1]))
-        rij_data[2].metric("Gem. teeltduur", teeltduur_tekst)
-        rij_data[3].metric("Status", status_tekst)
+        metric_gekaderd(rij_data[0], "Eerste startdatum", format_datum(start_datums[0]))
+        metric_gekaderd(rij_data[1], "Laatste startdatum", format_datum(start_datums[-1]))
+        metric_gekaderd(
+            rij_data[2], "Gem. teeltduur", teeltduur_tekst,
+            delta=teeltduur_delta, delta_color="off",
+        )
+        metric_gekaderd(rij_data[3], "Status", status_tekst)
 
         rij_klimaat = st.columns(5)
-        rij_klimaat[0].metric(
-            "Gem. temperatuur",
+        metric_gekaderd(
+            rij_klimaat[0], "Gem. temperatuur",
             f"{sum(temp_lijst) / len(temp_lijst):.1f} °C" if temp_lijst else "-",
             delta=f"{sum(delta_temp_lijst) / len(delta_temp_lijst):+.1f} °C t.o.v. ideaal" if delta_temp_lijst else None,
             delta_color="off",
             help="Ideale etmaaltemperatuur op basis van de lichtsom: "
                  f"{LICHT_TEMP_FACTOR} x lichtsom + {LICHT_TEMP_BASIS} °C.",
         )
-        rij_klimaat[1].metric(
-            "Gem. RV", f"{sum(rv_lijst) / len(rv_lijst):.0f} %" if rv_lijst else "-"
+        metric_gekaderd(
+            rij_klimaat[1], "Gem. RV", f"{sum(rv_lijst) / len(rv_lijst):.0f} %" if rv_lijst else "-"
         )
-        rij_klimaat[2].metric(
-            "Gem. lichtsom (per dag)", f"{sum(straling_lijst) / len(straling_lijst):.0f}" if straling_lijst else "-"
+        metric_gekaderd(
+            rij_klimaat[2], "Gem. lichtsom (per dag)",
+            f"{sum(straling_lijst) / len(straling_lijst):.0f}" if straling_lijst else "-"
         )
-        rij_klimaat[3].metric(
-            "Gem. water per vak", f"{sum(water_lijst) / len(water_lijst):.0f} l/m²" if water_lijst else "-"
+        metric_gekaderd(
+            rij_klimaat[3], "Gem. water per vak",
+            f"{sum(water_lijst) / len(water_lijst):.0f} l/m²" if water_lijst else "-"
         )
-        rij_klimaat[4].metric(
-            "Gem. warmte per teelt",
+        metric_gekaderd(
+            rij_klimaat[4], "Gem. warmte per teelt",
             f"{sum(warmte_lijst) / len(warmte_lijst) / 1000:.2f} GJ" if warmte_lijst else "-"
         )
 
@@ -1233,21 +1254,36 @@ with tab_detail:
             gewichten = [t["oogstgewicht"] for t in afgeronde_groep if t["oogstgewicht"]]
 
             uitval_lijst = []
+            factor_lijst = []
+            gewicht_per_10cm_lijst = []
             for t in afgeronde_groep:
                 if t["aantal_planten"]:
                     registraties_t = get_oogstregistraties_voor_teelt(t["id"])
                     totaal_stelen_t = sum(r[2] for r in registraties_t) * 100 if registraties_t else 0
                     uitval_lijst.append((t["aantal_planten"] - totaal_stelen_t) / t["aantal_planten"] * 100)
+                if t["lengte_half"] and t["lengte_eind"]:
+                    factor_lijst.append(t["lengte_eind"] / t["lengte_half"])
+                if t["oogstgewicht"] and t["lengte_eind"]:
+                    gewicht_per_10cm_lijst.append(t["oogstgewicht"] / t["lengte_eind"] * 10)
 
-            rij_oogst = st.columns(3)
-            rij_oogst[0].metric(
-                "Gem. taklengte", f"{sum(lengtes) / len(lengtes):.1f} cm" if lengtes else "-"
+            rij_oogst = st.columns(5)
+            metric_gekaderd(
+                rij_oogst[0], "Gem. taklengte", f"{sum(lengtes) / len(lengtes):.1f} cm" if lengtes else "-"
             )
-            rij_oogst[1].metric(
-                "Gem. takgewicht", f"{round(sum(gewichten) / len(gewichten))} gram" if gewichten else "-"
+            metric_gekaderd(
+                rij_oogst[1], "Gem. takgewicht", f"{round(sum(gewichten) / len(gewichten))} gram" if gewichten else "-"
             )
-            rij_oogst[2].metric(
-                "Gem. uitval", f"{sum(uitval_lijst) / len(uitval_lijst):.1f} %" if uitval_lijst else "-"
+            metric_gekaderd(
+                rij_oogst[2], "Gem. uitval", f"{sum(uitval_lijst) / len(uitval_lijst):.1f} %" if uitval_lijst else "-"
+            )
+            metric_gekaderd(
+                rij_oogst[3], "Gem. factor (oogst/halverwege)",
+                f"{sum(factor_lijst) / len(factor_lijst):.2f}" if factor_lijst else "-",
+                help="Eindlengte gedeeld door de lengte bij de Florgib-meting halverwege.",
+            )
+            metric_gekaderd(
+                rij_oogst[4], "Gem. gewicht per 10 cm",
+                f"{sum(gewicht_per_10cm_lijst) / len(gewicht_per_10cm_lijst):.1f} gram" if gewicht_per_10cm_lijst else "-",
             )
 
         st.markdown("---")
@@ -1255,29 +1291,18 @@ with tab_detail:
         st.write("**Lengtegroei (gemiddeld over de plantweek)**")
         halve_lengtes = [t["lengte_half"] for t in teelten_groep if t["lengte_half"]]
         eind_lengtes = [t["lengte_eind"] for t in teelten_groep if t["lengte_eind"]]
-        groei_data = {}
-        if halve_lengtes:
-            groei_data["Florgib (halverwege)"] = sum(halve_lengtes) / len(halve_lengtes)
-        if eind_lengtes:
-            groei_data["Eindlengte (oogst)"] = sum(eind_lengtes) / len(eind_lengtes)
-        if groei_data:
-            st.bar_chart(pd.Series(groei_data, name="Lengte (cm)"))
+        if halve_lengtes or eind_lengtes:
+            col_groei = st.columns(2)
+            metric_gekaderd(
+                col_groei[0], "Florgib (halverwege)",
+                f"{sum(halve_lengtes) / len(halve_lengtes):.1f} cm" if halve_lengtes else "-",
+            )
+            metric_gekaderd(
+                col_groei[1], "Eindlengte (oogst)",
+                f"{sum(eind_lengtes) / len(eind_lengtes):.1f} cm" if eind_lengtes else "-",
+            )
         else:
             st.caption("Nog geen lengtemetingen voor deze plantweek.")
-
-        st.write("**Oogst per moment (emmers, opgeteld over de plantweek)**")
-        alle_registraties = []
-        for t in teelten_groep:
-            alle_registraties.extend(get_oogstregistraties_voor_teelt(t["id"]))
-        if alle_registraties:
-            df_oogst = pd.DataFrame(alle_registraties, columns=["id", "datum", "emmers"])
-            df_oogst_som = df_oogst.groupby("datum", as_index=False)["emmers"].sum()
-            df_oogst_som["datum"] = pd.to_datetime(df_oogst_som["datum"])
-            df_oogst_som = df_oogst_som.set_index("datum").sort_index()
-            st.bar_chart(df_oogst_som["emmers"])
-            st.line_chart(df_oogst_som["emmers"].cumsum().rename("Cumulatief aantal emmers"))
-        else:
-            st.caption("Nog geen oogstmomenten geregistreerd voor deze plantweek.")
 
         st.write("**Klimaat tijdens deze plantweek**")
         afdelingen_groep = sorted({
@@ -1838,9 +1863,8 @@ with tab_klimaat:
         if gas_dekking:
             g_eerste, g_laatste, g_aantal = gas_dekking
             st.caption(
-                f"Gasgestookte warmte (bijstook) geregistreerd van {format_datum(g_eerste)} t/m "
-                f"{format_datum(g_laatste)} ({g_aantal} dagen), omgerekend met "
-                f"{GAS_CALORISCHE_WAARDE_MJ_PER_M3} MJ/m³. Al meegeteld in de warmte per vak en teelt hierboven."
+                f"Gasketelwarmte (bijstook, Pulsteller 1) geregistreerd van {format_datum(g_eerste)} t/m "
+                f"{format_datum(g_laatste)} ({g_aantal} dagen). Al meegeteld in de warmte per vak en teelt hierboven."
             )
 
     # --- Gemiddelden per teelt (onder de grafieken) ---
