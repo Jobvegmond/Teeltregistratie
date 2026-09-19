@@ -857,10 +857,10 @@ with tab_overzicht:
         df_ov_afgerond = df.loc[mask_afgerond].sort_values('_startdatum_iso', ascending=False).drop(columns=verborgen)
 
         st.write(f"**Lopend & nog te starten** ({len(df_ov_actief)})")
-        st.dataframe(df_ov_actief, use_container_width=True, hide_index=True)
+        st.dataframe(df_ov_actief, hide_index=True)
 
         with st.expander(f"Afgeronde teelten tonen ({len(df_ov_afgerond)})"):
-            st.dataframe(df_ov_afgerond, use_container_width=True, hide_index=True)
+            st.dataframe(df_ov_afgerond, hide_index=True)
     else:
         st.info("Nog geen teelten geregistreerd. Gebruik de zijbalk om te beginnen.")
 
@@ -968,7 +968,7 @@ with tab_week:
             "Code": t["code"] or "-",
             "Startdatum": format_datum(t["datum_teelt_start"]),
             "Aantal planten": t["aantal_planten"] if t["aantal_planten"] is not None else "-",
-        } for t in geplant_week]), use_container_width=True, hide_index=True)
+        } for t in geplant_week]), hide_index=True)
     else:
         st.caption("Geen teelten gestart deze week.")
 
@@ -990,7 +990,7 @@ with tab_week:
         )
         per_vak_oogst["Stelen"] = per_vak_oogst["aantal_emmers"] * 100
         per_vak_oogst = per_vak_oogst.rename(columns={"vaknummer": "Vak", "aantal_emmers": "Emmers"})
-        st.dataframe(per_vak_oogst, use_container_width=True, hide_index=True)
+        st.dataframe(per_vak_oogst, hide_index=True)
 
         with st.expander(f"Alle oogstmomenten deze week tonen ({len(emmers_week)})"):
             st.dataframe(pd.DataFrame([{
@@ -998,7 +998,7 @@ with tab_week:
                 "Vak": e["vaknummer"],
                 "Code": e["code"] or "-",
                 "Emmers": e["aantal_emmers"],
-            } for e in emmers_week]), use_container_width=True, hide_index=True)
+            } for e in emmers_week]), hide_index=True)
     else:
         st.caption("Geen emmers geregistreerd deze week.")
 
@@ -1030,7 +1030,7 @@ with tab_week:
                 "Gewicht (g)": t["oogstgewicht"] if t["oogstgewicht"] is not None else "-",
                 "Rijpheid": t["rijpheid"] or "-",
             })
-        st.dataframe(pd.DataFrame(uitval_rijen_week), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(uitval_rijen_week), hide_index=True)
         if uitval_pct_week:
             st.metric("Gem. uitval deze week", f"{sum(uitval_pct_week) / len(uitval_pct_week):.1f} %")
 
@@ -1045,7 +1045,7 @@ with tab_week:
             "Totaal (l/m²)": round(totaal, 1) if totaal is not None else "-",
             "Dagen met data": dagen,
         } for v, totaal, dagen in water_week])
-        st.dataframe(df_water_week, use_container_width=True, hide_index=True)
+        st.dataframe(df_water_week, hide_index=True)
         gem_water_week = pd.to_numeric(df_water_week["Totaal (l/m²)"], errors="coerce").mean()
         if pd.notna(gem_water_week):
             st.caption(f"Gemiddeld {gem_water_week:.1f} l/m² over {len(df_water_week)} vakken.")
@@ -1062,7 +1062,7 @@ with tab_week:
         )
         pivot_water = df_water_dag.pivot_table(index="Vak", columns="Datum", values="Liter/m²", aggfunc="sum")
         pivot_water = pivot_water.reindex(kolomvolgorde_water, axis=1).sort_index()
-        st.dataframe(pivot_water.round(1), use_container_width=True)
+        st.dataframe(pivot_water.round(1))
     else:
         st.caption("Geen watergiftdata per dag beschikbaar voor deze week.")
 
@@ -1088,7 +1088,7 @@ with tab_week:
                 "datum": datum, "afdeling": afdeling_week, "temp_24h": temp, "lichtsom": straling,
             })
     if klimaat_rijen_week:
-        st.dataframe(pd.DataFrame(klimaat_rijen_week), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(klimaat_rijen_week), hide_index=True)
     else:
         st.caption("Geen klimaatdata beschikbaar voor deze week.")
 
@@ -1545,7 +1545,7 @@ with tab_planning:
     ])
     bewerkt_weekdoel = st.data_editor(
         df_weekdoel,
-        hide_index=True, use_container_width=True, key="weekdoel_editor",
+        hide_index=True, key="weekdoel_editor",
         column_config={
             "Week": st.column_config.TextColumn(disabled=True),
             "Voorgesteld": st.column_config.NumberColumn(
@@ -1583,7 +1583,7 @@ with tab_planning:
             ],
             columns=["Plantweek", "Aantal vakken (arbeid)", "Vakken (oplopend)"]
         )
-        st.dataframe(df_planning_week, use_container_width=True, hide_index=True)
+        st.dataframe(df_planning_week, hide_index=True)
     else:
         st.info("Nog geen concept-planningen om per week te tonen.")
 
@@ -1601,7 +1601,7 @@ with tab_planning:
         ],
         columns=["Week", "Aantal leeg", "Vakken"]
     )
-    st.dataframe(df_leeg, use_container_width=True, hide_index=True)
+    st.dataframe(df_leeg, hide_index=True)
 
     st.markdown("---")
     st.write("**Eén vak handmatig plannen**")
@@ -1897,7 +1897,7 @@ with tab_klimaat:
         st.markdown("---")
         with st.expander(f"📋 Gemiddelden per teelt ({len(rijen_klimaat)})"):
             df_klimaat = pd.DataFrame(rijen_klimaat, columns=kolommen_klimaat)
-            st.dataframe(df_klimaat, use_container_width=True, hide_index=True)
+            st.dataframe(df_klimaat, hide_index=True)
 
     # --- Geïmporteerd t/m: per afdeling tot welke dag er data is (onderaan) ---
     if dekking:
@@ -1917,7 +1917,7 @@ with tab_klimaat:
                     "Ontbrekende dagen": ontbrekend,
                     "Loopt achter": f"{achterstand} dg" if achterstand else "-",
                 })
-            st.dataframe(pd.DataFrame(dekking_rijen), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(dekking_rijen), hide_index=True)
             dagen_oud = (datetime.today().date() - datetime.strptime(laatste_alle, "%Y-%m-%d").date()).days
             st.caption(
                 f"Nieuwste geïmporteerde dag: {format_datum(laatste_alle)} ({dagen_oud} dag(en) geleden). "
@@ -2086,7 +2086,7 @@ with tab_log:
         if gekozen_type != "Alle types":
             df_log = df_log[df_log["Type"] == gekozen_type]
 
-        st.dataframe(df_log, use_container_width=True, hide_index=True)
+        st.dataframe(df_log, hide_index=True)
     else:
         st.info("Nog geen logregels.")
 
