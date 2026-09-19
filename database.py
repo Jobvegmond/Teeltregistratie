@@ -1450,6 +1450,19 @@ def get_energiedata_dekking():
     return (str(rij[0]), str(rij[1]), rij[2], ontbrekend)
 
 
+def get_gasdata_dagen_voor_periode(datum_start, datum_eind):
+    """Losse dagregels (datum, gas_m3_totaal, gas_mj_totaal, gas_mj_per_m2) voor grafieken."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT datum, gas_m3_totaal, gas_mj_totaal, gas_mj_per_m2
+            FROM gasdata_dag
+            WHERE datum BETWEEN %s AND %s
+            ORDER BY datum
+        """, (str(datum_start), str(datum_eind)))
+        return cursor.fetchall()
+
+
 def get_gasdata_dekking():
     """(eerste_datum, laatste_datum, aantal_dagen) of None."""
     with get_connection() as conn:

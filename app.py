@@ -40,6 +40,7 @@ from database import (
     get_energiedata_dagen_voor_periode,
     get_energiedata_dekking,
     get_gasdata_dekking,
+    get_gasdata_dagen_voor_periode,
     get_warmte_voor_periode,
     GAS_CALORISCHE_WAARDE_MJ_PER_M3,
     TUIN3_OPPERVLAKTE_M2,
@@ -1846,13 +1847,35 @@ with tab_klimaat:
         )
         if e_datum_van <= e_datum_tot:
             energie_dagen = get_energiedata_dagen_voor_periode(e_datum_van, e_datum_tot)
-            if energie_dagen:
-                df_energie = pd.DataFrame(energie_dagen, columns=["datum", "Totaal MJ", "MJ per m²"])
-                df_energie["Totaal GJ"] = df_energie["Totaal MJ"] / 1000
-                df_energie["GJ per m²"] = df_energie["MJ per m²"] / 1000
-                df_energie["datum"] = pd.to_datetime(df_energie["datum"])
-                df_energie = df_energie.set_index("datum").sort_index()
-                st.bar_chart(df_energie["Totaal GJ"])
+            gas_dagen = get_gasdata_dagen_voor_periode(e_datum_van, e_datum_tot)
+            if energie_dagen or gas_dagen:
+                df_energie = pd.DataFrame(energie_dagen, columns=["datum", "warmte_mj_totaal", "MJ per m²"])
+                df_gas = pd.DataFrame(gas_dagen, columns=["datum", "gas_m3_totaal", "gas_mj_totaal", "gas_mj_per_m2"])
+                df_warmte_dag = pd.merge(
+                    df_energie[["datum", "warmte_mj_totaal"]],
+                    df_gas[["datum", "gas_mj_totaal"]],
+                    on="datum", how="outer",
+                ).fillna(0)
+                df_warmte_dag["Hoofdwarmte (GJ)"] = df_warmte_dag["warmte_mj_totaal"] / 1000
+                df_warmte_dag["Gasketel (GJ)"] = df_warmte_dag["gas_mj_totaal"] / 1000
+                df_warmte_dag["datum"] = pd.to_datetime(df_warmte_dag["datum"])
+
+                df_warmte_lang = df_warmte_dag.melt(
+                    id_vars="datum", value_vars=["Hoofdwarmte (GJ)", "Gasketel (GJ)"],
+                    var_name="Bron", value_name="GJ",
+                )
+                warmte_chart = alt.Chart(df_warmte_lang).mark_bar().encode(
+                    x=alt.X("datum:T", title=None),
+                    y=alt.Y("GJ:Q", title="Warmte (GJ)", stack=True),
+                    color=alt.Color(
+                        "Bron:N",
+                        scale=alt.Scale(domain=["Hoofdwarmte (GJ)", "Gasketel (GJ)"], range=["#2a78d6", "#c0392b"]),
+                        legend=alt.Legend(title=None, orient="top"),
+                    ),
+                    tooltip=[alt.Tooltip("datum:T", title="datum", format="%d-%m-%y"), "Bron:N",
+                             alt.Tooltip("GJ:Q", format=".2f")],
+                )
+                st.altair_chart(warmte_chart, use_container_width=True)
         else:
             st.warning("'Van' ligt na 'Tot en met'.")
         st.caption(
@@ -1864,9 +1887,9 @@ with tab_klimaat:
         if gas_dekking:
             g_eerste, g_laatste, g_aantal = gas_dekking
             st.caption(
-                f"Gasverbruik gasketel (bijstook, Pulsteller 1) geregistreerd van {format_datum(g_eerste)} t/m "
+                f"Gasketel (bijstook, Pulsteller 1) geregistreerd van {format_datum(g_eerste)} t/m "
                 f"{format_datum(g_laatste)} ({g_aantal} dagen), omgerekend met "
-                f"{GAS_CALORISCHE_WAARDE_MJ_PER_M3} MJ/m³. Al meegeteld in de warmte per vak en teelt hierboven."
+                f"{GAS_CALORISCHE_WAARDE_MJ_PER_M3} MJ/m³."
             )
 
     # --- Gemiddelden per teelt (onder de grafieken) ---
