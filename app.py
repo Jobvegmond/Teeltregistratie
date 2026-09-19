@@ -61,6 +61,7 @@ from database import (
     plan_x_weken_vooruit,
     get_planning_weekoverzicht,
     set_planning_weekdoel,
+    set_planning_weekdoel_vak1,
     wis_planning_weekdoelen,
     get_planning_besteld_tot,
     set_planning_besteld_tot,
@@ -1387,12 +1388,14 @@ with tab_planning:
     st.caption(
         "Concept-planning voor toekomstige teelten: plant vooruit vanaf waar de huidige teelt van "
         "elk vak en de bestaande concept-planning gebleven zijn. Vak 19+20 worden als één eenheid "
-        "gepland, vak 1 is een uitzondering op de vaste onderlinge volgorde, het aantal vakken "
-        "per week verschilt nooit meer dan 1 met de vorige/volgende week en er worden nooit meer "
-        "dan 5 vakken per week gepoot. Binnen een week worden de vakken over maandag t/m donderdag "
-        "verdeeld (laagste vaknummer op maandag); kan een week niet op maandag beginnen doordat de "
-        "grond nog bezet is, dan start die week op di/wo/do i.p.v. een week over te slaan. Een vak "
-        "wordt nooit eerder gepland dan de (verwachte) oogst van de lopende teelt in dat vak."
+        "gepland. Het aantal vakken per week komt volledig uit jouw eigen jaarplanning hieronder — "
+        "een week zonder ingevuld aantal blijft leeg, en er worden nooit meer dan 5 vakken per week "
+        "gepoot. Vak 1 loopt op een eigen ritme, los van de andere vakken, en wordt alleen gepland "
+        "in de weken die je daarvoor apart aanvinkt. Binnen een week worden de vakken over maandag "
+        "t/m donderdag verdeeld (laagste vaknummer op maandag); kan een week niet op maandag "
+        "beginnen doordat de grond nog bezet is, dan start die week op di/wo/do i.p.v. een week "
+        "over te slaan. Een vak wordt nooit eerder gepland dan de (verwachte) oogst van de lopende "
+        "teelt in dat vak."
     )
 
     # --- Strokenplanning (Gantt): vakken verticaal, weken horizontaal ---
@@ -1487,7 +1490,7 @@ with tab_planning:
     aantal_weken_vooruit = col_weken.number_input(
         "Aantal weken vooruit", min_value=1, max_value=78, value=52, step=1, key="plan_weken_vooruit"
     )
-    def _toon_planresultaat(resultaten, weekdoel_waarschuwingen):
+    def _toon_planresultaat(resultaten, weekdoel_waarschuwingen, vak1_waarschuwingen):
         gepland = [r for r in resultaten if r[1] == "gepland"]
         buiten_horizon = [r for r in resultaten if r[1] == "buiten_horizon"]
         geen_geschiedenis = [r for r in resultaten if r[1] == "geen_geschiedenis"]
@@ -1516,30 +1519,45 @@ with tab_planning:
                 f"⚠️ Week {week_start.isocalendar()[1]} - {week_start.year}: je vroeg {gevraagd} vak(ken), "
                 f"maar er konden er maar {geplant} gepland worden (te weinig vakken vrij die week)."
             )
+        for week_gevraagd, week_gepland in vak1_waarschuwingen:
+            if week_gepland is None:
+                st.warning(
+                    f"⚠️ Vak 1 aangevinkt voor week {week_gevraagd.isocalendar()[1]} - {week_gevraagd.year}, "
+                    "maar dat past niet binnen de horizon (vorige ronde is dan nog niet geoogst). "
+                    "Vergroot 'Aantal weken vooruit' of vink een latere week aan."
+                )
+            else:
+                st.warning(
+                    f"⚠️ Vak 1 aangevinkt voor week {week_gevraagd.isocalendar()[1]} - {week_gevraagd.year}, "
+                    f"maar kon pas in week {week_gepland.isocalendar()[1]} - {week_gepland.year} gepland "
+                    "worden (vorige ronde nog niet klaar, of die week al vol)."
+                )
 
     with col_knop:
         st.write("")
         if st.button("📅 Plan vooruit", key="plan_x_weken"):
-            resultaten, weekdoel_waarschuwingen = plan_x_weken_vooruit(
+            resultaten, weekdoel_waarschuwingen, vak1_waarschuwingen = plan_x_weken_vooruit(
                 int(aantal_weken_vooruit), gebruiker=huidige_gebruiker()
             )
-            _toon_planresultaat(resultaten, weekdoel_waarschuwingen)
+            _toon_planresultaat(resultaten, weekdoel_waarschuwingen, vak1_waarschuwingen)
             st.rerun()
 
     st.markdown("---")
-    st.write("**Vakken per week handmatig sturen**")
+    st.write("**Jaarplanning: vakken per week**")
     st.caption(
-        "Vul per week in hoeveel poot-eenheden je wilt (vak 19+20 = 1, max 5). De planner houdt "
-        "dat aantal aan zolang er genoeg vakken vrij zijn; de regel 'max 1 vak verschil met de "
-        "buurweek' geldt dan alleen nog tussen weken die je niet zelf hebt ingevuld. Laat een "
-        "cel leeg om de planner die week zelf te laten bepalen."
+        "Vul zelf per week in hoeveel poot-eenheden je wilt voor de vak 2-39-cyclus (19+20 = 1, "
+        "max 5) en of vak 1 die week gepoot moet worden (los van de cyclus, hooguit 1x). Een lege "
+        "cel bij 'Vakken (2-39)' betekent: die week wordt niets gepland voor die cyclus. De planner "
+        "bepaalt zelf niets meer bij — hij plant precies wat hier staat, mits er op dat moment ook "
+        "echt vakken/vak 1 klaar zijn."
     )
     weekoverzicht = get_planning_weekoverzicht(int(aantal_weken_vooruit))
     df_weekdoel = pd.DataFrame([
         {
             "Week": f"Week {r['week']} - {r['jaar']}",
-            "Voorgesteld": r["concepten"],
-            "Jouw aantal": r["weekdoel"],
+            "Nu gepland": r["concepten"],
+            "Vakken (2-39)": r["weekdoel"],
+            "Vak 1": r["vak1_planten"],
         }
         for r in weekoverzicht
     ])
@@ -1548,27 +1566,31 @@ with tab_planning:
         hide_index=True, key="weekdoel_editor",
         column_config={
             "Week": st.column_config.TextColumn(disabled=True),
-            "Voorgesteld": st.column_config.NumberColumn(
-                disabled=True, help="Aantal poot-eenheden dat nu voor die week gepland staat"
+            "Nu gepland": st.column_config.NumberColumn(
+                disabled=True, help="Aantal poot-eenheden (2-39-cyclus) dat nu voor die week gepland staat"
             ),
-            "Jouw aantal": st.column_config.NumberColumn(
-                min_value=0, max_value=5, step=1, help="Leeg = planner bepaalt zelf; max 5 per week"
+            "Vakken (2-39)": st.column_config.NumberColumn(
+                min_value=0, max_value=5, step=1, help="Leeg = die week niets plannen voor deze cyclus"
             ),
+            "Vak 1": st.column_config.CheckboxColumn(help="Vak 1 in deze week poten"),
         },
     )
     col_herplan, col_wis = st.columns([2, 1])
     if col_herplan.button("🔄 Plan opnieuw met deze aantallen", key="plan_herplan"):
         for r, (_, rij) in zip(weekoverzicht, bewerkt_weekdoel.iterrows()):
-            waarde = rij["Jouw aantal"]
+            waarde = rij["Vakken (2-39)"]
             nieuw = None if pd.isna(waarde) else int(waarde)
             if nieuw != r["weekdoel"]:
                 set_planning_weekdoel(r["week_start"], nieuw, gebruiker=huidige_gebruiker())
-        resultaten, weekdoel_waarschuwingen = plan_x_weken_vooruit(
+            nieuw_vak1 = bool(rij["Vak 1"])
+            if nieuw_vak1 != r["vak1_planten"]:
+                set_planning_weekdoel_vak1(r["week_start"], nieuw_vak1, gebruiker=huidige_gebruiker())
+        resultaten, weekdoel_waarschuwingen, vak1_waarschuwingen = plan_x_weken_vooruit(
             int(aantal_weken_vooruit), gebruiker=huidige_gebruiker(), verwijder_bestaande=True
         )
-        _toon_planresultaat(resultaten, weekdoel_waarschuwingen)
+        _toon_planresultaat(resultaten, weekdoel_waarschuwingen, vak1_waarschuwingen)
         st.rerun()
-    if col_wis.button("↩︎ Wis mijn weekdoelen", key="plan_wis_weekdoelen"):
+    if col_wis.button("↩︎ Wis mijn jaarplanning", key="plan_wis_weekdoelen"):
         wis_planning_weekdoelen(gebruiker=huidige_gebruiker())
         st.rerun()
 
