@@ -264,20 +264,23 @@ def init_db():
             )
         """)
 
-        # Warmte van de gasketel (bijstook) per dag voor de hele kas, uit
+        # Gasverbruik van de gasketel (bijstook) per dag voor de hele kas, uit
         # dezelfde Rapport Energie-CSV als energiedata_dag: zelfde label
-        # (Sum_24h_PtEnergyUse, GJ/dag) maar Pulsteller-index 1 in plaats van
-        # 2. Meegeteld in de warmte per vak en teelt naast energiedata_dag.
+        # (Sum_24h_PtEnergyUse) maar Pulsteller-index 1 in plaats van 2 — dit
+        # kanaal heeft een gasmeter als pulsgever en levert dus m3, niet GJ
+        # (correctie van Job, sept 2026). Wordt bij het opslaan omgerekend
+        # naar MJ (zie GAS_CALORISCHE_WAARDE_MJ_PER_M3) en meegeteld in de
+        # warmte per vak en teelt naast energiedata_dag.
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS gasdata_dag (
                 id SERIAL PRIMARY KEY,
                 datum TEXT NOT NULL UNIQUE,
-                gas_mj_totaal REAL,
-                gas_mj_per_m2 REAL
+                gas_m3_totaal REAL,
+                gas_m3_per_m2 REAL
             )
         """)
-        cursor.execute("ALTER TABLE gasdata_dag DROP COLUMN IF EXISTS gas_m3_totaal")
-        cursor.execute("ALTER TABLE gasdata_dag DROP COLUMN IF EXISTS gas_m3_per_m2")
+        cursor.execute("ALTER TABLE gasdata_dag ADD COLUMN IF NOT EXISTS gas_mj_totaal REAL")
+        cursor.execute("ALTER TABLE gasdata_dag ADD COLUMN IF NOT EXISTS gas_mj_per_m2 REAL")
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS teeltplanning (
@@ -1298,12 +1301,14 @@ ENERGIE_LABEL = "Sum_24h_PtEnergyUse"
 ENERGIE_EENHEID_NAAR_MJ = 1000  # ruwe waarde staat in GJ
 
 # Gasgestookte warmte (bijv. bijstook in enkele weken) staat in dezelfde
-# export, óók als Sum_24h_PtEnergyUse (GJ/dag) maar op een andere
-# Pulsteller-index: idx_1 = 2 is de hoofdwarmte (energiedata_dag), idx_1 = 1
-# is de gasketel (gasdata_dag). Beide in dezelfde eenheid (GJ), dus geen
-# aparte calorische omrekening nodig (correctie van Job, sept 2026).
+# export, onder hetzelfde label Sum_24h_PtEnergyUse maar op een andere
+# Pulsteller-index: idx_1 = 2 is de hoofdwarmte (GJ/dag, energiedata_dag),
+# idx_1 = 1 is de gasketel (gasdata_dag) — dat kanaal heeft een gasmeter als
+# pulsgever en levert dus m3/dag, geen GJ (correctie van Job, sept 2026).
+# Calorische waarde: bovenwaarde Groningen-gas, geen rendementscorrectie.
 PULSTELLER_IDX_WARMTE = 2
 PULSTELLER_IDX_GAS = 1
+GAS_CALORISCHE_WAARDE_MJ_PER_M3 = 31.65
 
 VAK_OPPERVLAKTE_STANDAARD = 550
 VAK_OPPERVLAKTE_SMAL = 275
@@ -1340,28 +1345,33 @@ def upsert_energiedata_dag(datum, warmte_mj_totaal):
         conn.commit()
 
 
-def upsert_gasdata_dag(datum, gas_mj_totaal):
-    """Slaat de gasketelwarmte (MJ) van de hele kas voor één dag op."""
+def upsert_gasdata_dag(datum, gas_m3_totaal):
+    """Slaat het gasverbruik (m3 en omgerekend naar MJ) van de hele kas voor één dag op."""
+    gas_m3_per_m2 = gas_m3_totaal / TUIN3_OPPERVLAKTE_M2 if gas_m3_totaal is not None else None
+    gas_mj_totaal = gas_m3_totaal * GAS_CALORISCHE_WAARDE_MJ_PER_M3 if gas_m3_totaal is not None else None
     gas_mj_per_m2 = gas_mj_totaal / TUIN3_OPPERVLAKTE_M2 if gas_mj_totaal is not None else None
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT INTO gasdata_dag (datum, gas_mj_totaal, gas_mj_per_m2)
-            VALUES (%s, %s, %s)
+            INSERT INTO gasdata_dag (datum, gas_m3_totaal, gas_m3_per_m2, gas_mj_totaal, gas_mj_per_m2)
+            VALUES (%s, %s, %s, %s, %s)
             ON CONFLICT (datum)
-            DO UPDATE SET gas_mj_totaal = EXCLUDED.gas_mj_totaal,
+            DO UPDATE SET gas_m3_totaal = EXCLUDED.gas_m3_totaal,
+                          gas_m3_per_m2 = EXCLUDED.gas_m3_per_m2,
+                          gas_mj_totaal = EXCLUDED.gas_mj_totaal,
                           gas_mj_per_m2 = EXCLUDED.gas_mj_per_m2
-        """, (str(datum), gas_mj_totaal, gas_mj_per_m2))
+        """, (str(datum), gas_m3_totaal, gas_m3_per_m2, gas_mj_totaal, gas_mj_per_m2))
         conn.commit()
 
 
 def verwerk_energie_csv(bestand, gebruiker=None):
     """
     Leest een energiecomputer-CSV in (Priva-export "Rapport Energie") en
-    verwerkt twee bronnen uit dezelfde upload, beide Sum_24h_PtEnergyUse
-    (Pulsteller, in GJ) maar met een andere idx_1:
-    - PULSTELLER_IDX_WARMTE (2): de hoofdwarmte -> energiedata_dag;
-    - PULSTELLER_IDX_GAS (1): de gasketel (bijstook) -> gasdata_dag.
+    verwerkt twee bronnen uit dezelfde upload, beide onder het label
+    Sum_24h_PtEnergyUse maar met een andere Pulsteller-index:
+    - PULSTELLER_IDX_WARMTE (2): de hoofdwarmte, in GJ -> energiedata_dag;
+    - PULSTELLER_IDX_GAS (1): de gasketel (bijstook), in m3 (gasmeter als
+      pulsgever) -> omgerekend naar MJ, in gasdata_dag.
     Er kan per dag meer dan één rij per teller in de export staan; die
     worden per bron per dag bij elkaar opgeteld. Dagen die nog niet helemaal
     voorbij zijn worden overgeslagen. Geeft terug: (aantal dagen warmte
@@ -1400,9 +1410,7 @@ def verwerk_energie_csv(bestand, gebruiker=None):
     )
 
     df_gas = df[is_pulsteller & (df["idx_1"] == PULSTELLER_IDX_GAS)].copy()
-    verwerkt_gas, _overgeslagen_gas = _verwerk_bron(
-        df_gas, lambda d, v: upsert_gasdata_dag(d, v * ENERGIE_EENHEID_NAAR_MJ)
-    )
+    verwerkt_gas, _overgeslagen_gas = _verwerk_bron(df_gas, upsert_gasdata_dag)
 
     log_wijziging(
         gebruiker, "geupload", "energiedata_csv", None,

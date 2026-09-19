@@ -41,6 +41,7 @@ from database import (
     get_energiedata_dekking,
     get_gasdata_dekking,
     get_warmte_voor_periode,
+    GAS_CALORISCHE_WAARDE_MJ_PER_M3,
     TUIN3_OPPERVLAKTE_M2,
     ideale_etmaaltemperatuur,
     LICHT_TEMP_FACTOR,
@@ -1863,8 +1864,9 @@ with tab_klimaat:
         if gas_dekking:
             g_eerste, g_laatste, g_aantal = gas_dekking
             st.caption(
-                f"Gasketelwarmte (bijstook, Pulsteller 1) geregistreerd van {format_datum(g_eerste)} t/m "
-                f"{format_datum(g_laatste)} ({g_aantal} dagen). Al meegeteld in de warmte per vak en teelt hierboven."
+                f"Gasverbruik gasketel (bijstook, Pulsteller 1) geregistreerd van {format_datum(g_eerste)} t/m "
+                f"{format_datum(g_laatste)} ({g_aantal} dagen), omgerekend met "
+                f"{GAS_CALORISCHE_WAARDE_MJ_PER_M3} MJ/m³. Al meegeteld in de warmte per vak en teelt hierboven."
             )
 
     # --- Gemiddelden per teelt (onder de grafieken) ---
