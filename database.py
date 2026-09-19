@@ -274,11 +274,11 @@ def init_db():
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS gasdata_dag (
                 id SERIAL PRIMARY KEY,
-                datum TEXT NOT NULL UNIQUE,
-                gas_m3_totaal REAL,
-                gas_m3_per_m2 REAL
+                datum TEXT NOT NULL UNIQUE
             )
         """)
+        cursor.execute("ALTER TABLE gasdata_dag ADD COLUMN IF NOT EXISTS gas_m3_totaal REAL")
+        cursor.execute("ALTER TABLE gasdata_dag ADD COLUMN IF NOT EXISTS gas_m3_per_m2 REAL")
         cursor.execute("ALTER TABLE gasdata_dag ADD COLUMN IF NOT EXISTS gas_mj_totaal REAL")
         cursor.execute("ALTER TABLE gasdata_dag ADD COLUMN IF NOT EXISTS gas_mj_per_m2 REAL")
 
