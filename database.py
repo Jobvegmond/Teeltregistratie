@@ -264,6 +264,23 @@ def init_db():
             )
         """)
 
+        # Gasverbruik per dag voor de hele kas, uit dezelfde Rapport Energie-
+        # CSV als het warmteverbruik (label Sum_24h_Gas_use, per afdeling in
+        # de export — hier al opgeteld tot het totaal voor de kas). Wordt bij
+        # het opslaan omgerekend naar MJ (calorische waarde, zie
+        # GAS_CALORISCHE_WAARDE_MJ_PER_M3) en meegeteld in de warmte per vak
+        # en teelt naast de Pulsteller-warmte hierboven.
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS gasdata_dag (
+                id SERIAL PRIMARY KEY,
+                datum TEXT NOT NULL UNIQUE,
+                gas_m3_totaal REAL,
+                gas_m3_per_m2 REAL
+            )
+        """)
+        cursor.execute("ALTER TABLE gasdata_dag ADD COLUMN IF NOT EXISTS gas_mj_totaal REAL")
+        cursor.execute("ALTER TABLE gasdata_dag ADD COLUMN IF NOT EXISTS gas_mj_per_m2 REAL")
+
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS teeltplanning (
                 id SERIAL PRIMARY KEY,
@@ -1238,6 +1255,23 @@ def get_watergift_dagen_voor_periode(vaknummer, datum_start, datum_eind):
         return cursor.fetchall()
 
 
+def get_watergift_per_dag_voor_periode(datum_start, datum_eind):
+    """
+    Losse (datum, vaknummer, liter_per_m2)-regels voor alle vakken binnen een
+    periode, gesorteerd op datum en daarna vaknummer (laag naar hoog) — voor
+    een dagoverzicht van wat er water heeft gehad.
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT datum, vaknummer, liter_per_m2
+            FROM watergift_dag
+            WHERE datum BETWEEN %s AND %s
+            ORDER BY datum, vaknummer
+        """, (str(datum_start), str(datum_eind)))
+        return cursor.fetchall()
+
+
 def get_watergift_dekking():
     """
     Per vak: (vaknummer, eerste_datum, laatste_datum, aantal_dagen). Gesorteerd
@@ -1264,6 +1298,15 @@ def get_watergift_dekking():
 
 ENERGIE_LABEL = "Sum_24h_PtEnergyUse"
 ENERGIE_EENHEID_NAAR_MJ = 1000  # ruwe waarde staat in GJ
+
+# Gasgestookte warmte (bijv. bijstook in enkele weken), uit dezelfde export.
+# Sum_24h_Gas_use staat per afdeling (idx_1) in m3/dag; die tellers worden
+# net als de Pulsteller-tellers per dag bij elkaar opgeteld tot het totaal
+# voor de kas. Calorische waarde: bovenwaarde Groningen-gas, geen
+# rendementscorrectie (op verzoek van Job, sept 2026).
+GAS_LABEL = "Sum_24h_Gas_use"
+GAS_TYPE1 = "Afdeling"
+GAS_CALORISCHE_WAARDE_MJ_PER_M3 = 31.65
 
 VAK_OPPERVLAKTE_STANDAARD = 550
 VAK_OPPERVLAKTE_SMAL = 275
@@ -1300,15 +1343,39 @@ def upsert_energiedata_dag(datum, warmte_mj_totaal):
         conn.commit()
 
 
+def upsert_gasdata_dag(datum, gas_m3_totaal):
+    """Slaat het totale gasverbruik (m3 en omgerekend naar MJ) van de hele kas voor één dag op."""
+    gas_m3_per_m2 = gas_m3_totaal / TUIN3_OPPERVLAKTE_M2 if gas_m3_totaal is not None else None
+    gas_mj_totaal = gas_m3_totaal * GAS_CALORISCHE_WAARDE_MJ_PER_M3 if gas_m3_totaal is not None else None
+    gas_mj_per_m2 = gas_mj_totaal / TUIN3_OPPERVLAKTE_M2 if gas_mj_totaal is not None else None
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO gasdata_dag (datum, gas_m3_totaal, gas_m3_per_m2, gas_mj_totaal, gas_mj_per_m2)
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (datum)
+            DO UPDATE SET gas_m3_totaal = EXCLUDED.gas_m3_totaal,
+                          gas_m3_per_m2 = EXCLUDED.gas_m3_per_m2,
+                          gas_mj_totaal = EXCLUDED.gas_mj_totaal,
+                          gas_mj_per_m2 = EXCLUDED.gas_mj_per_m2
+        """, (str(datum), gas_m3_totaal, gas_m3_per_m2, gas_mj_totaal, gas_mj_per_m2))
+        conn.commit()
+
+
 def verwerk_energie_csv(bestand, gebruiker=None):
     """
-    Leest een energiecomputer-CSV in (Priva-export "Rapport Energie") en zet
-    de Pulsteller-dagwaarden (Sum_24h_PtEnergyUse, in GJ) om naar het totale
-    warmteverbruik (MJ) per dag voor de hele kas, in energiedata_dag. Er
-    kunnen meerdere Pulsteller-tellers (idx_1) in de export staan; die worden
-    per dag bij elkaar opgeteld tot één totaal voor de kas. Dagen die nog
-    niet helemaal voorbij zijn worden overgeslagen. Geeft (aantal verwerkte
-    dagen, aantal overgeslagen onvolledige dagen) terug.
+    Leest een energiecomputer-CSV in (Priva-export "Rapport Energie") en
+    verwerkt twee bronnen uit dezelfde upload:
+    - de Pulsteller-dagwaarden (Sum_24h_PtEnergyUse, in GJ) -> het totale
+      warmteverbruik (MJ) per dag voor de hele kas, in energiedata_dag;
+    - het gasverbruik per afdeling (Sum_24h_Gas_use, in m3) -> opgeteld tot
+      het totale gasverbruik (m3, en omgerekend naar MJ) per dag voor de
+      hele kas, in gasdata_dag.
+    Er kunnen meerdere tellers/afdelingen (idx_1) per dag in de export staan;
+    die worden per bron per dag bij elkaar opgeteld. Dagen die nog niet
+    helemaal voorbij zijn worden overgeslagen. Geeft terug: (aantal dagen
+    warmte verwerkt, aantal dagen warmte overgeslagen, aantal dagen gas
+    verwerkt).
     """
     try:
         df = pd.read_csv(bestand, sep=None, engine="python", decimal=",")
@@ -1317,32 +1384,39 @@ def verwerk_energie_csv(bestand, gebruiker=None):
         df = pd.read_csv(bestand, sep="\t", decimal=",")
 
     df.columns = df.columns.str.strip()
-    df = df[(df["type_1"] == "Pulsteller") & (df["label"] == ENERGIE_LABEL)].copy()
-
     df["datum"] = pd.to_datetime(df["startdate"], dayfirst=True, format="mixed").dt.date
     df["datum_tot"] = pd.to_datetime(df["enddate"], dayfirst=True, format="mixed").dt.date
     df["value"] = pd.to_numeric(df["value"], errors="coerce")
 
-    alle_dagen = df["datum"].drop_duplicates()
-    df = df[df["datum_tot"] < date.today()]
-    volledige_dagen = df["datum"].drop_duplicates()
-    overgeslagen = len(alle_dagen) - len(volledige_dagen)
+    def _verwerk_bron(subset, upsert_fn):
+        alle_dagen = subset["datum"].drop_duplicates()
+        volledig = subset[subset["datum_tot"] < date.today()]
+        volledige_dagen = volledig["datum"].drop_duplicates()
+        overgeslagen = len(alle_dagen) - len(volledige_dagen)
+        verwerkt = 0
+        for datum, groep in volledig.groupby("datum"):
+            waarden = groep["value"].dropna()
+            if waarden.empty:
+                continue
+            upsert_fn(datum, float(waarden.sum()))
+            verwerkt += 1
+        return verwerkt, overgeslagen
 
-    verwerkt = 0
-    for datum, groep in df.groupby("datum"):
-        waarden = groep["value"].dropna()
-        if waarden.empty:
-            continue
-        warmte_mj_totaal = float(waarden.sum()) * ENERGIE_EENHEID_NAAR_MJ
-        upsert_energiedata_dag(datum, warmte_mj_totaal)
-        verwerkt += 1
+    df_warmte = df[(df["type_1"] == "Pulsteller") & (df["label"] == ENERGIE_LABEL)].copy()
+    verwerkt, overgeslagen = _verwerk_bron(
+        df_warmte, lambda d, v: upsert_energiedata_dag(d, v * ENERGIE_EENHEID_NAAR_MJ)
+    )
+
+    df_gas = df[(df["type_1"] == GAS_TYPE1) & (df["label"] == GAS_LABEL)].copy()
+    verwerkt_gas, _overgeslagen_gas = _verwerk_bron(df_gas, upsert_gasdata_dag)
 
     log_wijziging(
         gebruiker, "geupload", "energiedata_csv", None,
-        f"{verwerkt} dagen verwerkt, {overgeslagen} overgeslagen (nog niet afgerond)"
+        f"{verwerkt} dagen warmte verwerkt, {overgeslagen} overgeslagen (nog niet afgerond), "
+        f"{verwerkt_gas} dagen gasverbruik verwerkt"
     )
 
-    return verwerkt, overgeslagen
+    return verwerkt, overgeslagen, verwerkt_gas
 
 
 def get_energiedata_dagen_voor_periode(datum_start, datum_eind):
@@ -1374,11 +1448,24 @@ def get_energiedata_dekking():
     return (str(rij[0]), str(rij[1]), rij[2], ontbrekend)
 
 
+def get_gasdata_dekking():
+    """(eerste_datum, laatste_datum, aantal_dagen) of None."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT MIN(datum), MAX(datum), COUNT(*) FROM gasdata_dag")
+        rij = cursor.fetchone()
+
+    if not rij or rij[0] is None:
+        return None
+    return (str(rij[0]), str(rij[1]), rij[2])
+
+
 def get_warmte_voor_periode(vaknummer, datum_start, datum_eind):
     """
-    Geeft het totale warmteverbruik (MJ) van één vak binnen een periode terug,
-    berekend als de kaswaarde per m2 per dag keer de oppervlakte van dat vak.
-    Geeft None als er geen data of geen bekende oppervlakte is.
+    Geeft het totale warmteverbruik (MJ) van één vak binnen een periode terug
+    — Pulsteller-warmte plus (in weken met bijstook) gasgestookte warmte
+    opgeteld — berekend als de kaswaarde per m2 per dag keer de oppervlakte
+    van dat vak. Geeft None als er geen data of geen bekende oppervlakte is.
     """
     oppervlakte = oppervlakte_van_vaknummer(vaknummer)
     if not oppervlakte:
@@ -1386,10 +1473,19 @@ def get_warmte_voor_periode(vaknummer, datum_start, datum_eind):
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT SUM(warmte_mj_per_m2), COUNT(*)
-            FROM energiedata_dag
-            WHERE datum BETWEEN %s AND %s
-        """, (str(datum_start), str(datum_eind)))
+            SELECT SUM(totaal), COUNT(*)
+            FROM (
+                SELECT datum, SUM(mj_per_m2) AS totaal
+                FROM (
+                    SELECT datum, warmte_mj_per_m2 AS mj_per_m2
+                    FROM energiedata_dag WHERE datum BETWEEN %s AND %s
+                    UNION ALL
+                    SELECT datum, gas_mj_per_m2 AS mj_per_m2
+                    FROM gasdata_dag WHERE datum BETWEEN %s AND %s
+                ) per_bron
+                GROUP BY datum
+            ) per_dag
+        """, (str(datum_start), str(datum_eind), str(datum_start), str(datum_eind)))
         rij = cursor.fetchone()
 
     if not rij or rij[1] == 0:

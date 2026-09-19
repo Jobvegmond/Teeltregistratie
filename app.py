@@ -39,7 +39,9 @@ from database import (
     verwerk_energie_csv,
     get_energiedata_dagen_voor_periode,
     get_energiedata_dekking,
+    get_gasdata_dekking,
     get_warmte_voor_periode,
+    GAS_CALORISCHE_WAARDE_MJ_PER_M3,
     TUIN3_OPPERVLAKTE_M2,
     ideale_etmaaltemperatuur,
     LICHT_TEMP_FACTOR,
@@ -65,6 +67,7 @@ from database import (
     get_strokenplanning,
     get_oogstregistraties_voor_periode,
     get_watergift_per_vak_voor_periode,
+    get_watergift_per_dag_voor_periode,
 )
 
 # --- PAGINA-INSTELLINGEN ---
@@ -850,6 +853,60 @@ with tab_overzicht:
     else:
         st.info("Nog geen teelten geregistreerd. Gebruik de zijbalk om te beginnen.")
 
+    st.markdown("---")
+
+    # --- Analyse ---
+    st.subheader("📈 Analyse")
+    st.write("**Lengtegroei: halverwege → oogst**")
+    st.caption(
+        "Factor = oogstlengte / lengte halverwege. Gebaseerd op alle afgeronde teelten met beide metingen."
+    )
+
+    alle_teelten_ov = get_alle_teelten_detail()
+    analyse_lengte_rijen = [
+        {
+            "Oogstdatum": t["datum_oogst"],
+            "Vak": t["vaknummer"],
+            "Code": t["code"] or "-",
+            "Lengte halverwege (cm)": t["lengte_half"],
+            "Lengte oogst (cm)": t["lengte_eind"],
+            "Factor (oogst / halverwege)": t["lengte_eind"] / t["lengte_half"],
+        }
+        for t in alle_teelten_ov
+        if t["datum_oogst"] and t["lengte_half"] and t["lengte_eind"]
+    ]
+
+    if len(analyse_lengte_rijen) < 2:
+        st.info("Nog te weinig teelten met zowel een halverwege- als oogstlengte voor deze grafiek.")
+    else:
+        df_lengte = pd.DataFrame(analyse_lengte_rijen).sort_values("Oogstdatum")
+        df_lengte["Oogstdatum"] = pd.to_datetime(df_lengte["Oogstdatum"])
+
+        df_lengte_lang = df_lengte.melt(
+            id_vars=["Oogstdatum", "Vak", "Code"],
+            value_vars=["Lengte halverwege (cm)", "Lengte oogst (cm)"],
+            var_name="Meting", value_name="Lengte (cm)",
+        )
+        lijn_lengte = alt.Chart(df_lengte_lang).mark_line(point=True).encode(
+            x=alt.X("Oogstdatum:T", title="Oogstdatum"),
+            y=alt.Y("Lengte (cm):Q", title="Lengte (cm)"),
+            color=alt.Color("Meting:N", title=None),
+            tooltip=["Oogstdatum:T", "Vak:N", "Code:N", "Meting:N", alt.Tooltip("Lengte (cm):Q", format=".1f")],
+        )
+        lijn_factor = alt.Chart(df_lengte).mark_line(point=True, color="#c0392b", strokeDash=[4, 4]).encode(
+            x=alt.X("Oogstdatum:T"),
+            y=alt.Y("Factor (oogst / halverwege):Q", title="Factor (oogst / halverwege)"),
+            tooltip=["Oogstdatum:T", "Vak:N", "Code:N", alt.Tooltip("Factor (oogst / halverwege):Q", format=".2f")],
+        )
+        st.altair_chart(
+            alt.layer(lijn_lengte, lijn_factor).resolve_scale(y="independent"),
+            use_container_width=True,
+        )
+        st.caption(
+            f"Gebaseerd op {len(df_lengte)} afgeronde teelten met zowel een halverwege- als oogstmeting "
+            "(rode stippellijn = factor, rechteras)."
+        )
+
 # --- WEEKOVERZICHT ---
 with tab_week:
     st.subheader("📆 Weekoverzicht")
@@ -911,13 +968,26 @@ with tab_week:
     emmers_week = get_oogstregistraties_voor_periode(week_start_s, week_eind_s)
     if emmers_week:
         totaal_emmers_week = sum(e["aantal_emmers"] for e in emmers_week)
-        st.metric("Totaal emmers deze week", f"{totaal_emmers_week:g}")
-        st.dataframe(pd.DataFrame([{
-            "Datum": format_datum(e["datum"]),
-            "Vak": e["vaknummer"],
-            "Code": e["code"] or "-",
-            "Emmers": e["aantal_emmers"],
-        } for e in emmers_week]), use_container_width=True, hide_index=True)
+        totaal_stelen_week = totaal_emmers_week * 100
+        col_oogst1, col_oogst2 = st.columns(2)
+        col_oogst1.metric("Totaal emmers deze week", f"{totaal_emmers_week:g}")
+        col_oogst2.metric("Totaal stelen deze week", f"{totaal_stelen_week:,.0f}".replace(",", "."))
+
+        per_vak_oogst = (
+            pd.DataFrame(emmers_week).groupby("vaknummer", as_index=False)["aantal_emmers"].sum()
+            .sort_values("vaknummer")
+        )
+        per_vak_oogst["Stelen"] = per_vak_oogst["aantal_emmers"] * 100
+        per_vak_oogst = per_vak_oogst.rename(columns={"vaknummer": "Vak", "aantal_emmers": "Emmers"})
+        st.dataframe(per_vak_oogst, use_container_width=True, hide_index=True)
+
+        with st.expander(f"Alle oogstmomenten deze week tonen ({len(emmers_week)})"):
+            st.dataframe(pd.DataFrame([{
+                "Datum": format_datum(e["datum"]),
+                "Vak": e["vaknummer"],
+                "Code": e["code"] or "-",
+                "Emmers": e["aantal_emmers"],
+            } for e in emmers_week]), use_container_width=True, hide_index=True)
     else:
         st.caption("Geen emmers geregistreerd deze week.")
 
@@ -927,15 +997,31 @@ with tab_week:
         key=lambda t: (t["vaknummer"] or 0)
     )
     if afgerond_week:
-        st.write("**Teelten afgerond (eindoogst) deze week:**")
-        st.dataframe(pd.DataFrame([{
-            "Vak": t["vaknummer"],
-            "Code": t["code"] or "-",
-            "Oogstdatum": format_datum(t["datum_oogst"]),
-            "Lengte (cm)": t["lengte_eind"] if t["lengte_eind"] is not None else "-",
-            "Gewicht (g)": t["oogstgewicht"] if t["oogstgewicht"] is not None else "-",
-            "Rijpheid": t["rijpheid"] or "-",
-        } for t in afgerond_week]), use_container_width=True, hide_index=True)
+        st.write("**🪣 Uitval van teelten afgerond deze week**")
+        uitval_rijen_week = []
+        uitval_pct_week = []
+        for t in afgerond_week:
+            registraties_t = get_oogstregistraties_voor_teelt(t["id"])
+            totaal_stelen_t = sum(r[2] for r in registraties_t) * 100 if registraties_t else 0
+            if t["aantal_planten"]:
+                uitval_pct_t = (t["aantal_planten"] - totaal_stelen_t) / t["aantal_planten"] * 100
+                uitval_pct_week.append(uitval_pct_t)
+            else:
+                uitval_pct_t = None
+            uitval_rijen_week.append({
+                "Vak": t["vaknummer"],
+                "Code": t["code"] or "-",
+                "Oogstdatum": format_datum(t["datum_oogst"]),
+                "Planten": t["aantal_planten"] if t["aantal_planten"] is not None else "-",
+                "Geoogste stelen": totaal_stelen_t,
+                "Uitval (%)": round(uitval_pct_t, 1) if uitval_pct_t is not None else "-",
+                "Lengte (cm)": t["lengte_eind"] if t["lengte_eind"] is not None else "-",
+                "Gewicht (g)": t["oogstgewicht"] if t["oogstgewicht"] is not None else "-",
+                "Rijpheid": t["rijpheid"] or "-",
+            })
+        st.dataframe(pd.DataFrame(uitval_rijen_week), use_container_width=True, hide_index=True)
+        if uitval_pct_week:
+            st.metric("Gem. uitval deze week", f"{sum(uitval_pct_week) / len(uitval_pct_week):.1f} %")
 
     st.markdown("---")
 
@@ -955,11 +1041,26 @@ with tab_week:
     else:
         st.caption("Geen watergiftdata beschikbaar voor deze week.")
 
+    st.write("**Watergift per vak per dag (l/m²)**")
+    water_dag_week = get_watergift_per_dag_voor_periode(week_start_s, week_eind_s)
+    if water_dag_week:
+        df_water_dag = pd.DataFrame(water_dag_week, columns=["datum", "Vak", "Liter/m²"])
+        df_water_dag["Datum"] = pd.to_datetime(df_water_dag["datum"]).dt.strftime("%d-%m-%y")
+        kolomvolgorde_water = sorted(
+            df_water_dag["Datum"].unique(), key=lambda d: datetime.strptime(d, "%d-%m-%y")
+        )
+        pivot_water = df_water_dag.pivot_table(index="Vak", columns="Datum", values="Liter/m²", aggfunc="sum")
+        pivot_water = pivot_water.reindex(kolomvolgorde_water, axis=1).sort_index()
+        st.dataframe(pivot_water.round(1), use_container_width=True)
+    else:
+        st.caption("Geen watergiftdata per dag beschikbaar voor deze week.")
+
     st.markdown("---")
 
     # --- Klimaat ---
     st.write("**🌡️ Klimaat deze week**")
     klimaat_rijen_week = []
+    klimaat_dagen_week = []
     for afdeling_week in (1, 2, 3, 4):
         k_week = get_klimaat_voor_periode(afdeling_week, week_start_s, week_eind_s)
         if k_week:
@@ -969,64 +1070,22 @@ with tab_week:
                 "Gem. RV (%)": round(k_week["gem_rv"], 1) if k_week["gem_rv"] is not None else "-",
                 "Gem. lichtsom/dag": round(k_week["gem_stralingssom_dag"], 0) if k_week["gem_stralingssom_dag"] is not None else "-",
             })
+        for datum, temp, rv, straling, *_rest in get_klimaatdata_dagen_voor_periode(
+            afdeling_week, week_start_s, week_eind_s
+        ):
+            klimaat_dagen_week.append({
+                "datum": datum, "afdeling": afdeling_week, "temp_24h": temp, "lichtsom": straling,
+            })
     if klimaat_rijen_week:
         st.dataframe(pd.DataFrame(klimaat_rijen_week), use_container_width=True, hide_index=True)
     else:
         st.caption("Geen klimaatdata beschikbaar voor deze week.")
 
-    st.markdown("---")
-
-    # --- Analyse ---
-    st.subheader("📈 Analyse")
-    st.write("**Lengtegroei: halverwege → oogst**")
-    st.caption(
-        "Factor = oogstlengte / lengte halverwege. Onafhankelijk van de hierboven gekozen week — "
-        "gebaseerd op alle afgeronde teelten met beide metingen."
-    )
-
-    analyse_lengte_rijen = [
-        {
-            "Oogstdatum": t["datum_oogst"],
-            "Vak": t["vaknummer"],
-            "Code": t["code"] or "-",
-            "Lengte halverwege (cm)": t["lengte_half"],
-            "Lengte oogst (cm)": t["lengte_eind"],
-            "Factor (oogst / halverwege)": t["lengte_eind"] / t["lengte_half"],
-        }
-        for t in alle_teelten_week
-        if t["datum_oogst"] and t["lengte_half"] and t["lengte_eind"]
-    ]
-
-    if len(analyse_lengte_rijen) < 2:
-        st.info("Nog te weinig teelten met zowel een halverwege- als oogstlengte voor deze grafiek.")
+    st.write("**Licht/temperatuur-verhouding per dag**")
+    if klimaat_dagen_week:
+        licht_temperatuur_grafiek(klimaat_dagen_week)
     else:
-        df_lengte = pd.DataFrame(analyse_lengte_rijen).sort_values("Oogstdatum")
-        df_lengte["Oogstdatum"] = pd.to_datetime(df_lengte["Oogstdatum"])
-
-        df_lengte_lang = df_lengte.melt(
-            id_vars=["Oogstdatum", "Vak", "Code"],
-            value_vars=["Lengte halverwege (cm)", "Lengte oogst (cm)"],
-            var_name="Meting", value_name="Lengte (cm)",
-        )
-        lijn_lengte = alt.Chart(df_lengte_lang).mark_line(point=True).encode(
-            x=alt.X("Oogstdatum:T", title="Oogstdatum"),
-            y=alt.Y("Lengte (cm):Q", title="Lengte (cm)"),
-            color=alt.Color("Meting:N", title=None),
-            tooltip=["Oogstdatum:T", "Vak:N", "Code:N", "Meting:N", alt.Tooltip("Lengte (cm):Q", format=".1f")],
-        )
-        lijn_factor = alt.Chart(df_lengte).mark_line(point=True, color="#c0392b", strokeDash=[4, 4]).encode(
-            x=alt.X("Oogstdatum:T"),
-            y=alt.Y("Factor (oogst / halverwege):Q", title="Factor (oogst / halverwege)"),
-            tooltip=["Oogstdatum:T", "Vak:N", "Code:N", alt.Tooltip("Factor (oogst / halverwege):Q", format=".2f")],
-        )
-        st.altair_chart(
-            alt.layer(lijn_lengte, lijn_factor).resolve_scale(y="independent"),
-            use_container_width=True,
-        )
-        st.caption(
-            f"Gebaseerd op {len(df_lengte)} afgeronde teelten met zowel een halverwege- als oogstmeting "
-            "(rode stippellijn = factor, rechteras)."
-        )
+        st.caption("Geen klimaatdata beschikbaar voor deze week.")
 
 # --- TEELT-DETAIL (GRAFISCH OVERZICHT PER TEELT) ---
 with tab_detail:
@@ -1646,12 +1705,17 @@ with tab_klimaat:
                 "Energiecomputer-export (.csv)",
                 type=["csv"],
                 key="energie_csv_upload",
-                help="Rapport Energie-export uit Priva; hieruit wordt de Pulsteller (warmteverbruik hele kas) gehaald.",
+                help="Rapport Energie-export uit Priva; hieruit worden de Pulsteller (warmteverbruik hele kas) "
+                     "en, in weken met bijstook, het gasverbruik gehaald.",
             )
             if energie_csv is not None:
                 try:
-                    aantal_verwerkt_e, aantal_overgeslagen_e = verwerk_energie_csv(energie_csv, gebruiker=huidige_gebruiker())
+                    aantal_verwerkt_e, aantal_overgeslagen_e, aantal_gas_e = verwerk_energie_csv(
+                        energie_csv, gebruiker=huidige_gebruiker()
+                    )
                     melding_e = f"✅ {aantal_verwerkt_e} dagen warmteverbruik verwerkt."
+                    if aantal_gas_e:
+                        melding_e += f" {aantal_gas_e} dagen gasverbruik verwerkt."
                     if aantal_overgeslagen_e:
                         melding_e += f" {aantal_overgeslagen_e} overgeslagen (nog niet afgerond)."
                     st.success(melding_e)
@@ -1770,6 +1834,14 @@ with tab_klimaat:
             f"({e_aantal} dagen, {e_ontbrekend} ontbrekend). Kasoppervlak tuin 3: {TUIN3_OPPERVLAKTE_M2:,.0f} m²."
             .replace(",", ".")
         )
+        gas_dekking = get_gasdata_dekking()
+        if gas_dekking:
+            g_eerste, g_laatste, g_aantal = gas_dekking
+            st.caption(
+                f"Gasgestookte warmte (bijstook) geregistreerd van {format_datum(g_eerste)} t/m "
+                f"{format_datum(g_laatste)} ({g_aantal} dagen), omgerekend met "
+                f"{GAS_CALORISCHE_WAARDE_MJ_PER_M3} MJ/m³. Al meegeteld in de warmte per vak en teelt hierboven."
+            )
 
     # --- Gemiddelden per teelt (onder de grafieken) ---
     if rijen_klimaat:
