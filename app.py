@@ -64,9 +64,7 @@ from database import (
     set_planning_weekdoel_vak1,
     wis_planning_weekdoelen,
     get_planning_besteld_tot,
-    set_planning_besteld_tot,
     bereken_verwachte_oogstdatum,
-    get_lege_vakken_per_week,
     get_strokenplanning,
     get_oogstregistraties_voor_periode,
     get_watergift_per_vak_voor_periode,
@@ -100,6 +98,43 @@ def metric_gekaderd(kolom, label, waarde, delta=None, delta_color="normal", help
     """
     with kolom.container(border=True):
         st.metric(label, waarde, delta=delta, delta_color=delta_color, help=help)
+
+
+def jaargemiddelden_oogst(jaar):
+    """
+    Gemiddelde taklengte, takgewicht, gewicht per 10 cm, lengtefactor
+    (oogst/halverwege) en uitval over alle teelten die in `jaar` zijn
+    afgerond (datum_oogst) — voor vergelijking met een losse plantweek-
+    groep in Teelt-detail. Waarden zijn None als er geen data is.
+    """
+    alle = get_alle_teelten_detail()
+    lengtes, gewichten, factoren, gewicht_10cm, uitval = [], [], [], [], []
+    for t in alle:
+        if not t["datum_oogst"] or not t["datum_oogst"].startswith(str(jaar)):
+            continue
+        if t["lengte_eind"]:
+            lengtes.append(t["lengte_eind"])
+        if t["oogstgewicht"]:
+            gewichten.append(t["oogstgewicht"])
+        if t["lengte_half"] and t["lengte_eind"]:
+            factoren.append(t["lengte_eind"] / t["lengte_half"])
+        if t["oogstgewicht"] and t["lengte_eind"]:
+            gewicht_10cm.append(t["oogstgewicht"] / t["lengte_eind"] * 10)
+        if t["aantal_planten"]:
+            registraties_t = get_oogstregistraties_voor_teelt(t["id"])
+            totaal_stelen_t = sum(r[2] for r in registraties_t) * 100 if registraties_t else 0
+            uitval.append((t["aantal_planten"] - totaal_stelen_t) / t["aantal_planten"] * 100)
+
+    def _gem(lijst):
+        return sum(lijst) / len(lijst) if lijst else None
+
+    return {
+        "lengte": _gem(lengtes),
+        "gewicht": _gem(gewichten),
+        "factor": _gem(factoren),
+        "gewicht_10cm": _gem(gewicht_10cm),
+        "uitval": _gem(uitval),
+    }
 
 
 def klimaat_grafieken(dagen_records, toon_dagnacht=False, toon_trend=False,
@@ -902,12 +937,76 @@ with tab_week:
     week_eind = week_start + timedelta(days=6)
     week_start_s, week_eind_s = str(week_start), str(week_eind)
 
-    # --- Geplant ---
+    # --- Data verzamelen (voor zowel de samenvatting bovenaan als de tabellen) ---
     geplant_week = sorted(
         (t for t in alle_teelten_week
          if t["datum_teelt_start"] and week_start_s <= t["datum_teelt_start"] <= week_eind_s),
         key=lambda t: (t["vaknummer"] or 0)
     )
+
+    emmers_week = get_oogstregistraties_voor_periode(week_start_s, week_eind_s)
+    totaal_emmers_week = sum(e["aantal_emmers"] for e in emmers_week) if emmers_week else 0
+    totaal_stelen_week = totaal_emmers_week * 100
+
+    afgerond_week = sorted(
+        (t for t in alle_teelten_week
+         if t["datum_oogst"] and week_start_s <= t["datum_oogst"] <= week_eind_s),
+        key=lambda t: (t["vaknummer"] or 0)
+    )
+    uitval_rijen_week = []
+    uitval_pct_week = []
+    for t in afgerond_week:
+        registraties_t = get_oogstregistraties_voor_teelt(t["id"])
+        totaal_stelen_t = sum(r[2] for r in registraties_t) * 100 if registraties_t else 0
+        if t["aantal_planten"]:
+            uitval_pct_t = (t["aantal_planten"] - totaal_stelen_t) / t["aantal_planten"] * 100
+            uitval_pct_week.append(uitval_pct_t)
+        else:
+            uitval_pct_t = None
+        uitval_rijen_week.append({
+            "Vak": t["vaknummer"],
+            "Code": t["code"] or "-",
+            "Oogstdatum": format_datum(t["datum_oogst"]),
+            "Planten": t["aantal_planten"] if t["aantal_planten"] is not None else "-",
+            "Geoogste stelen": totaal_stelen_t,
+            "Uitval (%)": round(uitval_pct_t, 1) if uitval_pct_t is not None else "-",
+            "Lengte (cm)": t["lengte_eind"] if t["lengte_eind"] is not None else "-",
+            "Gewicht (g)": t["oogstgewicht"] if t["oogstgewicht"] is not None else "-",
+            "Rijpheid": t["rijpheid"] or "-",
+        })
+
+    water_week = get_watergift_per_vak_voor_periode(week_start_s, week_eind_s)
+    df_water_week = None
+    gem_water_week = None
+    if water_week:
+        df_water_week = pd.DataFrame([{
+            "Vak": v,
+            "Totaal (l/m²)": round(totaal, 1) if totaal is not None else "-",
+            "Dagen met data": dagen,
+        } for v, totaal, dagen in water_week])
+        gem_water_week = pd.to_numeric(df_water_week["Totaal (l/m²)"], errors="coerce").mean()
+
+    # --- Samenvatting bovenaan ---
+    rij_week = st.columns(5)
+    metric_gekaderd(rij_week[0], "Geplant deze week", len(geplant_week))
+    metric_gekaderd(rij_week[1], "Totaal emmers", f"{totaal_emmers_week:g}" if emmers_week else "-")
+    metric_gekaderd(
+        rij_week[2], "Totaal stelen",
+        f"{totaal_stelen_week:,.0f}".replace(",", ".") if emmers_week else "-"
+    )
+    metric_gekaderd(
+        rij_week[3], "Gem. uitval",
+        f"{sum(uitval_pct_week) / len(uitval_pct_week):.1f} %" if uitval_pct_week else "-"
+    )
+    metric_gekaderd(
+        rij_week[4], "Gem. watergift",
+        f"{gem_water_week:.1f} l/m²" if gem_water_week is not None and pd.notna(gem_water_week) else "-",
+        help=f"Over {len(df_water_week)} vakken" if df_water_week is not None else None,
+    )
+
+    st.markdown("---")
+
+    # --- Geplant ---
     st.write(f"**🌱 Geplant deze week** ({len(geplant_week)})")
     if geplant_week:
         st.dataframe(pd.DataFrame([{
@@ -923,14 +1022,7 @@ with tab_week:
 
     # --- Geoogst ---
     st.write("**🌾 Geoogst deze week**")
-    emmers_week = get_oogstregistraties_voor_periode(week_start_s, week_eind_s)
     if emmers_week:
-        totaal_emmers_week = sum(e["aantal_emmers"] for e in emmers_week)
-        totaal_stelen_week = totaal_emmers_week * 100
-        col_oogst1, col_oogst2 = st.columns(2)
-        col_oogst1.metric("Totaal emmers deze week", f"{totaal_emmers_week:g}")
-        col_oogst2.metric("Totaal stelen deze week", f"{totaal_stelen_week:,.0f}".replace(",", "."))
-
         per_vak_oogst = (
             pd.DataFrame(emmers_week).groupby("vaknummer", as_index=False)["aantal_emmers"].sum()
             .sort_values("vaknummer")
@@ -949,53 +1041,16 @@ with tab_week:
     else:
         st.caption("Geen emmers geregistreerd deze week.")
 
-    afgerond_week = sorted(
-        (t for t in alle_teelten_week
-         if t["datum_oogst"] and week_start_s <= t["datum_oogst"] <= week_eind_s),
-        key=lambda t: (t["vaknummer"] or 0)
-    )
     if afgerond_week:
         st.write("**🪣 Uitval van teelten afgerond deze week**")
-        uitval_rijen_week = []
-        uitval_pct_week = []
-        for t in afgerond_week:
-            registraties_t = get_oogstregistraties_voor_teelt(t["id"])
-            totaal_stelen_t = sum(r[2] for r in registraties_t) * 100 if registraties_t else 0
-            if t["aantal_planten"]:
-                uitval_pct_t = (t["aantal_planten"] - totaal_stelen_t) / t["aantal_planten"] * 100
-                uitval_pct_week.append(uitval_pct_t)
-            else:
-                uitval_pct_t = None
-            uitval_rijen_week.append({
-                "Vak": t["vaknummer"],
-                "Code": t["code"] or "-",
-                "Oogstdatum": format_datum(t["datum_oogst"]),
-                "Planten": t["aantal_planten"] if t["aantal_planten"] is not None else "-",
-                "Geoogste stelen": totaal_stelen_t,
-                "Uitval (%)": round(uitval_pct_t, 1) if uitval_pct_t is not None else "-",
-                "Lengte (cm)": t["lengte_eind"] if t["lengte_eind"] is not None else "-",
-                "Gewicht (g)": t["oogstgewicht"] if t["oogstgewicht"] is not None else "-",
-                "Rijpheid": t["rijpheid"] or "-",
-            })
         st.dataframe(pd.DataFrame(uitval_rijen_week), hide_index=True)
-        if uitval_pct_week:
-            st.metric("Gem. uitval deze week", f"{sum(uitval_pct_week) / len(uitval_pct_week):.1f} %")
 
     st.markdown("---")
 
     # --- Watergift ---
     st.write("**💧 Watergift deze week**")
-    water_week = get_watergift_per_vak_voor_periode(week_start_s, week_eind_s)
     if water_week:
-        df_water_week = pd.DataFrame([{
-            "Vak": v,
-            "Totaal (l/m²)": round(totaal, 1) if totaal is not None else "-",
-            "Dagen met data": dagen,
-        } for v, totaal, dagen in water_week])
         st.dataframe(df_water_week, hide_index=True)
-        gem_water_week = pd.to_numeric(df_water_week["Totaal (l/m²)"], errors="coerce").mean()
-        if pd.notna(gem_water_week):
-            st.caption(f"Gemiddeld {gem_water_week:.1f} l/m² over {len(df_water_week)} vakken.")
     else:
         st.caption("Geen watergiftdata beschikbaar voor deze week.")
 
@@ -1163,9 +1218,30 @@ with tab_detail:
         if dagen_lijst and verwachte_duur_weken is not None:
             teeltduur_delta = f"{gem_weken - verwachte_duur_weken:+.1f} weken t.o.v. gepland ({verwachte_duur_weken:g} wk)"
 
+        oogst_datums_echt = sorted(t["datum_oogst"] for t in teelten_groep if t["datum_oogst"])
+        if oogst_datums_echt:
+            if oogst_datums_echt[0] == oogst_datums_echt[-1]:
+                oogst_tekst = format_datum(oogst_datums_echt[-1])
+            else:
+                oogst_tekst = f"{format_datum(oogst_datums_echt[0])} - {format_datum(oogst_datums_echt[-1])}"
+        else:
+            verwachte_oogsten = []
+            for t in teelten_groep:
+                _, verwacht_t = bereken_verwachte_oogstdatum(t["datum_teelt_start"])
+                if verwacht_t:
+                    verwachte_oogsten.append(verwacht_t)
+            if verwachte_oogsten:
+                verwachte_oogsten.sort()
+                if verwachte_oogsten[0] == verwachte_oogsten[-1]:
+                    oogst_tekst = f"~{format_datum(verwachte_oogsten[-1])}"
+                else:
+                    oogst_tekst = f"~{format_datum(verwachte_oogsten[0])} - {format_datum(verwachte_oogsten[-1])}"
+            else:
+                oogst_tekst = "-"
+
         rij_data = st.columns(4)
         metric_gekaderd(rij_data[0], "Eerste startdatum", format_datum(start_datums[0]))
-        metric_gekaderd(rij_data[1], "Laatste startdatum", format_datum(start_datums[-1]))
+        metric_gekaderd(rij_data[1], "Oogstdatum", oogst_tekst)
         metric_gekaderd(
             rij_data[2], "Gem. teeltduur", teeltduur_tekst,
             delta=teeltduur_delta, delta_color="off",
@@ -1197,61 +1273,71 @@ with tab_detail:
             f"{sum(warmte_lijst) / len(warmte_lijst) / 1000:.2f} GJ" if warmte_lijst else "-"
         )
 
-        if aantal_afgerond > 0:
-            afgeronde_groep = [t for t in teelten_groep if t["datum_oogst"]]
-            lengtes = [t["lengte_eind"] for t in afgeronde_groep if t["lengte_eind"]]
-            gewichten = [t["oogstgewicht"] for t in afgeronde_groep if t["oogstgewicht"]]
+        afgeronde_groep = [t for t in teelten_groep if t["datum_oogst"]]
+        halve_lengtes = [t["lengte_half"] for t in teelten_groep if t["lengte_half"]]
+        lengtes = [t["lengte_eind"] for t in afgeronde_groep if t["lengte_eind"]]
+        gewichten = [t["oogstgewicht"] for t in afgeronde_groep if t["oogstgewicht"]]
 
-            uitval_lijst = []
-            factor_lijst = []
-            gewicht_per_10cm_lijst = []
-            for t in afgeronde_groep:
-                if t["aantal_planten"]:
-                    registraties_t = get_oogstregistraties_voor_teelt(t["id"])
-                    totaal_stelen_t = sum(r[2] for r in registraties_t) * 100 if registraties_t else 0
-                    uitval_lijst.append((t["aantal_planten"] - totaal_stelen_t) / t["aantal_planten"] * 100)
-                if t["lengte_half"] and t["lengte_eind"]:
-                    factor_lijst.append(t["lengte_eind"] / t["lengte_half"])
-                if t["oogstgewicht"] and t["lengte_eind"]:
-                    gewicht_per_10cm_lijst.append(t["oogstgewicht"] / t["lengte_eind"] * 10)
+        uitval_lijst = []
+        factor_lijst = []
+        gewicht_per_10cm_lijst = []
+        for t in afgeronde_groep:
+            if t["aantal_planten"]:
+                registraties_t = get_oogstregistraties_voor_teelt(t["id"])
+                totaal_stelen_t = sum(r[2] for r in registraties_t) * 100 if registraties_t else 0
+                uitval_lijst.append((t["aantal_planten"] - totaal_stelen_t) / t["aantal_planten"] * 100)
+            if t["lengte_half"] and t["lengte_eind"]:
+                factor_lijst.append(t["lengte_eind"] / t["lengte_half"])
+            if t["oogstgewicht"] and t["lengte_eind"]:
+                gewicht_per_10cm_lijst.append(t["oogstgewicht"] / t["lengte_eind"] * 10)
 
-            rij_oogst = st.columns(5)
-            metric_gekaderd(
-                rij_oogst[0], "Gem. taklengte", f"{sum(lengtes) / len(lengtes):.1f} cm" if lengtes else "-"
-            )
-            metric_gekaderd(
-                rij_oogst[1], "Gem. takgewicht", f"{round(sum(gewichten) / len(gewichten))} gram" if gewichten else "-"
-            )
-            metric_gekaderd(
-                rij_oogst[2], "Gem. uitval", f"{sum(uitval_lijst) / len(uitval_lijst):.1f} %" if uitval_lijst else "-"
-            )
-            metric_gekaderd(
-                rij_oogst[3], "Gem. factor (oogst/halverwege)",
-                f"{sum(factor_lijst) / len(factor_lijst):.2f}" if factor_lijst else "-",
-                help="Eindlengte gedeeld door de lengte bij de Florgib-meting halverwege.",
-            )
-            metric_gekaderd(
-                rij_oogst[4], "Gem. gewicht per 10 cm",
-                f"{sum(gewicht_per_10cm_lijst) / len(gewicht_per_10cm_lijst):.1f} gram" if gewicht_per_10cm_lijst else "-",
-            )
+        jaar_gem = jaargemiddelden_oogst(date.today().year)
+
+        def _delta_jaar(waarde, jaar_waarde, eenheid=""):
+            if jaar_waarde is None:
+                return None
+            return f"{waarde - jaar_waarde:+.1f}{eenheid} t.o.v. dit jaar"
+
+        rij_oogst = st.columns(6)
+        metric_gekaderd(
+            rij_oogst[0], "Florgib (halverwege)",
+            f"{sum(halve_lengtes) / len(halve_lengtes):.1f} cm" if halve_lengtes else "-",
+        )
+        gem_lengte = sum(lengtes) / len(lengtes) if lengtes else None
+        metric_gekaderd(
+            rij_oogst[1], "Gem. taklengte", f"{gem_lengte:.1f} cm" if gem_lengte is not None else "-",
+            delta=_delta_jaar(gem_lengte, jaar_gem["lengte"], " cm") if gem_lengte is not None else None,
+            delta_color="off",
+        )
+        gem_gewicht = sum(gewichten) / len(gewichten) if gewichten else None
+        metric_gekaderd(
+            rij_oogst[2], "Gem. takgewicht", f"{gem_gewicht:.0f} gram" if gem_gewicht is not None else "-",
+            delta=_delta_jaar(gem_gewicht, jaar_gem["gewicht"], " gram") if gem_gewicht is not None else None,
+            delta_color="off",
+        )
+        gem_uitval = sum(uitval_lijst) / len(uitval_lijst) if uitval_lijst else None
+        metric_gekaderd(
+            rij_oogst[3], "Gem. uitval", f"{gem_uitval:.1f} %" if gem_uitval is not None else "-",
+            delta=_delta_jaar(gem_uitval, jaar_gem["uitval"], " %pt") if gem_uitval is not None else None,
+            delta_color="off",
+        )
+        gem_factor = sum(factor_lijst) / len(factor_lijst) if factor_lijst else None
+        metric_gekaderd(
+            rij_oogst[4], "Gem. factor (oogst/halverwege)",
+            f"{gem_factor:.2f}" if gem_factor is not None else "-",
+            delta=_delta_jaar(gem_factor, jaar_gem["factor"]) if gem_factor is not None else None,
+            delta_color="off",
+            help="Eindlengte gedeeld door de lengte bij de Florgib-meting halverwege.",
+        )
+        gem_gewicht_10cm = sum(gewicht_per_10cm_lijst) / len(gewicht_per_10cm_lijst) if gewicht_per_10cm_lijst else None
+        metric_gekaderd(
+            rij_oogst[5], "Gem. gewicht per 10 cm",
+            f"{gem_gewicht_10cm:.1f} gram" if gem_gewicht_10cm is not None else "-",
+            delta=_delta_jaar(gem_gewicht_10cm, jaar_gem["gewicht_10cm"], " gram") if gem_gewicht_10cm is not None else None,
+            delta_color="off",
+        )
 
         st.markdown("---")
-
-        st.write("**Lengtegroei (gemiddeld over de plantweek)**")
-        halve_lengtes = [t["lengte_half"] for t in teelten_groep if t["lengte_half"]]
-        eind_lengtes = [t["lengte_eind"] for t in teelten_groep if t["lengte_eind"]]
-        if halve_lengtes or eind_lengtes:
-            col_groei = st.columns(2)
-            metric_gekaderd(
-                col_groei[0], "Florgib (halverwege)",
-                f"{sum(halve_lengtes) / len(halve_lengtes):.1f} cm" if halve_lengtes else "-",
-            )
-            metric_gekaderd(
-                col_groei[1], "Eindlengte (oogst)",
-                f"{sum(eind_lengtes) / len(eind_lengtes):.1f} cm" if eind_lengtes else "-",
-            )
-        else:
-            st.caption("Nog geen lengtemetingen voor deze plantweek.")
 
         st.write("**Klimaat tijdens deze plantweek**")
         afdelingen_groep = sorted({
@@ -1410,32 +1496,10 @@ with tab_planning:
         )
         st.markdown("---")
 
-    st.write("**Planten besteld t/m**")
     besteld_tot_huidig = get_planning_besteld_tot()
-    st.caption(
-        "Tot en met deze datum staat de concept-planning vast (planten besteld). "
-        "'Plan opnieuw' laat die weken staan en plant er alleen achteraan. Leeg = niets vast."
-    )
-    col_bt, col_bt2 = st.columns([1, 1])
-    besteld_tot_nieuw = col_bt.date_input(
-        "Besteld t/m", value=besteld_tot_huidig, format="DD-MM-YYYY", key="plan_besteld_tot",
-    )
-    with col_bt2:
-        st.write("")
-        cb1, cb2 = st.columns(2)
-        if cb1.button("💾 Vastzetten", key="plan_besteld_opslaan"):
-            set_planning_besteld_tot(besteld_tot_nieuw, gebruiker=huidige_gebruiker())
-            st.rerun()
-        if cb2.button("🔓 Vrijgeven", key="plan_besteld_wissen", disabled=besteld_tot_huidig is None):
-            set_planning_besteld_tot(None, gebruiker=huidige_gebruiker())
-            st.rerun()
+    # Horizon voor de jaarplanning-tabel en het (her)plannen: een vol jaar vooruit.
+    aantal_weken_vooruit = 52
 
-    st.markdown("---")
-    st.write("**X weken vooruit plannen**")
-    col_weken, col_knop = st.columns([1, 2])
-    aantal_weken_vooruit = col_weken.number_input(
-        "Aantal weken vooruit", min_value=1, max_value=78, value=52, step=1, key="plan_weken_vooruit"
-    )
     def _toon_planresultaat(resultaten, weekdoel_waarschuwingen, vak1_waarschuwingen):
         gepland = [r for r in resultaten if r[1] == "gepland"]
         buiten_horizon = [r for r in resultaten if r[1] == "buiten_horizon"]
@@ -1478,15 +1542,6 @@ with tab_planning:
                     f"maar kon pas in week {week_gepland.isocalendar()[1]} - {week_gepland.year} gepland "
                     "worden (vorige ronde nog niet klaar, of die week al vol)."
                 )
-
-    with col_knop:
-        st.write("")
-        if st.button("📅 Plan vooruit", key="plan_x_weken"):
-            resultaten, weekdoel_waarschuwingen, vak1_waarschuwingen = plan_x_weken_vooruit(
-                int(aantal_weken_vooruit), gebruiker=huidige_gebruiker()
-            )
-            _toon_planresultaat(resultaten, weekdoel_waarschuwingen, vak1_waarschuwingen)
-            st.rerun()
 
     st.markdown("---")
     st.write("**Jaarplanning: vakken per week**")
@@ -1556,22 +1611,6 @@ with tab_planning:
         st.info("Nog geen concept-planningen om per week te tonen.")
 
     st.markdown("---")
-    st.write("**Lege vakken per week**")
-    st.caption(
-        "Hoeveel vakken op dit moment geen werkelijke (lopende) teelt hebben, per week — dus hoeveel "
-        "grond er leeg ligt. Kijkt alleen naar echte teelten, niet naar concept-planningen."
-    )
-    lege_vakken_per_week = get_lege_vakken_per_week(12)
-    df_leeg = pd.DataFrame(
-        [
-            (f"Week {week} - {jaar}", aantal_leeg, ", ".join(str(v) for v in vakken) if vakken else "-")
-            for jaar, week, aantal_leeg, vakken in lege_vakken_per_week
-        ],
-        columns=["Week", "Aantal leeg", "Vakken"]
-    )
-    st.dataframe(df_leeg, hide_index=True)
-
-    st.markdown("---")
     st.write("**Eén vak handmatig plannen**")
     col_plan_vak, col_plan_datum = st.columns(2)
     plan_vaknummer = col_plan_vak.number_input(
@@ -1599,29 +1638,6 @@ with tab_planning:
     planning_rijen = get_planning()  # al gesorteerd op startdatum (dus per week), dan vaknummer
 
     if planning_rijen:
-        keuzes_bulk = {
-            f"Vak {vaknummer} — week {get_weeknummer(start)} ({format_datum(start)})": planning_id
-            for planning_id, vaknummer, start, _duur, _eind, _notitie in planning_rijen
-            if not (besteld_tot_huidig is not None
-                    and datetime.strptime(start, "%Y-%m-%d").date() <= besteld_tot_huidig)
-        }
-        geselecteerde_bulk = st.multiselect(
-            "Selecteer concept-planningen om in één keer te verwijderen",
-            list(keuzes_bulk.keys()),
-            key="plan_bulk_selectie",
-        )
-        if st.button(
-            f"🗑️ Verwijder {len(geselecteerde_bulk)} geselecteerde concept-planning(en)",
-            key="plan_bulk_verwijder",
-            disabled=not geselecteerde_bulk,
-        ):
-            for label in geselecteerde_bulk:
-                verwijder_planning(keuzes_bulk[label], gebruiker=huidige_gebruiker())
-            st.success(f"🗑️ {len(geselecteerde_bulk)} concept-planning(en) verwijderd.")
-            st.rerun()
-
-        st.markdown("---")
-
         huidige_weeksleutel = None
         for planning_id, vaknummer, start, duur, eind, notitie in planning_rijen:
             start_d = datetime.strptime(start, "%Y-%m-%d").date()
@@ -1900,22 +1916,6 @@ with tab_stats:
     if rijen:
         df_stats = pd.DataFrame(rijen, columns=kolommen)
 
-        # Teelten per vak (op vaknummer-volgorde, laag naar hoog)
-        st.write("**Teelten per vak:**")
-        per_vak = (
-            pd.to_numeric(df_stats['Teeltvak'], errors='coerce').dropna().astype(int)
-            .value_counts().reindex(range(1, 40), fill_value=0)
-            .rename_axis('Vak').reset_index(name='Aantal teelten')
-        )
-        st.altair_chart(
-            alt.Chart(per_vak).mark_bar().encode(
-                x=alt.X('Vak:O', title='Vak'),
-                y=alt.Y('Aantal teelten:Q', title='Aantal teelten'),
-                tooltip=['Vak:O', 'Aantal teelten:Q'],
-            ),
-            use_container_width=True,
-        )
-
         # Teeltduur analyse
         df_afgerond = df_stats[df_stats['Oogstdatum'] != '-'].copy()
         if len(df_afgerond) > 0:
@@ -2139,20 +2139,20 @@ with tab_help:
       optie 4 (Registratie wijzigen of verwijderen) — daar staat dezelfde emmers-editor (💾/🗑️).
 
     **Teelt-detail**
-    - Kies een teelt in het tabblad 🔍 Teelt-detail voor een grafisch overzicht: lengtegroei,
-      oogst per moment (en cumulatief), en het klimaat (temperatuur, RV, stralingssom) tijdens
-      de teeltperiode.
+    - Kies een plantweek in het tabblad 🔍 Teelt-detail voor kengetallen (teeltduur, klimaat,
+      water, warmte, oogstresultaat — steeds met een vergelijking t.o.v. het jaargemiddelde waar
+      relevant) en het klimaat (temperatuur, RV, stralingssom, watergift) tijdens de teeltperiode.
 
     **Planning**
     - Tabblad 🗓️ Planning plant vooruit vanaf waar de huidige teelt van elk vak en de bestaande
-      concept-planning gebleven zijn. Kies het aantal weken vooruit en klik op "Plan vooruit";
-      vakken die buiten die horizon vallen, plan je met een volgende klik verder in.
-    - Vak 19 en 20 worden altijd samen (als één eenheid) gepland; vak 1 is een uitzondering op de
-      vaste onderlinge volgorde. Het aantal vakken per week verschilt nooit meer dan 1 met de
-      vorige/volgende week, voor een werkbare arbeidsplanning.
+      concept-planning gebleven zijn, op basis van de jaarplanning die je zelf invult onder
+      "Jaarplanning: vakken per week" (aantal poot-eenheden per week voor de vak 2-39-cyclus, en
+      een aparte aanvinkkolom voor vak 1). Een week zonder ingevuld aantal blijft leeg — de app
+      vult niets automatisch aan. Klik op "Plan opnieuw met deze aantallen" om te (her)plannen.
+    - Vak 19 en 20 worden altijd samen (als één eenheid) gepland; vak 1 loopt op een eigen ritme,
+      los van de vak 2-39-cyclus, en telt niet mee in dat wekelijkse aantal.
     - Een concept-planning is nog geen echte teelt: pas nadat je 'm bevestigt (✅) wordt er een
-      teeltregistratie met een eigen code aangemaakt. Met 🗑️ verwijder je een concept weer (los of
-      met meerdere tegelijk via de multiselect).
+      teeltregistratie met een eigen code aangemaakt. Met 🗑️ verwijder je een concept weer.
 
     **Weeknummers**
     - Elke datum toont het ISO-weeknummer (1-53)
