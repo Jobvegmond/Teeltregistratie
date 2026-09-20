@@ -857,67 +857,13 @@ with tab_overzicht:
         df_ov_actief = df.loc[~mask_afgerond].drop(columns=verborgen)
         df_ov_afgerond = df.loc[mask_afgerond].sort_values('_startdatum_iso', ascending=False).drop(columns=verborgen)
 
-        st.write(f"**Lopend & nog te starten** ({len(df_ov_actief)})")
-        st.dataframe(df_ov_actief, hide_index=True)
+        with st.expander(f"Lopend & nog te starten tonen ({len(df_ov_actief)})", expanded=True):
+            st.dataframe(df_ov_actief, hide_index=True)
 
         with st.expander(f"Afgeronde teelten tonen ({len(df_ov_afgerond)})"):
             st.dataframe(df_ov_afgerond, hide_index=True)
     else:
         st.info("Nog geen teelten geregistreerd. Gebruik de zijbalk om te beginnen.")
-
-    st.markdown("---")
-
-    # --- Analyse ---
-    st.subheader("📈 Analyse")
-    st.write("**Lengtegroei: halverwege → oogst**")
-    st.caption(
-        "Factor = oogstlengte / lengte halverwege. Gebaseerd op alle afgeronde teelten met beide metingen."
-    )
-
-    alle_teelten_ov = get_alle_teelten_detail()
-    analyse_lengte_rijen = [
-        {
-            "Oogstdatum": t["datum_oogst"],
-            "Vak": t["vaknummer"],
-            "Code": t["code"] or "-",
-            "Lengte halverwege (cm)": t["lengte_half"],
-            "Lengte oogst (cm)": t["lengte_eind"],
-            "Factor (oogst / halverwege)": t["lengte_eind"] / t["lengte_half"],
-        }
-        for t in alle_teelten_ov
-        if t["datum_oogst"] and t["lengte_half"] and t["lengte_eind"]
-    ]
-
-    if len(analyse_lengte_rijen) < 2:
-        st.info("Nog te weinig teelten met zowel een halverwege- als oogstlengte voor deze grafiek.")
-    else:
-        df_lengte = pd.DataFrame(analyse_lengte_rijen).sort_values("Oogstdatum")
-        df_lengte["Oogstdatum"] = pd.to_datetime(df_lengte["Oogstdatum"])
-
-        df_lengte_lang = df_lengte.melt(
-            id_vars=["Oogstdatum", "Vak", "Code"],
-            value_vars=["Lengte halverwege (cm)", "Lengte oogst (cm)"],
-            var_name="Meting", value_name="Lengte (cm)",
-        )
-        lijn_lengte = alt.Chart(df_lengte_lang).mark_line(point=True).encode(
-            x=alt.X("Oogstdatum:T", title="Oogstdatum"),
-            y=alt.Y("Lengte (cm):Q", title="Lengte (cm)"),
-            color=alt.Color("Meting:N", title=None),
-            tooltip=["Oogstdatum:T", "Vak:N", "Code:N", "Meting:N", alt.Tooltip("Lengte (cm):Q", format=".1f")],
-        )
-        lijn_factor = alt.Chart(df_lengte).mark_line(point=True, color="#c0392b", strokeDash=[4, 4]).encode(
-            x=alt.X("Oogstdatum:T"),
-            y=alt.Y("Factor (oogst / halverwege):Q", title="Factor (oogst / halverwege)"),
-            tooltip=["Oogstdatum:T", "Vak:N", "Code:N", alt.Tooltip("Factor (oogst / halverwege):Q", format=".2f")],
-        )
-        st.altair_chart(
-            alt.layer(lijn_lengte, lijn_factor).resolve_scale(y="independent"),
-            use_container_width=True,
-        )
-        st.caption(
-            f"Gebaseerd op {len(df_lengte)} afgeronde teelten met zowel een halverwege- als oogstmeting "
-            "(rode stippellijn = factor, rechteras)."
-        )
 
 # --- WEEKOVERZICHT ---
 with tab_week:
@@ -1983,6 +1929,58 @@ with tab_stats:
             col1.metric("Gemiddeld", f"{gemiddeld:.0f} dagen")
             col2.metric("Kortst", f"{minimum:.0f} dagen")
             col3.metric("Langst", f"{maximum:.0f} dagen")
+
+        # --- Analyse: lengtegroei ---
+        st.markdown("---")
+        st.write("**Lengtegroei: halverwege → oogst**")
+        st.caption(
+            "Factor = oogstlengte / lengte halverwege. Gebaseerd op alle afgeronde teelten met beide metingen."
+        )
+
+        alle_teelten_stats = get_alle_teelten_detail()
+        analyse_lengte_rijen = [
+            {
+                "Oogstdatum": t["datum_oogst"],
+                "Vak": t["vaknummer"],
+                "Code": t["code"] or "-",
+                "Lengte halverwege (cm)": t["lengte_half"],
+                "Lengte oogst (cm)": t["lengte_eind"],
+                "Factor (oogst / halverwege)": t["lengte_eind"] / t["lengte_half"],
+            }
+            for t in alle_teelten_stats
+            if t["datum_oogst"] and t["lengte_half"] and t["lengte_eind"]
+        ]
+
+        if len(analyse_lengte_rijen) < 2:
+            st.info("Nog te weinig teelten met zowel een halverwege- als oogstlengte voor deze grafiek.")
+        else:
+            df_lengte = pd.DataFrame(analyse_lengte_rijen).sort_values("Oogstdatum")
+            df_lengte["Oogstdatum"] = pd.to_datetime(df_lengte["Oogstdatum"])
+
+            df_lengte_lang = df_lengte.melt(
+                id_vars=["Oogstdatum", "Vak", "Code"],
+                value_vars=["Lengte halverwege (cm)", "Lengte oogst (cm)"],
+                var_name="Meting", value_name="Lengte (cm)",
+            )
+            lijn_lengte = alt.Chart(df_lengte_lang).mark_line(point=True).encode(
+                x=alt.X("Oogstdatum:T", title="Oogstdatum"),
+                y=alt.Y("Lengte (cm):Q", title="Lengte (cm)"),
+                color=alt.Color("Meting:N", title=None),
+                tooltip=["Oogstdatum:T", "Vak:N", "Code:N", "Meting:N", alt.Tooltip("Lengte (cm):Q", format=".1f")],
+            )
+            lijn_factor = alt.Chart(df_lengte).mark_line(point=True, color="#c0392b", strokeDash=[4, 4]).encode(
+                x=alt.X("Oogstdatum:T"),
+                y=alt.Y("Factor (oogst / halverwege):Q", title="Factor (oogst / halverwege)"),
+                tooltip=["Oogstdatum:T", "Vak:N", "Code:N", alt.Tooltip("Factor (oogst / halverwege):Q", format=".2f")],
+            )
+            st.altair_chart(
+                alt.layer(lijn_lengte, lijn_factor).resolve_scale(y="independent"),
+                use_container_width=True,
+            )
+            st.caption(
+                f"Gebaseerd op {len(df_lengte)} afgeronde teelten met zowel een halverwege- als oogstmeting "
+                "(rode stippellijn = factor, rechteras)."
+            )
 
         # --- Analyse: groeifactoren vs. resultaat ---
         st.markdown("---")
