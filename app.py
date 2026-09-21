@@ -1060,10 +1060,13 @@ elif actie == "4. Registratie wijzigen of verwijderen":
         st.sidebar.info("Er zijn nog geen registraties om te wijzigen.")
 
 # --- HOOFDSCHERM: TABBLADEN ---
-tab_overzicht, tab_week, tab_detail, tab_planning, tab_klimaat, tab_stats, tab_log, tab_help = st.tabs([
+tab_overzicht, tab_week, tab_detail, tab_planning, tab_klimaat, tab_stats, tab_meer = st.tabs([
     "📊 Overzicht", "📆 Weekoverzicht", "🔍 Teelt-detail", "🗓️ Planning", "🌡️ Klimaatdata",
-    "📈 Statistieken", "🧾 Logboek", "ℹ️ Hoe dit werkt",
+    "📈 Statistieken", "ℹ️ Meer",
 ])
+# Weinig gebruikt: logboek en uitleg als subtabbladen onder "Meer".
+with tab_meer:
+    tab_log, tab_help = st.tabs(["🧾 Logboek", "ℹ️ Hoe dit werkt"])
 
 kolommen, rijen = get_overzicht_dataframe()
 
@@ -1163,7 +1166,12 @@ with tab_week:
         weken_terug = [maandag_nu_week]
 
     labels_week = [_week_label(w) for w in weken_terug]
-    gekozen_label_week = st.selectbox("Kies een week", labels_week, index=0, key="week_overzicht_selectie")
+    labels_week[0] += " - huidige week"
+    # Standaard de laatste volledige week; de huidige week is gewoon kiesbaar.
+    gekozen_label_week = st.selectbox(
+        "Kies een week", labels_week, index=1 if len(labels_week) > 1 else 0,
+        key="week_overzicht_selectie",
+    )
     week_start = weken_terug[labels_week.index(gekozen_label_week)]
     week_eind = week_start + timedelta(days=6)
     week_start_s, week_eind_s = str(week_start), str(week_eind)
@@ -1655,18 +1663,26 @@ with tab_detail:
 # --- PLANNING (TOEKOMSTIGE TEELTEN) ---
 with tab_planning:
     st.subheader("🗓️ Planning")
-    st.caption(
-        "Concept-planning voor toekomstige teelten: plant vooruit vanaf waar de huidige teelt van "
-        "elk vak en de bestaande concept-planning gebleven zijn. Vak 19+20 worden als één eenheid "
-        "gepland. Het aantal vakken per week komt volledig uit jouw eigen jaarplanning hieronder — "
-        "een week zonder ingevuld aantal blijft leeg, en er worden nooit meer dan 5 vakken per week "
-        "gepoot. Vak 1 loopt op een eigen ritme, los van de andere vakken, en wordt alleen gepland "
-        "in de weken die je daarvoor apart aanvinkt. Binnen een week worden de vakken over maandag "
-        "t/m donderdag verdeeld (laagste vaknummer op maandag); kan een week niet op maandag "
-        "beginnen doordat de grond nog bezet is, dan start die week op di/wo/do i.p.v. een week "
-        "over te slaan. Een vak wordt nooit eerder gepland dan de (verwachte) oogst van de lopende "
-        "teelt in dat vak."
-    )
+    with st.expander("Hoe lees ik dit?"):
+        st.caption(
+            "Concept-planning voor toekomstige teelten: plant vooruit vanaf waar de huidige teelt van "
+            "elk vak en de bestaande concept-planning gebleven zijn. Vak 19+20 worden als één eenheid "
+            "gepland. Het aantal vakken per week komt volledig uit jouw eigen jaarplanning hieronder — "
+            "een week zonder ingevuld aantal blijft leeg, en er worden nooit meer dan 5 vakken per week "
+            "gepoot. Vak 1 loopt op een eigen ritme, los van de andere vakken, en wordt alleen gepland "
+            "in de weken die je daarvoor apart aanvinkt. Binnen een week worden de vakken over maandag "
+            "t/m donderdag verdeeld (laagste vaknummer op maandag); kan een week niet op maandag "
+            "beginnen doordat de grond nog bezet is, dan start die week op di/wo/do i.p.v. een week "
+            "over te slaan. Een vak wordt nooit eerder gepland dan de (verwachte) oogst van de lopende "
+            "teelt in dat vak."
+        )
+        st.caption(
+            "Strokenplanning: grijs = afgerond, groen = lopende teelt, blauw = concept-planning. "
+            "Getal op de as = ISO-weeknummer; rode stippellijn = vandaag. Een rode stippelrand om "
+            "een deel van een balk = die dagen overlappen met de vorige ronde in dat vak. Oogstdatum "
+            "van lopende teelten en concepten is de verwachte datum uit de teeltduur-tabel. Beweeg "
+            "over een balk voor weeknummer + dag van start en oogst en de teeltduur in weken."
+        )
 
     # --- Strokenplanning (Gantt): vakken verticaal, weken horizontaal ---
     stroken = get_strokenplanning(weken_terug=8)
@@ -1755,13 +1771,6 @@ with tab_planning:
         st.altair_chart(
             alt.layer(*lagen).properties(height=640).configure_view(strokeOpacity=0),
             use_container_width=True,
-        )
-        st.caption(
-            "Strokenplanning: grijs = afgerond, groen = lopende teelt, blauw = concept-planning. "
-            "Getal op de as = ISO-weeknummer; rode stippellijn = vandaag. Een rode stippelrand om "
-            "een deel van een balk = die dagen overlappen met de vorige ronde in dat vak. Oogstdatum "
-            "van lopende teelten en concepten is de verwachte datum uit de teeltduur-tabel. Beweeg "
-            "over een balk voor weeknummer + dag van start en oogst en de teeltduur in weken."
         )
         st.markdown("---")
 
