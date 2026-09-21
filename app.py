@@ -1582,7 +1582,7 @@ with tab_planning:
             ),
             legend=alt.Legend(title=None, orient="top"),
         )
-        y_as = alt.Y(
+        vak_y = alt.Y(
             "vaknummer:O", title="Vak", sort="ascending",
             scale=alt.Scale(domain=list(range(1, 40))),
         )
@@ -1590,7 +1590,7 @@ with tab_planning:
             alt.Chart(df_stroken)
             .mark_bar(height=13, cornerRadius=3, stroke="white", strokeWidth=1)
             .encode(
-                y=y_as,
+                y=vak_y,
                 x=alt.X(
                     "start:T", title="Week",
                     axis=alt.Axis(format="%V", tickCount={"interval": "week", "step": 2}, grid=True),
@@ -1613,7 +1613,7 @@ with tab_planning:
                 alt.Chart(df_overlap)
                 .mark_bar(height=13, cornerRadius=3, filled=False, stroke="#e34948",
                           strokeWidth=2, strokeDash=[4, 2])
-                .encode(y=y_as, x="start:T", x2="eind:T")
+                .encode(y=vak_y, x="start:T", x2="eind:T")
             )
             lagen.append(overlap_balken)
         vandaag_lijn = (
