@@ -92,6 +92,29 @@ st.markdown("""
 .vem-titel { font-size: 1.15rem; font-weight: 600; }
 .vem-week { font-size: 0.85rem; opacity: 0.7; white-space: nowrap; }
 
+/* Kengetallen: label, waarde en delta mogen afbreken i.p.v. afgekapt worden ("Ge..."). */
+[data-testid="stMetric"] * {
+    white-space: normal !important; overflow: visible !important;
+    text-overflow: clip !important; overflow-wrap: anywhere;
+}
+/* Kaders in één rij krijgen dezelfde hoogte. */
+[data-testid="stHorizontalBlock"]:has([data-testid="stMetric"]) [data-testid="stColumn"] [data-testid="stVerticalBlock"],
+[data-testid="stHorizontalBlock"]:has([data-testid="stMetric"]) [data-testid="stColumn"] [data-testid="stLayoutWrapper"] {
+    height: 100% !important;
+}
+/* Op een telefoon twee kengetallen naast elkaar i.p.v. elk op een eigen regel;
+   een oneven laatste vakje blijft half breed. */
+@media (max-width: 640px) {
+    [data-testid="stHorizontalBlock"]:has([data-testid="stMetric"]) {
+        flex-wrap: wrap; gap: 0.5rem;
+    }
+    [data-testid="stHorizontalBlock"]:has([data-testid="stMetric"]) > [data-testid="stColumn"],
+    [data-testid="stHorizontalBlock"]:has([data-testid="stMetric"]) > [data-testid="column"] {
+        min-width: calc(50% - 0.25rem) !important; max-width: calc(50% - 0.25rem) !important;
+        flex: 0 0 calc(50% - 0.25rem) !important;
+    }
+}
+
 /* Minder lege ruimte boven de inhoud; nog wel onder de vaste Streamlit-balk (3.75rem). */
 [data-testid="stMainBlockContainer"], .block-container { padding-top: 3.75rem !important; }
 </style>
@@ -109,6 +132,23 @@ def metric_gekaderd(kolom, label, waarde, delta=None, delta_color="normal", help
     """
     with kolom.container(border=True):
         st.metric(label, waarde, delta=delta, delta_color=delta_color, help=help)
+
+
+def toon_kengetallen(items, max_per_rij=4):
+    """
+    Toont kengetallen (lijst dicts met label, waarde en optioneel delta,
+    delta_color, help) in gekaderde vakjes, maximaal `max_per_rij` naast
+    elkaar. Zijn het er meer, dan gaan ze over gelijke rijen verdeeld
+    (5 wordt 3+2, 6 wordt 3+3) i.p.v. 4+1, zodat het netjes blijft.
+    """
+    if not items:
+        return
+    aantal_rijen = -(-len(items) // max_per_rij)
+    per_rij = -(-len(items) // aantal_rijen)
+    for begin in range(0, len(items), per_rij):
+        kolommen = st.columns(per_rij)
+        for kolom, item in zip(kolommen, items[begin:begin + per_rij]):
+            metric_gekaderd(kolom, **item)
 
 
 def jaargemiddelden_oogst(jaar):
@@ -884,22 +924,13 @@ with tab_overzicht:
 
         # Kengetallen bovenaan, zodat je die in 1 oogopslag ziet zonder
         # eerst langs de (steeds langere) tabel te hoeven scrollen.
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            actieve_teelten = len(df[df['Status'] == 'Lopend'])
-            st.metric("Actieve teelten", actieve_teelten)
-        with col2:
-            nog_te_starten = len(df[df['Status'] == 'Nog te starten'])
-            st.metric("Nog te starten", nog_te_starten)
-        with col3:
-            afgeronde_teelten = len(df[df['Status'] == 'Afgerond'])
-            st.metric("Afgeronde teelten", afgeronde_teelten)
-        with col4:
-            gem_duur = df[df['Teeltduur (dagen)'] != '-']['Teeltduur (dagen)'].astype(float).mean()
-            if not pd.isna(gem_duur):
-                st.metric("Gem. teeltduur (dagen)", f"{gem_duur:.0f}")
-            else:
-                st.metric("Gem. teeltduur (dagen)", "-")
+        gem_duur = df[df['Teeltduur (dagen)'] != '-']['Teeltduur (dagen)'].astype(float).mean()
+        toon_kengetallen([
+            {"label": "Actief", "waarde": len(df[df['Status'] == 'Lopend'])},
+            {"label": "Nog te starten", "waarde": len(df[df['Status'] == 'Nog te starten'])},
+            {"label": "Afgerond", "waarde": len(df[df['Status'] == 'Afgerond'])},
+            {"label": "Gem. duur", "waarde": f"{gem_duur:.0f} dgn" if not pd.isna(gem_duur) else "-"},
+        ])
 
         st.markdown("---")
 
@@ -1006,22 +1037,18 @@ with tab_week:
         gem_water_week = pd.to_numeric(df_water_week["Totaal (l/m²)"], errors="coerce").mean()
 
     # --- Samenvatting bovenaan ---
-    rij_week = st.columns(5)
-    metric_gekaderd(rij_week[0], "Geplant deze week", len(geplant_week))
-    metric_gekaderd(rij_week[1], "Totaal emmers", f"{totaal_emmers_week:g}" if emmers_week else "-")
-    metric_gekaderd(
-        rij_week[2], "Totaal stelen",
-        f"{totaal_stelen_week:,.0f}".replace(",", ".") if emmers_week else "-"
-    )
-    metric_gekaderd(
-        rij_week[3], "Gem. uitval",
-        f"{sum(uitval_pct_week) / len(uitval_pct_week):.1f} %" if uitval_pct_week else "-"
-    )
-    metric_gekaderd(
-        rij_week[4], "Gem. watergift",
-        f"{gem_water_week:.1f} l/m²" if gem_water_week is not None and pd.notna(gem_water_week) else "-",
-        help=f"Over {len(df_water_week)} vakken" if df_water_week is not None else None,
-    )
+    toon_kengetallen([
+        {"label": "Geplant", "waarde": len(geplant_week), "help": "Teelten gestart in deze week"},
+        {"label": "Emmers", "waarde": f"{totaal_emmers_week:g}" if emmers_week else "-"},
+        {"label": "Stelen",
+         "waarde": f"{totaal_stelen_week:,.0f}".replace(",", ".") if emmers_week else "-"},
+        {"label": "Gem. uitval",
+         "waarde": f"{sum(uitval_pct_week) / len(uitval_pct_week):.1f} %" if uitval_pct_week else "-",
+         "help": "Teelten die deze week zijn afgerond"},
+        {"label": "Gem. water",
+         "waarde": f"{gem_water_week:.1f} l/m²" if gem_water_week is not None and pd.notna(gem_water_week) else "-",
+         "help": f"Gemiddeld over {len(df_water_week)} vakken" if df_water_week is not None else None},
+    ])
 
     st.markdown("---")
 
@@ -1229,68 +1256,61 @@ with tab_detail:
         if dagen_lijst:
             gem_dagen = sum(dagen_lijst) / len(dagen_lijst)
             gem_weken = round(gem_dagen / 7 * 2) / 2
-            teeltduur_tekst = f"{gem_weken:g} weken ({gem_dagen:.0f} dagen)"
+            teeltduur_tekst = f"{gem_weken:g} wk ({gem_dagen:.0f} dgn)"
         else:
             teeltduur_tekst = "-"
 
         teeltduur_delta = None
         if dagen_lijst and verwachte_duur_weken is not None:
-            teeltduur_delta = f"{gem_weken - verwachte_duur_weken:+.1f} weken t.o.v. gepland ({verwachte_duur_weken:g} wk)"
+            teeltduur_delta = f"{gem_weken - verwachte_duur_weken:+.1f} wk t.o.v. gepland ({verwachte_duur_weken:g} wk)"
+
+        def _datum_bereik(datums, voorvoegsel=""):
+            # Niet-afbrekende streepjes (U+2011): op een smal scherm mag het
+            # bereik wél op de spatie breken, maar niet midden in een datum.
+            nb = lambda d: format_datum(d).replace("-", "‑")
+            if datums[0] == datums[-1]:
+                return f"{voorvoegsel}{nb(datums[-1])}"
+            return f"{voorvoegsel}{nb(datums[0])} – {nb(datums[-1])}"
 
         oogst_datums_echt = sorted(t["datum_oogst"] for t in teelten_groep if t["datum_oogst"])
         if oogst_datums_echt:
-            if oogst_datums_echt[0] == oogst_datums_echt[-1]:
-                oogst_tekst = format_datum(oogst_datums_echt[-1])
-            else:
-                oogst_tekst = f"{format_datum(oogst_datums_echt[0])} - {format_datum(oogst_datums_echt[-1])}"
+            oogst_tekst = _datum_bereik(oogst_datums_echt)
         else:
             verwachte_oogsten = []
             for t in teelten_groep:
                 _, verwacht_t = bereken_verwachte_oogstdatum(t["datum_teelt_start"])
                 if verwacht_t:
                     verwachte_oogsten.append(verwacht_t)
-            if verwachte_oogsten:
-                verwachte_oogsten.sort()
-                if verwachte_oogsten[0] == verwachte_oogsten[-1]:
-                    oogst_tekst = f"~{format_datum(verwachte_oogsten[-1])}"
-                else:
-                    oogst_tekst = f"~{format_datum(verwachte_oogsten[0])} - {format_datum(verwachte_oogsten[-1])}"
-            else:
-                oogst_tekst = "-"
+            oogst_tekst = _datum_bereik(sorted(verwachte_oogsten), "~") if verwachte_oogsten else "-"
 
-        rij_data = st.columns(4)
-        metric_gekaderd(rij_data[0], "Eerste startdatum", format_datum(start_datums[0]))
-        metric_gekaderd(rij_data[1], "Oogstdatum", oogst_tekst)
-        metric_gekaderd(
-            rij_data[2], "Gem. teeltduur", teeltduur_tekst,
-            delta=teeltduur_delta, delta_color="off",
-        )
-        metric_gekaderd(rij_data[3], "Status", status_tekst)
+        toon_kengetallen([
+            {"label": "Eerste start", "waarde": format_datum(start_datums[0])},
+            {"label": "Oogst", "waarde": oogst_tekst,
+             "help": "Werkelijke oogstdatum(s); met ~ de verwachte datum uit de teeltduur-tabel."},
+            {"label": "Gem. duur", "waarde": teeltduur_tekst,
+             "delta": teeltduur_delta, "delta_color": "off",
+             "help": "Gemiddelde teeltduur van de teelten in deze plantweek."},
+            {"label": "Status", "waarde": status_tekst},
+        ])
 
-        rij_klimaat = st.columns(5)
-        metric_gekaderd(
-            rij_klimaat[0], "Gem. temperatuur",
-            f"{sum(temp_lijst) / len(temp_lijst):.1f} °C" if temp_lijst else "-",
-            delta=f"{sum(delta_temp_lijst) / len(delta_temp_lijst):+.1f} °C t.o.v. ideaal" if delta_temp_lijst else None,
-            delta_color="off",
-            help="Ideale etmaaltemperatuur op basis van de lichtsom: "
-                 f"{LICHT_TEMP_FACTOR} x lichtsom + {LICHT_TEMP_BASIS} °C.",
-        )
-        metric_gekaderd(
-            rij_klimaat[1], "Gem. RV", f"{sum(rv_lijst) / len(rv_lijst):.0f} %" if rv_lijst else "-"
-        )
-        metric_gekaderd(
-            rij_klimaat[2], "Gem. lichtsom (per dag)",
-            f"{sum(straling_lijst) / len(straling_lijst):.0f}" if straling_lijst else "-"
-        )
-        metric_gekaderd(
-            rij_klimaat[3], "Gem. water per vak",
-            f"{sum(water_lijst) / len(water_lijst):.0f} l/m²" if water_lijst else "-"
-        )
-        metric_gekaderd(
-            rij_klimaat[4], "Gem. warmte per teelt",
-            f"{sum(warmte_lijst) / len(warmte_lijst) / 1000:.2f} GJ" if warmte_lijst else "-"
-        )
+        toon_kengetallen([
+            {"label": "Gem. temp.",
+             "waarde": f"{sum(temp_lijst) / len(temp_lijst):.1f} °C" if temp_lijst else "-",
+             "delta": f"{sum(delta_temp_lijst) / len(delta_temp_lijst):+.1f} °C t.o.v. ideaal" if delta_temp_lijst else None,
+             "delta_color": "off",
+             "help": "Gemiddelde etmaaltemperatuur. Ideaal is afhankelijk van de lichtsom: "
+                     f"{LICHT_TEMP_FACTOR} x lichtsom + {LICHT_TEMP_BASIS} °C."},
+            {"label": "Gem. RV", "waarde": f"{sum(rv_lijst) / len(rv_lijst):.0f} %" if rv_lijst else "-"},
+            {"label": "Lichtsom/dag",
+             "waarde": f"{sum(straling_lijst) / len(straling_lijst):.0f}" if straling_lijst else "-",
+             "help": "Gemiddelde lichtsom per dag."},
+            {"label": "Water",
+             "waarde": f"{sum(water_lijst) / len(water_lijst):.0f} l/m²" if water_lijst else "-",
+             "help": "Gemiddelde totale watergift per vak."},
+            {"label": "Warmte",
+             "waarde": f"{sum(warmte_lijst) / len(warmte_lijst) / 1000:.2f} GJ" if warmte_lijst else "-",
+             "help": "Gemiddeld warmteverbruik per teelt."},
+        ])
 
         afgeronde_groep = [t for t in teelten_groep if t["datum_oogst"]]
         halve_lengtes = [t["lengte_half"] for t in teelten_groep if t["lengte_half"]]
@@ -1312,49 +1332,41 @@ with tab_detail:
 
         jaar_gem = jaargemiddelden_oogst(date.today().year)
 
-        def _delta_jaar(waarde, jaar_waarde, eenheid=""):
-            if jaar_waarde is None:
+        def _delta_jaar(waarde, jaar_waarde, eenheid="", decimalen=1):
+            if waarde is None or jaar_waarde is None:
                 return None
-            return f"{waarde - jaar_waarde:+.1f}{eenheid} t.o.v. dit jaar"
+            return f"{waarde - jaar_waarde:+.{decimalen}f}{eenheid} t.o.v. dit jaar"
 
-        rij_oogst = st.columns(6)
-        metric_gekaderd(
-            rij_oogst[0], "Florgib (halverwege)",
-            f"{sum(halve_lengtes) / len(halve_lengtes):.1f} cm" if halve_lengtes else "-",
-        )
+        gem_halve_lengte = sum(halve_lengtes) / len(halve_lengtes) if halve_lengtes else None
         gem_lengte = sum(lengtes) / len(lengtes) if lengtes else None
-        metric_gekaderd(
-            rij_oogst[1], "Gem. taklengte", f"{gem_lengte:.1f} cm" if gem_lengte is not None else "-",
-            delta=_delta_jaar(gem_lengte, jaar_gem["lengte"], " cm") if gem_lengte is not None else None,
-            delta_color="off",
-        )
         gem_gewicht = sum(gewichten) / len(gewichten) if gewichten else None
-        metric_gekaderd(
-            rij_oogst[2], "Gem. takgewicht", f"{gem_gewicht:.0f} gram" if gem_gewicht is not None else "-",
-            delta=_delta_jaar(gem_gewicht, jaar_gem["gewicht"], " gram") if gem_gewicht is not None else None,
-            delta_color="off",
-        )
         gem_uitval = sum(uitval_lijst) / len(uitval_lijst) if uitval_lijst else None
-        metric_gekaderd(
-            rij_oogst[3], "Gem. uitval", f"{gem_uitval:.1f} %" if gem_uitval is not None else "-",
-            delta=_delta_jaar(gem_uitval, jaar_gem["uitval"], " %pt") if gem_uitval is not None else None,
-            delta_color="off",
-        )
         gem_factor = sum(factor_lijst) / len(factor_lijst) if factor_lijst else None
-        metric_gekaderd(
-            rij_oogst[4], "Gem. factor (oogst/halverwege)",
-            f"{gem_factor:.2f}" if gem_factor is not None else "-",
-            delta=_delta_jaar(gem_factor, jaar_gem["factor"]) if gem_factor is not None else None,
-            delta_color="off",
-            help="Eindlengte gedeeld door de lengte bij de Florgib-meting halverwege.",
+        gem_gewicht_10cm = (
+            sum(gewicht_per_10cm_lijst) / len(gewicht_per_10cm_lijst) if gewicht_per_10cm_lijst else None
         )
-        gem_gewicht_10cm = sum(gewicht_per_10cm_lijst) / len(gewicht_per_10cm_lijst) if gewicht_per_10cm_lijst else None
-        metric_gekaderd(
-            rij_oogst[5], "Gem. gewicht per 10 cm",
-            f"{gem_gewicht_10cm:.1f} gram" if gem_gewicht_10cm is not None else "-",
-            delta=_delta_jaar(gem_gewicht_10cm, jaar_gem["gewicht_10cm"], " gram") if gem_gewicht_10cm is not None else None,
-            delta_color="off",
-        )
+        toon_kengetallen([
+            {"label": "Florgib",
+             "waarde": f"{gem_halve_lengte:.1f} cm" if gem_halve_lengte is not None else "-",
+             "help": "Gemiddelde lengte bij de Florgib-meting halverwege de teelt."},
+            {"label": "Gem. taklengte",
+             "waarde": f"{gem_lengte:.1f} cm" if gem_lengte is not None else "-",
+             "delta": _delta_jaar(gem_lengte, jaar_gem["lengte"], " cm"), "delta_color": "off"},
+            {"label": "Gem. takgewicht",
+             "waarde": f"{gem_gewicht:.0f} g" if gem_gewicht is not None else "-",
+             "delta": _delta_jaar(gem_gewicht, jaar_gem["gewicht"], " g", 0), "delta_color": "off"},
+            {"label": "Gem. uitval",
+             "waarde": f"{gem_uitval:.1f} %" if gem_uitval is not None else "-",
+             "delta": _delta_jaar(gem_uitval, jaar_gem["uitval"], " %-punt"), "delta_color": "off"},
+            {"label": "Gem. factor",
+             "waarde": f"{gem_factor:.2f}" if gem_factor is not None else "-",
+             "delta": _delta_jaar(gem_factor, jaar_gem["factor"], "", 2), "delta_color": "off",
+             "help": "Eindlengte gedeeld door de lengte bij de Florgib-meting halverwege."},
+            {"label": "Gewicht/10 cm",
+             "waarde": f"{gem_gewicht_10cm:.1f} g" if gem_gewicht_10cm is not None else "-",
+             "delta": _delta_jaar(gem_gewicht_10cm, jaar_gem["gewicht_10cm"], " g"), "delta_color": "off",
+             "help": "Gemiddeld takgewicht per 10 cm taklengte."},
+        ])
 
         st.markdown("---")
 
@@ -1971,10 +1983,11 @@ with tab_stats:
             minimum = df_afgerond['Teeltduur (dagen)'].min()
             maximum = df_afgerond['Teeltduur (dagen)'].max()
 
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Gemiddeld", f"{gemiddeld:.0f} dagen")
-            col2.metric("Kortst", f"{minimum:.0f} dagen")
-            col3.metric("Langst", f"{maximum:.0f} dagen")
+            toon_kengetallen([
+                {"label": "Gemiddeld", "waarde": f"{gemiddeld:.0f} dgn"},
+                {"label": "Kortst", "waarde": f"{minimum:.0f} dgn"},
+                {"label": "Langst", "waarde": f"{maximum:.0f} dgn"},
+            ])
 
         # --- Analyse: lengtegroei ---
         st.markdown("---")
