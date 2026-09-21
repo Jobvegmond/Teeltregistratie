@@ -226,6 +226,72 @@ def lijngrafiek_per_afdeling(lang, y_titel, toon_dagnacht=True, formaat=".1f",
     toon_grafiek(chart, lang, melding, waardekolom="waarde")
 
 
+# --- TABELLEN: gedeelde weergave ---
+
+def toon_tabel(df, kolommen, verberg_leeg=False, pin_eerste=False):
+    """
+    Toont een DataFrame als nette tabel volgens `kolommen`: een lijst van
+    (kolom, label, soort, formaat, breedte) met soort "tekst", "getal" of
+    "datum". Alleen die kolommen worden getoond, in die volgorde.
+    - "-" en lege tekst zijn echt leeg. Streamlit toont een ontbrekend getal
+      of ontbrekende datum als "None"; een kolom met lege cellen wordt daarom
+      tekst met lege cellen (getallen met cijferspaties tot gelijke breedte,
+      zodat sorteren nog op getalvolgorde loopt). Kolommen zonder gaten blijven
+      echte getal-/datumkolommen (rechts uitgelijnd, sorteren klopt);
+    - een kolom met iets dat niet als getal/datum (dd-mm-jj) te lezen is blijft
+      tekst; er verdwijnt niets;
+    - breedte: "small"/"medium"/"large" of een aantal pixels; "small" wordt
+      afgeleid van de lengte van de kolomkop, zodat er zoveel mogelijk
+      kolommen op het scherm passen;
+    - verberg_leeg: kolommen zonder één waarde worden weggelaten;
+    - pin_eerste: eerste kolom blijft staan bij zijwaarts scrollen.
+    """
+    df = df.copy()
+    df = df.mask(df.isin(["-", ""]))
+    config, volgorde = {}, []
+    for kolom, label, soort, formaat, breedte in kolommen:
+        if kolom not in df.columns:
+            continue
+        if verberg_leeg and df[kolom].isna().all():
+            continue
+        f = formaat or "%d"
+        if soort in ("getal", "datum"):
+            gelezen = (
+                pd.to_numeric(df[kolom], errors="coerce") if soort == "getal"
+                else pd.to_datetime(df[kolom], format="%d-%m-%y", errors="coerce")
+            )
+            if gelezen.isna().sum() > df[kolom].isna().sum():
+                soort = "tekst"  # niet alles leesbaar: laat de kolom ongemoeid
+            else:
+                if gelezen.isna().any():  # gaten: tekst met echt lege cellen
+                    if soort == "getal":
+                        tekst = gelezen.map(lambda v: "" if pd.isna(v) else f % v)
+                        breed = tekst.str.len().max()
+                        gelezen = tekst.map(lambda t: t.rjust(breed, " ") if t else t)
+                    else:
+                        gelezen = gelezen.map(lambda v: "" if pd.isna(v) else v.strftime("%d-%m-%y"))
+                    soort = "tekst"
+                df[kolom] = gelezen
+        if soort == "tekst":
+            df[kolom] = df[kolom].fillna("").astype(str)
+        if breedte == "small":
+            breedte = int(max(85 if soort == "datum" else 60, 26 + 6.5 * len(label)))
+        elif breedte == "medium":
+            breedte = 105
+        elif breedte == "large":
+            breedte = 320
+        if soort == "getal":
+            config[kolom] = st.column_config.NumberColumn(label, format=f, width=breedte)
+        elif soort == "datum":
+            config[kolom] = st.column_config.DateColumn(label, format="DD-MM-YY", width=breedte)
+        else:
+            config[kolom] = st.column_config.TextColumn(label, width=breedte)
+        volgorde.append(kolom)
+    if pin_eerste and volgorde:
+        config[volgorde[0]]["pinned"] = True
+    st.dataframe(df[volgorde], hide_index=True, column_config=config)
+
+
 def metric_gekaderd(kolom, label, waarde, delta=None, delta_color="normal", help=None):
     """
     st.metric in een gekaderd vakje (i.p.v. los/gecentreerd), zodat een rij
@@ -1001,6 +1067,28 @@ tab_overzicht, tab_week, tab_detail, tab_planning, tab_klimaat, tab_stats, tab_l
 
 kolommen, rijen = get_overzicht_dataframe()
 
+# Kolommen van de teeltentabel: (kolom, label, soort, formaat, breedte).
+OVERZICHT_KOLOMMEN = [
+    ("Code", "Code", "tekst", None, "medium"),
+    ("Teeltvak", "Vak", "tekst", None, "small"),
+    ("Status", "Status", "tekst", None, "medium"),
+    ("Startdatum", "Start", "datum", None, "small"),
+    ("Startweek", "Wk start", "getal", "%d", "small"),
+    ("Aantal Planten", "Planten", "getal", "%d", "small"),
+    ("Aantal Emmers", "Emmers", "getal", "%d", "small"),
+    ("Aantal Stelen", "Stelen", "getal", "%d", "small"),
+    ("Uitval (%)", "Uitval (%)", "getal", "%.1f", "small"),
+    ("Datum Halverwege", "Halverwege", "datum", None, "small"),
+    ("Week Halverwege", "Wk half", "getal", "%d", "small"),
+    ("Lengte Half (cm)", "Lengte half (cm)", "getal", "%.1f", "small"),
+    ("Oogstdatum", "Oogst", "datum", None, "small"),
+    ("Oogstweek", "Wk oogst", "getal", "%d", "small"),
+    ("Teeltduur (dagen)", "Duur (dgn)", "getal", "%d", "small"),
+    ("Oogstlengte (cm)", "Oogstlengte (cm)", "getal", "%.1f", "small"),
+    ("Oogstgewicht (gram)", "Gewicht (g)", "getal", "%d", "small"),
+    ("Rijpheid", "Rijpheid", "tekst", None, "small"),
+]
+
 # --- OVERZICHT ---
 with tab_overzicht:
     st.subheader("📊 Overzicht Teelten")
@@ -1029,11 +1117,17 @@ with tab_overzicht:
         df_ov_actief = df.loc[~mask_afgerond].drop(columns=verborgen)
         df_ov_afgerond = df.loc[mask_afgerond].sort_values('_startdatum_iso', ascending=False).drop(columns=verborgen)
 
+        # Kolommen over de oogst bestaan pas bij afgeronde teelten en horen daar;
+        # bij lopende teelten worden ze niet getoond. Overige kolommen die voor
+        # de getoonde teelten nog helemaal leeg zijn (bijv. oogstlengte) ook niet.
+        oogst_kolommen = {"Oogstweek", "Teeltduur (dagen)", "Oogstdatum"}
+        actief_kolommen = [k for k in OVERZICHT_KOLOMMEN if k[0] not in oogst_kolommen]
+
         with st.expander(f"Lopend & nog te starten tonen ({len(df_ov_actief)})", expanded=True):
-            st.dataframe(df_ov_actief, hide_index=True)
+            toon_tabel(df_ov_actief, actief_kolommen, verberg_leeg=True, pin_eerste=True)
 
         with st.expander(f"Afgeronde teelten tonen ({len(df_ov_afgerond)})"):
-            st.dataframe(df_ov_afgerond, hide_index=True)
+            toon_tabel(df_ov_afgerond, OVERZICHT_KOLOMMEN, pin_eerste=True)
     else:
         st.info("Nog geen teelten geregistreerd. Gebruik de zijbalk om te beginnen.")
 
@@ -1142,12 +1236,17 @@ with tab_week:
     # --- Geplant ---
     st.write(f"**🌱 Geplant deze week** ({len(geplant_week)})")
     if geplant_week:
-        st.dataframe(pd.DataFrame([{
+        toon_tabel(pd.DataFrame([{
             "Vak": t["vaknummer"],
             "Code": t["code"] or "-",
             "Startdatum": format_datum(t["datum_teelt_start"]),
             "Aantal planten": t["aantal_planten"] if t["aantal_planten"] is not None else "-",
-        } for t in geplant_week]), hide_index=True)
+        } for t in geplant_week]), [
+            ("Vak", "Vak", "getal", "%d", "small"),
+            ("Code", "Code", "tekst", None, "medium"),
+            ("Startdatum", "Start", "datum", None, "small"),
+            ("Aantal planten", "Planten", "getal", "%d", "small"),
+        ])
     else:
         st.caption("Geen teelten gestart deze week.")
 
@@ -1162,28 +1261,51 @@ with tab_week:
         )
         per_vak_oogst["Stelen"] = per_vak_oogst["aantal_emmers"] * 100
         per_vak_oogst = per_vak_oogst.rename(columns={"vaknummer": "Vak", "aantal_emmers": "Emmers"})
-        st.dataframe(per_vak_oogst, hide_index=True)
+        toon_tabel(per_vak_oogst, [
+            ("Vak", "Vak", "getal", "%d", "small"),
+            ("Emmers", "Emmers", "getal", "%d", "small"),
+            ("Stelen", "Stelen", "getal", "%d", "small"),
+        ])
 
         with st.expander(f"Alle oogstmomenten deze week tonen ({len(emmers_week)})"):
-            st.dataframe(pd.DataFrame([{
+            toon_tabel(pd.DataFrame([{
                 "Datum": format_datum(e["datum"]),
                 "Vak": e["vaknummer"],
                 "Code": e["code"] or "-",
                 "Emmers": e["aantal_emmers"],
-            } for e in emmers_week]), hide_index=True)
+            } for e in emmers_week]), [
+                ("Datum", "Datum", "datum", None, "small"),
+                ("Vak", "Vak", "getal", "%d", "small"),
+                ("Code", "Code", "tekst", None, "medium"),
+                ("Emmers", "Emmers", "getal", "%d", "small"),
+            ])
     else:
         st.caption("Geen emmers geregistreerd deze week.")
 
     if afgerond_week:
         st.write("**🪣 Uitval van teelten afgerond deze week**")
-        st.dataframe(pd.DataFrame(uitval_rijen_week), hide_index=True)
+        toon_tabel(pd.DataFrame(uitval_rijen_week), [
+            ("Vak", "Vak", "getal", "%d", "small"),
+            ("Code", "Code", "tekst", None, "medium"),
+            ("Oogstdatum", "Oogst", "datum", None, "small"),
+            ("Planten", "Planten", "getal", "%d", "small"),
+            ("Geoogste stelen", "Stelen", "getal", "%d", "small"),
+            ("Uitval (%)", "Uitval (%)", "getal", "%.1f", "small"),
+            ("Lengte (cm)", "Lengte (cm)", "getal", "%.1f", "small"),
+            ("Gewicht (g)", "Gewicht (g)", "getal", "%d", "small"),
+            ("Rijpheid", "Rijpheid", "tekst", None, "small"),
+        ])
 
     st.markdown("---")
 
     # --- Watergift ---
     st.write("**💧 Watergift deze week**")
     if water_week:
-        st.dataframe(df_water_week, hide_index=True)
+        toon_tabel(df_water_week, [
+            ("Vak", "Vak", "getal", "%d", "small"),
+            ("Totaal (l/m²)", "Totaal (l/m²)", "getal", "%.1f", "small"),
+            ("Dagen met data", "Dagen", "getal", "%d", "small"),
+        ])
     else:
         st.caption("Geen watergiftdata beschikbaar voor deze week.")
 
@@ -1197,7 +1319,10 @@ with tab_week:
         )
         pivot_water = df_water_dag.pivot_table(index="Vak", columns="Datum", values="Liter/m²", aggfunc="sum")
         pivot_water = pivot_water.reindex(kolomvolgorde_water, axis=1).sort_index()
-        st.dataframe(pivot_water.round(1))
+        st.dataframe(pivot_water.round(1), column_config={
+            dag: st.column_config.NumberColumn(dag[:5], format="%.1f", width="small")
+            for dag in pivot_water.columns
+        })
     else:
         st.caption("Geen watergiftdata per dag beschikbaar voor deze week.")
 
@@ -1223,7 +1348,12 @@ with tab_week:
                 "datum": datum, "afdeling": afdeling_week, "temp_24h": temp, "lichtsom": straling,
             })
     if klimaat_rijen_week:
-        st.dataframe(pd.DataFrame(klimaat_rijen_week), hide_index=True)
+        toon_tabel(pd.DataFrame(klimaat_rijen_week), [
+            ("Afdeling", "Afdeling", "getal", "%d", "small"),
+            ("Gem. temperatuur (°C)", "Temp. (°C)", "getal", "%.1f", "small"),
+            ("Gem. RV (%)", "RV (%)", "getal", "%.1f", "small"),
+            ("Gem. lichtsom/dag", "Lichtsom/dag", "getal", "%d", "small"),
+        ])
     else:
         st.caption("Geen klimaatdata beschikbaar voor deze week.")
 
@@ -1744,7 +1874,11 @@ with tab_planning:
             ],
             columns=["Plantweek", "Aantal vakken (arbeid)", "Vakken (oplopend)"]
         )
-        st.dataframe(df_planning_week, hide_index=True)
+        toon_tabel(df_planning_week, [
+            ("Plantweek", "Plantweek", "tekst", None, "medium"),
+            ("Aantal vakken (arbeid)", "Aantal (arbeid)", "getal", "%d", "small"),
+            ("Vakken (oplopend)", "Vakken", "tekst", None, "large"),
+        ])
     else:
         st.info("Nog geen concept-planningen om per week te tonen.")
 
@@ -2016,7 +2150,20 @@ with tab_klimaat:
         st.markdown("---")
         with st.expander(f"📋 Gemiddelden per teelt ({len(rijen_klimaat)})"):
             df_klimaat = pd.DataFrame(rijen_klimaat, columns=kolommen_klimaat)
-            st.dataframe(df_klimaat, hide_index=True)
+            toon_tabel(df_klimaat, [
+                ("Code", "Code", "tekst", None, "medium"),
+                ("Teeltvak", "Vak", "tekst", None, "small"),
+                ("Afdeling", "Afd.", "getal", "%d", "small"),
+                ("Startdatum", "Start", "datum", None, "small"),
+                ("Oogstdatum", "Oogst", "tekst", None, "small"),
+                ("Gem. temperatuur (°C)", "Temp. (°C)", "getal", "%.1f", "small"),
+                ("Gem. RV (%)", "RV (%)", "getal", "%.1f", "small"),
+                ("Gem. stralingssom (per dag)", "Lichtsom/dag", "getal", "%d", "small"),
+                ("Ideale temp (°C)", "Ideaal (°C)", "getal", "%.1f", "small"),
+                ("Verschil (°C)", "Verschil (°C)", "tekst", None, "small"),
+                ("Totaal water (l/m²)", "Water (l/m²)", "getal", "%.1f", "small"),
+                ("Totaal warmte (GJ)", "Warmte (GJ)", "getal", "%.2f", "small"),
+            ], pin_eerste=True)
 
     # --- Geïmporteerd t/m: per afdeling tot welke dag er data is (onderaan) ---
     if dekking:
@@ -2036,7 +2183,14 @@ with tab_klimaat:
                     "Ontbrekende dagen": ontbrekend,
                     "Loopt achter": f"{achterstand} dg" if achterstand else "-",
                 })
-            st.dataframe(pd.DataFrame(dekking_rijen), hide_index=True)
+            toon_tabel(pd.DataFrame(dekking_rijen), [
+                ("Afdeling", "Afdeling", "getal", "%d", "small"),
+                ("Eerste dag", "Eerste dag", "datum", None, "small"),
+                ("Laatste dag", "Laatste dag", "datum", None, "small"),
+                ("Dagen", "Dagen", "getal", "%d", "small"),
+                ("Ontbrekende dagen", "Ontbrekend", "getal", "%d", "small"),
+                ("Loopt achter", "Loopt achter", "tekst", None, "small"),
+            ])
             dagen_oud = (datetime.today().date() - datetime.strptime(laatste_alle, "%Y-%m-%d").date()).days
             st.caption(
                 f"Nieuwste geïmporteerde dag: {format_datum(laatste_alle)} ({dagen_oud} dag(en) geleden). "
@@ -2245,7 +2399,14 @@ with tab_log:
         if gekozen_type != "Alle types":
             df_log = df_log[df_log["Type"] == gekozen_type]
 
-        st.dataframe(df_log, hide_index=True)
+        toon_tabel(df_log, [
+            ("Tijdstip", "Tijdstip", "tekst", None, "medium"),
+            ("Gebruiker", "Gebruiker", "tekst", None, "small"),
+            ("Actie", "Actie", "tekst", None, "small"),
+            ("Type", "Type", "tekst", None, "medium"),
+            ("ID", "ID", "tekst", None, "small"),
+            ("Omschrijving", "Omschrijving", "tekst", None, "large"),
+        ])
     else:
         st.info("Nog geen logregels.")
 
