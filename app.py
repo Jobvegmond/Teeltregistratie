@@ -1446,16 +1446,24 @@ with tab_planning:
             lambda x: f"{x:.1f} wk" if pd.notna(x) else "–"
         )
 
-        # Overlap: per vak, een balk die begint vóórdat een eerder gestarte
-        # balk in datzelfde vak al geoogst is (nu toegestaan door de planner,
-        # zie planningsmodule) — de nieuwere balk krijgt een rode stippelrand.
-        df_stroken["overlap"] = False
+        # Overlap: per vak, het stuk van een balk dat vóór de oogst van een
+        # eerder gestarte balk in datzelfde vak valt (nu toegestaan door de
+        # planner, zie planningsmodule). Alleen dát dagbereik krijgt een rode
+        # stippelrand, niet de hele balk — via een losse laag die alleen over
+        # het overlappende deel getekend wordt.
+        overlap_segmenten = []
         for _vak, groep in df_stroken.groupby("vaknummer"):
             eerdere_einden = []
-            for idx, rij in groep.sort_values("start").iterrows():
-                if any(rij["start"] < eind_e for eind_e in eerdere_einden):
-                    df_stroken.loc[idx, "overlap"] = True
+            for _idx, rij in groep.sort_values("start").iterrows():
+                overlappend = [eind_e for eind_e in eerdere_einden if rij["start"] < eind_e]
+                if overlappend:
+                    overlap_segmenten.append({
+                        "vaknummer": rij["vaknummer"],
+                        "start": rij["start"],
+                        "eind": min(rij["eind"], max(overlappend)),
+                    })
                 eerdere_einden.append(rij["eind"])
+        df_overlap = pd.DataFrame(overlap_segmenten)
 
         kleur = alt.Color(
             "status:N",
@@ -1465,24 +1473,21 @@ with tab_planning:
             ),
             legend=alt.Legend(title=None, orient="top"),
         )
-        df_stroken["overlap_tekst"] = df_stroken["overlap"].map({True: "Ja", False: "Nee"})
+        y_as = alt.Y(
+            "vaknummer:O", title="Vak", sort="ascending",
+            scale=alt.Scale(domain=list(range(1, 40))),
+        )
         balken = (
             alt.Chart(df_stroken)
-            .mark_bar(height=13, cornerRadius=3)
+            .mark_bar(height=13, cornerRadius=3, stroke="white", strokeWidth=1)
             .encode(
-                y=alt.Y(
-                    "vaknummer:O", title="Vak", sort="ascending",
-                    scale=alt.Scale(domain=list(range(1, 40))),
-                ),
+                y=y_as,
                 x=alt.X(
                     "start:T", title="Week",
                     axis=alt.Axis(format="%V", tickCount={"interval": "week", "step": 2}, grid=True),
                 ),
                 x2="eind:T",
                 color=kleur,
-                stroke=alt.condition("datum.overlap", alt.value("#e34948"), alt.value("white")),
-                strokeWidth=alt.condition("datum.overlap", alt.value(2), alt.value(1)),
-                strokeDash=alt.condition("datum.overlap", alt.value([4, 2]), alt.value([1, 0])),
                 tooltip=[
                     alt.Tooltip("vaknummer:O", title="Vak"),
                     alt.Tooltip("label:N", title="Teelt"),
@@ -1490,23 +1495,32 @@ with tab_planning:
                     alt.Tooltip("start_tekst:N", title="Start"),
                     alt.Tooltip("eind_tekst:N", title="Oogst"),
                     alt.Tooltip("duur_tekst:N", title="Teeltduur"),
-                    alt.Tooltip("overlap_tekst:N", title="Overlapt vorige ronde"),
                 ],
             )
         )
+        lagen = [balken]
+        if not df_overlap.empty:
+            overlap_balken = (
+                alt.Chart(df_overlap)
+                .mark_bar(height=13, cornerRadius=3, filled=False, stroke="#e34948",
+                          strokeWidth=2, strokeDash=[4, 2])
+                .encode(y=y_as, x="start:T", x2="eind:T")
+            )
+            lagen.append(overlap_balken)
         vandaag_lijn = (
             alt.Chart(pd.DataFrame({"d": [pd.Timestamp(date.today())]}))
             .mark_rule(color="#e34948", strokeDash=[4, 3])
             .encode(x="d:T")
         )
+        lagen.append(vandaag_lijn)
         st.altair_chart(
-            (balken + vandaag_lijn).properties(height=640).configure_view(strokeOpacity=0),
+            alt.layer(*lagen).properties(height=640).configure_view(strokeOpacity=0),
             use_container_width=True,
         )
         st.caption(
             "Strokenplanning: grijs = afgerond, groen = lopende teelt, blauw = concept-planning. "
-            "Getal op de as = ISO-weeknummer; rode stippellijn = vandaag. Een balk met een rode "
-            "stippelrand start vóórdat de vorige ronde in dat vak is geoogst (overlap). Oogstdatum "
+            "Getal op de as = ISO-weeknummer; rode stippellijn = vandaag. Een rode stippelrand om "
+            "een deel van een balk = die dagen overlappen met de vorige ronde in dat vak. Oogstdatum "
             "van lopende teelten en concepten is de verwachte datum uit de teeltduur-tabel. Beweeg "
             "over een balk voor weeknummer + dag van start en oogst en de teeltduur in weken."
         )
