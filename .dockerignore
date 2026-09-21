@@ -16,6 +16,7 @@ __pycache__/
 Energie*/
 Klimaat*/
 _brandweerrooster_wip/
+_oud-*/
 
 # Scripts die op je laptop of in DSM draaien, niet in de container.
 migreer_naar_nas.py

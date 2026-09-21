@@ -8,6 +8,7 @@ import re
 import sys
 
 import psycopg2
+from psycopg2.extras import execute_values
 
 HIER = os.path.dirname(os.path.abspath(__file__))
 BRON_ENV = os.path.join(HIER, ".env.productie")  # Supabase
@@ -26,6 +27,7 @@ TABELLEN = [
     "planning_weekdoel",
     "app_instelling",
     "energiedata_dag",
+    "gasdata_dag",
 ]
 
 # Tabellen met een auto-ophogende id; de sequence moet na de import bijgewerkt.
@@ -38,6 +40,7 @@ SEQUENCES = {
     "teeltplanning": "id",
     "watergift_dag": "id",
     "energiedata_dag": "id",
+    "gasdata_dag": "id",
 }
 
 
@@ -75,10 +78,12 @@ for tabel in TABELLEN:
     doel_cur.execute(f"TRUNCATE TABLE {tabel} CASCADE")
 
     if rijen:
-        placeholders = ",".join(["%s"] * len(kolommen))
         kolomlijst = ",".join(f'"{k}"' for k in kolommen)
-        doel_cur.executemany(
-            f"INSERT INTO {tabel} ({kolomlijst}) VALUES ({placeholders})", rijen
+        # In blokken van 1000: rij voor rij kost bij wijzigingenlog duizenden
+        # heen-en-weertjes, en over VPN valt de verbinding dan halverwege weg.
+        execute_values(
+            doel_cur, f"INSERT INTO {tabel} ({kolomlijst}) VALUES %s", rijen,
+            page_size=1000,
         )
 
     if tabel in SEQUENCES and rijen:
