@@ -1,3 +1,4 @@
+import math
 import os
 import secrets
 
@@ -125,6 +126,106 @@ st.markdown("""
 AFDELING_KLEUR = {1: "#2a78d6", 2: "#eb6834", 3: "#1baf7a", 4: "#eda100"}
 
 
+# --- GRAFIEKEN: gedeelde instellingen (één plek, zodat alle grafieken gelijk ogen) ---
+
+# Datumas als dd-mm: nooit Engelse maandnamen ("Oct", "Nov") op de as.
+DATUM_FORMAAT_AS = "%d-%m"
+
+# Dag/nacht/24h onderscheiden zich per afdeling alleen in dikte, helderheid en
+# stippeling — nooit in kleur (rood is gereserveerd voor waarschuwingen).
+# 24h = donker en dik, dag = licht, nacht = gestippeld.
+DEEL_VOLGORDE = ["24h", "dag", "nacht"]
+DEEL_DASH = [[1, 0], [1, 0], [2, 3]]
+DEEL_OPACITY = [1.0, 0.45, 1.0]
+DEEL_BREEDTE = [2.5, 1.5, 1.5]
+
+
+def datum_as(titel=None, veld="datum"):
+    """X-as voor datums, als dd-mm."""
+    return alt.X(f"{veld}:T", title=titel, axis=alt.Axis(format=DATUM_FORMAAT_AS, labelOverlap=True))
+
+
+def y_as(veld, titel, domein=None, **kwargs):
+    """
+    Y-as die niet automatisch vanaf 0 begint (dat verspilt ruimte bij
+    temperatuur, RV en lengte). Met `domein` een vaste schaal, bijv. om
+    meerdere lagen dezelfde as te laten delen.
+    """
+    schaal = alt.Scale(domain=domein, clamp=True) if domein else alt.Scale(zero=False)
+    return alt.Y(f"{veld}:Q", title=titel, scale=schaal, **kwargs)
+
+
+def gedeeld_domein(*reeksen, marge=1.0):
+    """[laag, hoog] met wat marge om alle opgegeven waarden heen, of None zonder waarden."""
+    waarden = [w for reeks in reeksen for w in reeks if pd.notna(w)]
+    if not waarden:
+        return None
+    return [math.floor(min(waarden) - marge), math.ceil(max(waarden) + marge)]
+
+
+def afdeling_kleur(labels):
+    """Vaste kleur per afdeling ("Afd. 3" -> AFDELING_KLEUR[3])."""
+    labels = sorted(labels)
+    return alt.Color(
+        "Afdeling:N",
+        scale=alt.Scale(
+            domain=labels,
+            range=[AFDELING_KLEUR.get(int(lbl.split()[-1]), "#8a8a80") for lbl in labels],
+        ),
+        legend=alt.Legend(title=None, orient="top"),
+    )
+
+
+def deel_encoding(toon_dagnacht):
+    """Encoding-kanalen voor 24h/dag/nacht; zonder dag/nacht één effen lijn."""
+    if not toon_dagnacht:
+        return {"strokeDash": alt.value([1, 0]), "strokeWidth": alt.value(2)}
+    legenda = alt.Legend(title=None, orient="bottom")
+
+    def _schaal(bereik):
+        return alt.Scale(domain=DEEL_VOLGORDE, range=bereik)
+
+    return {
+        "strokeDash": alt.StrokeDash("Deel:N", scale=_schaal(DEEL_DASH), legend=legenda),
+        "opacity": alt.Opacity("Deel:O", scale=_schaal(DEEL_OPACITY), legend=legenda),
+        "strokeWidth": alt.StrokeWidth("Deel:O", scale=_schaal(DEEL_BREEDTE), legend=legenda),
+    }
+
+
+def toon_grafiek(chart, data, melding, waardekolom=None):
+    """Toont de grafiek, of een korte melding i.p.v. een leeg vlak als er niets te tekenen valt."""
+    leeg = data is None or data.empty
+    if not leeg and waardekolom is not None:
+        leeg = data[waardekolom].dropna().empty
+    if leeg:
+        st.info(melding)
+        return
+    st.altair_chart(chart, use_container_width=True)
+
+
+def lijngrafiek_per_afdeling(lang, y_titel, toon_dagnacht=True, formaat=".1f",
+                             melding="Geen klimaatdata in deze periode."):
+    """
+    Lijngrafiek per afdeling uit een lange tabel met kolommen datum, Afdeling
+    ("Afd. 3"), Deel ("24h"/"dag"/"nacht") en waarde. Eén kleur per afdeling.
+    """
+    if lang is not None and not lang.empty:
+        lang = lang.dropna(subset=["waarde"]).copy()
+        if not toon_dagnacht:
+            lang = lang[lang["Deel"] == "24h"]
+        lang["datum"] = pd.to_datetime(lang["datum"])
+    chart = None
+    if lang is not None and not lang.empty:
+        chart = alt.Chart(lang).mark_line().encode(
+            x=datum_as(), y=y_as("waarde", y_titel),
+            color=afdeling_kleur(lang["Afdeling"].unique()),
+            tooltip=[alt.Tooltip("datum:T", title="datum", format="%d-%m-%y"), "Afdeling:N", "Deel:N",
+                     alt.Tooltip("waarde:Q", title=y_titel, format=formaat)],
+            **deel_encoding(toon_dagnacht),
+        )
+    toon_grafiek(chart, lang, melding, waardekolom="waarde")
+
+
 def metric_gekaderd(kolom, label, waarde, delta=None, delta_color="normal", help=None):
     """
     st.metric in een gekaderd vakje (i.p.v. los/gecentreerd), zodat een rij
@@ -188,40 +289,28 @@ def jaargemiddelden_oogst(jaar):
     }
 
 
-def klimaat_grafieken(dagen_records, toon_dagnacht=False, toon_trend=False,
-                      temp_max=30, licht_max=2500):
+def klimaat_grafieken(dagen_records, toon_dagnacht=False, toon_trend=False, licht_max=2500):
     """
     Tekent twee grafieken uit dagrecords (dicts met datum, afdeling, temp_24h,
     temp_dag, temp_nacht, rv_24h, rv_dag, rv_nacht, lichtsom):
-    1) temperatuur als lijn (linker-as 0..temp_max) gecombineerd met de
-       lichtsom per dag als staaf (rechter-as 0..licht_max, gemiddeld over de
-       gekozen afdelingen);
+    1) temperatuur als lijn (linker-as, niet vanaf 0, gedeeld door alle
+       temperatuurlagen) gecombineerd met de lichtsom per dag als staaf
+       (rechter-as 0..licht_max, gemiddeld over de gekozen afdelingen);
     2) relatieve luchtvochtigheid als lijn.
     Met toon_trend loopt er een dik voortschrijdend 14-daags gemiddelde door de
     temperatuur- en lichtsomlijn. De assen zijn temporeel, dus altijd
-    chronologisch.
+    chronologisch. Per afdeling één kleur; dag/nacht/24h verschillen alleen in
+    helderheid, dikte en stippeling.
     """
     if not dagen_records:
-        st.caption("Geen klimaatdata in deze periode.")
+        st.info("Geen klimaatdata in deze periode.")
         return
 
     df = pd.DataFrame(dagen_records)
     df["datum"] = pd.to_datetime(df["datum"])
     df["Afdeling"] = "Afd. " + df["afdeling"].astype(str)
-    afdelingen = sorted(df["afdeling"].unique())
-    kleur = alt.Color(
-        "Afdeling:N",
-        scale=alt.Scale(
-            domain=[f"Afd. {a}" for a in afdelingen],
-            range=[AFDELING_KLEUR.get(a, "#8a8a80") for a in afdelingen],
-        ),
-        legend=alt.Legend(title=None, orient="top"),
-    )
-    streepjes = (
-        alt.StrokeDash("Deel:N", legend=alt.Legend(title=None, orient="top"))
-        if toon_dagnacht else alt.value([1, 0])
-    )
-    x_as = alt.X("datum:T", title=None)
+    kleur = afdeling_kleur(df["Afdeling"].unique())
+    x_as = datum_as()
 
     def _lang(prefix):
         varianten = [(f"{prefix}_24h", "24h")]
@@ -235,33 +324,40 @@ def klimaat_grafieken(dagen_records, toon_dagnacht=False, toon_trend=False,
         lang["Deel"] = lang["_v"].map(etiket)
         return lang
 
+    temp_lang = _lang("temp")
     licht = df.groupby("datum", as_index=False)["lichtsom"].mean().dropna(subset=["lichtsom"])
-    licht_laag = alt.Chart(licht).mark_bar(color="#e7c98a", opacity=0.75).encode(
-        x=x_as,
-        y=alt.Y("lichtsom:Q", title="Lichtsom per dag",
-                scale=alt.Scale(domain=[0, licht_max], clamp=True)),
-        tooltip=[alt.Tooltip("datum:T", title="datum", format="%d-%m-%y"),
-                 alt.Tooltip("lichtsom:Q", title="lichtsom", format=".0f")],
-    )
-    temp_laag = alt.Chart(_lang("temp")).mark_line().encode(
-        x=x_as,
-        y=alt.Y("waarde:Q", title="Temperatuur (°C)",
-                scale=alt.Scale(domain=[0, temp_max], clamp=True)),
-        color=kleur, strokeDash=streepjes,
-        tooltip=[alt.Tooltip("datum:T", title="datum", format="%d-%m-%y"),
-                 "Afdeling:N", "Deel:N", alt.Tooltip("waarde:Q", title="°C", format=".1f")],
-    )
-
     licht["ideaal"] = ideale_etmaaltemperatuur(licht["lichtsom"])
-    ideaal_laag = alt.Chart(licht).mark_line(color="#c0392b", strokeWidth=3, strokeDash=[6, 3]).encode(
-        x=x_as,
-        y=alt.Y("ideaal:Q", scale=alt.Scale(domain=[0, temp_max], clamp=True)),
-        tooltip=[alt.Tooltip("datum:T", title="datum", format="%d-%m-%y"),
-                 alt.Tooltip("ideaal:Q", title="ideale temp °C", format=".1f")],
-    )
 
-    temp_lagen = [licht_laag, temp_laag, ideaal_laag]
-    if toon_trend:
+    # Alle temperatuurlagen moeten dezelfde schaal delen (de lagen hebben elk
+    # een eigen y-as), dus één vast domein rond temperatuur én ideaal.
+    temp_domein = gedeeld_domein(temp_lang["waarde"], licht["ideaal"])
+
+    temp_lagen = []
+    if not licht.empty:
+        temp_lagen.append(alt.Chart(licht).mark_bar(color="#e7c98a", opacity=0.75).encode(
+            x=x_as,
+            y=alt.Y("lichtsom:Q", title="Lichtsom per dag",
+                    scale=alt.Scale(domain=[0, licht_max], clamp=True)),
+            tooltip=[alt.Tooltip("datum:T", title="datum", format="%d-%m-%y"),
+                     alt.Tooltip("lichtsom:Q", title="lichtsom", format=".0f")],
+        ))
+    if not temp_lang.empty:
+        temp_lagen.append(alt.Chart(temp_lang).mark_line().encode(
+            x=x_as, y=y_as("waarde", "Temperatuur (°C)", temp_domein),
+            color=kleur,
+            tooltip=[alt.Tooltip("datum:T", title="datum", format="%d-%m-%y"),
+                     "Afdeling:N", "Deel:N", alt.Tooltip("waarde:Q", title="°C", format=".1f")],
+            **deel_encoding(toon_dagnacht),
+        ))
+    if not licht.empty:
+        temp_lagen.append(
+            alt.Chart(licht).mark_line(color="#c0392b", strokeWidth=3, strokeDash=[6, 3]).encode(
+                x=x_as, y=y_as("ideaal", None, temp_domein, axis=None),
+                tooltip=[alt.Tooltip("datum:T", title="datum", format="%d-%m-%y"),
+                         alt.Tooltip("ideaal:Q", title="ideale temp °C", format=".1f")],
+            )
+        )
+    if toon_trend and not temp_lang.empty:
         temp_trend_df = (
             df.groupby("datum", as_index=False)["temp_24h"].mean().dropna(subset=["temp_24h"])
             .sort_values("datum")
@@ -273,10 +369,10 @@ def klimaat_grafieken(dagen_records, toon_dagnacht=False, toon_trend=False,
         licht_trend["trend"] = licht_trend["lichtsom"].rolling(14, center=True, min_periods=3).mean()
         temp_lagen += [
             alt.Chart(licht_trend).mark_line(color="#c79a3e", strokeWidth=3).encode(
-                x=x_as, y=alt.Y("trend:Q", scale=alt.Scale(domain=[0, licht_max], clamp=True)),
+                x=x_as, y=alt.Y("trend:Q", scale=alt.Scale(domain=[0, licht_max], clamp=True), axis=None),
             ),
             alt.Chart(temp_trend_df).mark_line(color="#333", strokeWidth=3).encode(
-                x=x_as, y=alt.Y("trend:Q", scale=alt.Scale(domain=[0, temp_max], clamp=True)),
+                x=x_as, y=y_as("trend", None, temp_domein, axis=None),
                 tooltip=[alt.Tooltip("datum:T", title="datum", format="%d-%m-%y"),
                          alt.Tooltip("trend:Q", title="trend °C", format=".1f")],
             ),
@@ -287,21 +383,18 @@ def klimaat_grafieken(dagen_records, toon_dagnacht=False, toon_trend=False,
         f"Rode stippellijn = ideale temperatuur bij dat licht ({LICHT_TEMP_FACTOR} x lichtsom + "
         f"{LICHT_TEMP_BASIS} °C) — temperatuurlijn erboven is relatief te warm, eronder te koud."
         + (" Dikke effen lijn = 14-daags voortschrijdend gemiddelde." if toon_trend else "")
+        + (" Per afdeling: donker = 24h, licht = dag, gestippeld = nacht." if toon_dagnacht else "")
     )
-    st.altair_chart(
-        alt.layer(*temp_lagen).resolve_scale(y="independent"),
-        use_container_width=True,
+    toon_grafiek(
+        alt.layer(*temp_lagen).resolve_scale(y="independent") if temp_lagen else None,
+        temp_lang, "Geen temperatuurdata in deze periode.", waardekolom="waarde",
     )
 
-    rv_chart = alt.Chart(_lang("rv")).mark_line().encode(
-        x=x_as,
-        y=alt.Y("waarde:Q", title="RV (%)"),
-        color=kleur, strokeDash=streepjes,
-        tooltip=[alt.Tooltip("datum:T", title="datum", format="%d-%m-%y"),
-                 "Afdeling:N", "Deel:N", alt.Tooltip("waarde:Q", title="%", format=".0f")],
-    )
     st.caption("Relatieve luchtvochtigheid (%)")
-    st.altair_chart(rv_chart, use_container_width=True)
+    lijngrafiek_per_afdeling(
+        _lang("rv"), "RV (%)", toon_dagnacht=toon_dagnacht, formaat=".0f",
+        melding="Geen luchtvochtigheidsdata in deze periode.",
+    )
 
 
 def licht_temperatuur_grafiek(dagen_records):
@@ -312,23 +405,17 @@ def licht_temperatuur_grafiek(dagen_records):
     wordt t.o.v. het gerealiseerde licht. Vervangt een eerdere puntenwolk
     (temperatuur tegen lichtsom), die met meer data onoverzichtelijk werd.
     """
-    df = pd.DataFrame(dagen_records).dropna(subset=["lichtsom", "temp_24h"])
+    df = pd.DataFrame(dagen_records)
+    if not df.empty:
+        df = df.dropna(subset=["lichtsom", "temp_24h"])
     if df.empty:
-        st.caption("Geen gekoppelde lichtsom/temperatuur in deze periode.")
+        st.info("Geen gekoppelde lichtsom/temperatuur in deze periode.")
         return
 
     df["datum"] = pd.to_datetime(df["datum"])
     df["Afdeling"] = "Afd. " + df["afdeling"].astype(str)
     df["ideaal"] = ideale_etmaaltemperatuur(df["lichtsom"])
-    afdelingen = sorted(df["afdeling"].unique())
-    kleur = alt.Color(
-        "Afdeling:N",
-        scale=alt.Scale(
-            domain=[f"Afd. {a}" for a in afdelingen],
-            range=[AFDELING_KLEUR.get(a, "#8a8a80") for a in afdelingen],
-        ),
-        legend=alt.Legend(title=None, orient="top"),
-    )
+    kleur = afdeling_kleur(df["Afdeling"].unique())
     lang = df.melt(
         id_vars=["datum", "Afdeling"], value_vars=["temp_24h", "ideaal"],
         var_name="_v", value_name="waarde",
@@ -336,10 +423,10 @@ def licht_temperatuur_grafiek(dagen_records):
     lang["Type"] = lang["_v"].map({"temp_24h": "Werkelijk", "ideaal": "Ideaal (obv licht)"})
 
     chart = alt.Chart(lang).mark_line().encode(
-        x=alt.X("datum:T", title=None),
-        y=alt.Y("waarde:Q", title="Etmaaltemperatuur (°C)"),
+        x=datum_as(),
+        y=y_as("waarde", "Etmaaltemperatuur (°C)"),
         color=kleur,
-        strokeDash=alt.StrokeDash("Type:N", legend=alt.Legend(title=None, orient="top")),
+        strokeDash=alt.StrokeDash("Type:N", legend=alt.Legend(title=None, orient="bottom")),
         tooltip=[alt.Tooltip("datum:T", title="datum", format="%d-%m-%y"), "Afdeling:N", "Type:N",
                  alt.Tooltip("waarde:Q", title="°C", format=".1f")],
     )
@@ -347,7 +434,7 @@ def licht_temperatuur_grafiek(dagen_records):
         f"Ideaal = {LICHT_TEMP_FACTOR} x lichtsom + {LICHT_TEMP_BASIS} °C van diezelfde dag. "
         "Werkelijk boven ideaal: relatief te warm gestookt voor het licht. Eronder: te koud."
     )
-    st.altair_chart(chart, use_container_width=True)
+    toon_grafiek(chart, lang, "Geen gekoppelde lichtsom/temperatuur in deze periode.", waardekolom="waarde")
 
 
 # --- INITIALISATIE ---
@@ -1381,41 +1468,26 @@ with tab_detail:
             for afdeling in afdelingen_groep:
                 dagen = get_klimaatdata_dagen_voor_periode(afdeling, start_datums[0], eind_groep)
                 for datum, temp, rv, straling, temp_dag, temp_nacht, rv_dag, rv_nacht in dagen:
-                    kolom = f"Afd. {afdeling}"
-                    records_temp.append({
-                        "datum": datum,
-                        f"{kolom} 24h": temp, f"{kolom} dag": temp_dag, f"{kolom} nacht": temp_nacht,
-                    })
-                    records_rv.append({
-                        "datum": datum,
-                        f"{kolom} 24h": rv, f"{kolom} dag": rv_dag, f"{kolom} nacht": rv_nacht,
-                    })
-                    records_straling.append({"datum": datum, kolom: straling})
+                    afd = f"Afd. {afdeling}"
+                    for deel, t_waarde, rv_waarde in (
+                        ("24h", temp, rv), ("dag", temp_dag, rv_dag), ("nacht", temp_nacht, rv_nacht)
+                    ):
+                        records_temp.append({"datum": datum, "Afdeling": afd, "Deel": deel, "waarde": t_waarde})
+                        records_rv.append({"datum": datum, "Afdeling": afd, "Deel": deel, "waarde": rv_waarde})
+                    records_straling.append({"datum": datum, "Afdeling": afd, "Deel": "24h", "waarde": straling})
 
-            def _pivot_klimaat(records):
-                if not records:
-                    return None
-                df = pd.DataFrame(records).groupby("datum", as_index=True).first().sort_index()
-                if df.dropna(how="all").empty:
-                    return None
-                df.index = pd.to_datetime(df.index)
-                return df
-
-            df_temp = _pivot_klimaat(records_temp)
-            df_rv = _pivot_klimaat(records_rv)
-            df_straling = _pivot_klimaat(records_straling)
-
-            if df_temp is not None:
-                st.caption("Temperatuur: 24-uurs, dag- en nachtgemiddelde (°C)")
-                st.line_chart(df_temp)
-                st.caption("RV: 24-uurs, dag- en nachtgemiddelde (%)")
-                st.line_chart(df_rv)
-                st.caption("Lichtsom (per dag)")
-                st.line_chart(df_straling)
-            else:
-                st.caption("Nog geen klimaatdata gekoppeld aan deze plantweek.")
+            geen_klimaat = "Nog geen klimaatdata gekoppeld aan deze plantweek."
+            st.caption("Temperatuur (°C): donker = 24 uur, licht = dag, gestippeld = nacht")
+            lijngrafiek_per_afdeling(pd.DataFrame(records_temp), "Temperatuur (°C)", melding=geen_klimaat)
+            st.caption("RV (%): donker = 24 uur, licht = dag, gestippeld = nacht")
+            lijngrafiek_per_afdeling(pd.DataFrame(records_rv), "RV (%)", formaat=".0f", melding=geen_klimaat)
+            st.caption("Lichtsom (per dag)")
+            lijngrafiek_per_afdeling(
+                pd.DataFrame(records_straling), "Lichtsom", toon_dagnacht=False, formaat=".0f",
+                melding=geen_klimaat,
+            )
         else:
-            st.caption("Onbekend vaknummer; kan geen afdeling/klimaatdata bepalen.")
+            st.info("Onbekend vaknummer; kan geen afdeling/klimaatdata bepalen.")
 
         st.write("**Watergift tijdens deze plantweek**")
         eind_water = max(t["datum_oogst"] or vandaag_detail for t in teelten_groep)
@@ -1423,16 +1495,21 @@ with tab_detail:
         for vak in vakken_groep:
             for datum, liter in get_watergift_dagen_voor_periode(vak, start_datums[0], eind_water):
                 records_water.append({"datum": datum, "Vak": f"Vak {vak}", "liter": liter})
-        if records_water:
-            df_water = pd.DataFrame(records_water)
+        df_water = pd.DataFrame(records_water).dropna(subset=["liter"]) if records_water else None
+        if df_water is not None and not df_water.empty:
             df_water["datum"] = pd.to_datetime(df_water["datum"])
+            df_water = df_water.sort_values("datum")
+            df_water["dag"] = df_water["datum"].dt.strftime(DATUM_FORMAAT_AS)
             st.caption("Watergift per vak (l/m² per dag) — vakken naast elkaar, niet opgeteld")
             # x als ordinaal (i.p.v. temporeel) zetten, want xOffset heeft een
             # discrete band-schaal per dag nodig om de vakken naast elkaar te
             # kunnen zetten — op een continue tijdas vallen de staven anders
-            # gewoon over elkaar heen.
+            # gewoon over elkaar heen. Het label is daarom een kant-en-klare
+            # dd-mm-tekst: een tijdformaat op een ordinale as leest Vega als
+            # getalformaat ("invalid format") en de grafiek blijft dan leeg.
             water_chart = alt.Chart(df_water).mark_bar().encode(
-                x=alt.X("datum:O", title=None, axis=alt.Axis(format="%d-%m", labelAngle=-45)),
+                x=alt.X("dag:O", title=None, sort=list(df_water["dag"].unique()),
+                        axis=alt.Axis(labelAngle=-45)),
                 xOffset="Vak:N",
                 y=alt.Y("liter:Q", title="Liter/m²"),
                 color=alt.Color("Vak:N", legend=alt.Legend(title=None, orient="top")),
@@ -1441,7 +1518,7 @@ with tab_detail:
             )
             st.altair_chart(water_chart, use_container_width=True)
         else:
-            st.caption("Nog geen watergift gekoppeld aan deze plantweek.")
+            st.info("Nog geen watergift gekoppeld aan deze plantweek.")
     else:
         st.info("Nog geen teelten geregistreerd.")
 
@@ -1907,7 +1984,7 @@ with tab_klimaat:
                     var_name="Bron", value_name="GJ",
                 )
                 warmte_chart = alt.Chart(df_warmte_lang).mark_bar().encode(
-                    x=alt.X("datum:T", title=None),
+                    x=datum_as(),
                     y=alt.Y("GJ:Q", title="Warmte (GJ)", stack=True),
                     color=alt.Color(
                         "Bron:N",
@@ -2022,14 +2099,15 @@ with tab_stats:
                 var_name="Meting", value_name="Lengte (cm)",
             )
             lijn_lengte = alt.Chart(df_lengte_lang).mark_line(point=True).encode(
-                x=alt.X("Oogstdatum:T", title="Oogstdatum"),
-                y=alt.Y("Lengte (cm):Q", title="Lengte (cm)"),
+                x=datum_as("Oogstdatum", veld="Oogstdatum"),
+                y=alt.Y("Lengte (cm):Q", title="Lengte (cm)", scale=alt.Scale(zero=False)),
                 color=alt.Color("Meting:N", title=None),
                 tooltip=["Oogstdatum:T", "Vak:N", "Code:N", "Meting:N", alt.Tooltip("Lengte (cm):Q", format=".1f")],
             )
             lijn_factor = alt.Chart(df_lengte).mark_line(point=True, color="#c0392b", strokeDash=[4, 4]).encode(
-                x=alt.X("Oogstdatum:T"),
-                y=alt.Y("Factor (oogst / halverwege):Q", title="Factor (oogst / halverwege)"),
+                x=datum_as("Oogstdatum", veld="Oogstdatum"),
+                y=alt.Y("Factor (oogst / halverwege):Q", title="Factor (oogst / halverwege)",
+                        scale=alt.Scale(zero=False)),
                 tooltip=["Oogstdatum:T", "Vak:N", "Code:N", alt.Tooltip("Factor (oogst / halverwege):Q", format=".2f")],
             )
             st.altair_chart(
@@ -2121,7 +2199,9 @@ with tab_stats:
                     )
                     df_paar = df_analyse.dropna(subset=[kol_a, kol_b])
                     scatter = alt.Chart(df_paar).mark_circle(size=60, opacity=0.6).encode(
-                        x=alt.X(f"{kol_a}:Q"), y=alt.Y(f"{kol_b}:Q"), tooltip=[kol_a, kol_b],
+                        x=alt.X(f"{kol_a}:Q", scale=alt.Scale(zero=False)),
+                        y=alt.Y(f"{kol_b}:Q", scale=alt.Scale(zero=False)),
+                        tooltip=[kol_a, kol_b],
                     )
                     trend = scatter.transform_regression(kol_a, kol_b).mark_line(color="#c0392b")
                     st.altair_chart((scatter + trend).properties(height=220), use_container_width=True)
