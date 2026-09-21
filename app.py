@@ -1446,6 +1446,17 @@ with tab_planning:
             lambda x: f"{x:.1f} wk" if pd.notna(x) else "–"
         )
 
+        # Overlap: per vak, een balk die begint vóórdat een eerder gestarte
+        # balk in datzelfde vak al geoogst is (nu toegestaan door de planner,
+        # zie planningsmodule) — de nieuwere balk krijgt een rode stippelrand.
+        df_stroken["overlap"] = False
+        for _vak, groep in df_stroken.groupby("vaknummer"):
+            eerdere_einden = []
+            for idx, rij in groep.sort_values("start").iterrows():
+                if any(rij["start"] < eind_e for eind_e in eerdere_einden):
+                    df_stroken.loc[idx, "overlap"] = True
+                eerdere_einden.append(rij["eind"])
+
         kleur = alt.Color(
             "status:N",
             scale=alt.Scale(
@@ -1454,9 +1465,10 @@ with tab_planning:
             ),
             legend=alt.Legend(title=None, orient="top"),
         )
+        df_stroken["overlap_tekst"] = df_stroken["overlap"].map({True: "Ja", False: "Nee"})
         balken = (
             alt.Chart(df_stroken)
-            .mark_bar(height=13, cornerRadius=3, stroke="white", strokeWidth=1)
+            .mark_bar(height=13, cornerRadius=3)
             .encode(
                 y=alt.Y(
                     "vaknummer:O", title="Vak", sort="ascending",
@@ -1468,6 +1480,9 @@ with tab_planning:
                 ),
                 x2="eind:T",
                 color=kleur,
+                stroke=alt.condition("datum.overlap", alt.value("#e34948"), alt.value("white")),
+                strokeWidth=alt.condition("datum.overlap", alt.value(2), alt.value(1)),
+                strokeDash=alt.condition("datum.overlap", alt.value([4, 2]), alt.value([1, 0])),
                 tooltip=[
                     alt.Tooltip("vaknummer:O", title="Vak"),
                     alt.Tooltip("label:N", title="Teelt"),
@@ -1475,6 +1490,7 @@ with tab_planning:
                     alt.Tooltip("start_tekst:N", title="Start"),
                     alt.Tooltip("eind_tekst:N", title="Oogst"),
                     alt.Tooltip("duur_tekst:N", title="Teeltduur"),
+                    alt.Tooltip("overlap_tekst:N", title="Overlapt vorige ronde"),
                 ],
             )
         )
@@ -1489,9 +1505,10 @@ with tab_planning:
         )
         st.caption(
             "Strokenplanning: grijs = afgerond, groen = lopende teelt, blauw = concept-planning. "
-            "Getal op de as = ISO-weeknummer; rode stippellijn = vandaag. Oogstdatum van lopende "
-            "teelten en concepten is de verwachte datum uit de teeltduur-tabel. Beweeg over een "
-            "balk voor weeknummer + dag van start en oogst en de teeltduur in weken."
+            "Getal op de as = ISO-weeknummer; rode stippellijn = vandaag. Een balk met een rode "
+            "stippelrand start vóórdat de vorige ronde in dat vak is geoogst (overlap). Oogstdatum "
+            "van lopende teelten en concepten is de verwachte datum uit de teeltduur-tabel. Beweeg "
+            "over een balk voor weeknummer + dag van start en oogst en de teeltduur in weken."
         )
         st.markdown("---")
 
