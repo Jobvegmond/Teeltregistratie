@@ -82,6 +82,18 @@ st.markdown("""
 <style>
 [data-testid="stMetricValue"] { font-size: 1.25rem; }
 [data-testid="stMetricLabel"] { font-size: 0.8rem; }
+
+/* Compacte kop: titel links, week + datum rechts, altijd op één regel. */
+.vem-kop {
+    display: flex; justify-content: space-between; align-items: baseline;
+    gap: 0.75rem; margin: 0 0 0.75rem 0; padding-bottom: 0.4rem;
+    border-bottom: 1px solid rgba(128, 128, 128, 0.25);
+}
+.vem-titel { font-size: 1.15rem; font-weight: 600; }
+.vem-week { font-size: 0.85rem; opacity: 0.7; white-space: nowrap; }
+
+/* Minder lege ruimte boven de inhoud; nog wel onder de vaste Streamlit-balk (3.75rem). */
+[data-testid="stMainBlockContainer"], .block-container { padding-top: 3.75rem !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -326,8 +338,16 @@ def _cookie_key():
     return _tijdelijke_cookie_key()
 
 
-st.title("🌱 Teeltregistratie & Dashboard")
-st.write("Beheer je teeltvakken en volg de groei van start tot oogst.")
+_DAGEN_KORT = ["ma", "di", "wo", "do", "vr", "za", "zo"]
+_vandaag_kop = date.today()
+st.markdown(
+    '<div class="vem-kop">'
+    '<span class="vem-titel">🌱 Teeltregistratie</span>'
+    f'<span class="vem-week">Week {_vandaag_kop.isocalendar()[1]} · '
+    f'{_DAGEN_KORT[_vandaag_kop.weekday()]} {format_datum(_vandaag_kop)}</span>'
+    '</div>',
+    unsafe_allow_html=True,
+)
 
 _credentials = get_gebruikers_credentials()
 
