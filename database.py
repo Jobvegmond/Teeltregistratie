@@ -1659,11 +1659,6 @@ TEELTDUUR_PER_PLANTWEEK = {
     50: 14.0, 51: 14.0, 52: 13.0,
 }
 
-# Wisseltijd (schoonmaak/omschakelen) tussen de oogst van de ene teelt en het
-# planten van de volgende in hetzelfde vak: de volgende planting kan pas zoveel
-# dagen ná de verwachte oogst.
-WISSELTIJD_DAGEN = 1
-
 # Harde bovengrens: er kunnen nooit meer dan zoveel poot-eenheden in één week
 # gepoot worden (arbeid/plantcapaciteit). Geldt ook boven een handmatig weekdoel.
 MAX_VAKKEN_PER_WEEK = 5
@@ -2053,11 +2048,14 @@ def bevestig_planning(planning_id, aantal_planten=None, gebruiker=None):
 def plan_x_weken_vooruit(aantal_weken, gebruiker=None, verwijder_bestaande=False):
     """
     Plant vakken tot `aantal_weken` weken vooruit als één doorlopende cyclus
-    2, 3, ..., 39, 2, ... (met 19+20 als één eenheid). Vak N wordt altijd vóór
-    N+1 geplant én geoogst; een eenheid pas na de verwachte oogst van de
-    vorige teelt + WISSELTIJD_DAGEN. Het streefaantal per week komt volledig
-    uit de handmatig ingevulde jaarplanning (planning_weekdoel): een week
-    zonder ingevuld aantal plant niets voor deze cyclus. Vak 1 loopt op zijn
+    2, 3, ..., 39, 2, ... (met 19+20 als één eenheid), strikt in die volgorde.
+    Het streefaantal per week komt volledig uit de handmatig ingevulde
+    jaarplanning (planning_weekdoel): een week zonder ingevuld aantal plant
+    niets voor deze cyclus, en een ingevuld aantal wordt altijd letterlijk
+    gehaald (zolang er nog vakken in de cyclus zitten) — ook als dat betekent
+    dat een vak een nieuwe ronde begint vóór de oogst van z'n vorige ronde in
+    hetzelfde plan (overlap is toegestaan, op Jobs verzoek sept 2026: de
+    teler regelt dat zelf, de app hoeft niet op teeltduur te wachten). Vak 1 loopt op zijn
     eigen ritme, los van de cyclus, en wordt alleen gepland in de weken die
     daarvoor zijn aangevinkt (vak1_planten) — kan dat niet (nog niet
     geoogst, of de week zit al vol), dan schuift het door naar de eerste
@@ -2182,9 +2180,8 @@ def plan_x_weken_vooruit(aantal_weken, gebruiker=None, verwijder_bestaande=False
         geen_geschiedenis.add(VAK_VOLGORDE_UITZONDERING)
 
     # Vak 1 wordt alleen gepland in de weken die daarvoor zijn aangevinkt
-    # (vak1_weken), op volgorde. vak1_front schuift na elke plaatsing door
-    # naar de nieuwe verwachte oogst, zodat opeenvolgende aanvragen elkaar
-    # respecteren (WISSELTIJD_DAGEN ertussen).
+    # (vak1_weken), op volgorde — letterlijk, ook als dat een nieuwe ronde
+    # vóór de oogst van de vorige oplevert (overlap toegestaan).
     vak1_wachtrij = sorted(w for w in vak1_weken if w <= horizon_eind)
     vak1_idx = 0
     vak1_waarschuwingen = []
@@ -2193,7 +2190,7 @@ def plan_x_weken_vooruit(aantal_weken, gebruiker=None, verwijder_bestaande=False
         nonlocal vak1_front
         if vak1_front is None:
             return None
-        vroegst1 = max(vak1_front + timedelta(days=WISSELTIJD_DAGEN), week_gevraagd, sweep_vanaf)
+        vroegst1 = max(week_gevraagd, sweep_vanaf)
         if _maandag(vroegst1) > horizon_eind:
             vak1_waarschuwingen.append((week_gevraagd, None))
             return None
@@ -2209,25 +2206,24 @@ def plan_x_weken_vooruit(aantal_weken, gebruiker=None, verwijder_bestaande=False
         vak1_front = o1 or (d1 + timedelta(weeks=13))
         return d1
 
-    # Doorlopende sweep langs de cyclus.
+    # Doorlopende sweep langs de cyclus. Elke eenheid komt strikt op z'n
+    # beurt aan de rand; niet meer gewacht op de oogst van de vorige ronde
+    # van diezelfde eenheid (overlap toegestaan, zie docstring) — alleen de
+    # cyclusvolgorde (vorige_datum) en het ingevulde weekaantal (_cap) tellen.
     pos = 0
     vorige_datum = None
     for _ in range(4000):
         rep, vakken = cyclus[pos % len(cyclus)]
-        vroegst = front[rep] + timedelta(days=WISSELTIJD_DAGEN)
-        if vorige_datum is not None and vroegst < vorige_datum:
-            vroegst = vorige_datum
-        if _maandag(max(vroegst, sweep_vanaf)) > horizon_eind:
+        vroegst = max(vorige_datum, sweep_vanaf) if vorige_datum is not None else sweep_vanaf
+        if _maandag(vroegst) > horizon_eind:
             break
         datum = _plaats(vakken, vroegst)
         if datum > horizon_eind:
             break
         for v in vakken:
             pid = voeg_planning_toe(v, datum, gebruiker=gebruiker)
-            earliest[pid] = max(vroegst, sweep_vanaf)
+            earliest[pid] = vroegst
         vorige_datum = datum
-        _, nieuwe_oogst = bereken_verwachte_oogstdatum(datum)
-        front[rep] = nieuwe_oogst or (datum + timedelta(weeks=13))
 
         # Aangevinkte vak1-weken verwerken zodra de sweep ze bereikt heeft.
         while vak1_idx < len(vak1_wachtrij) and vak1_wachtrij[vak1_idx] <= vorige_datum + timedelta(days=3):
@@ -2253,7 +2249,8 @@ def _naverwerk_planning(earliest=None):
     cyclusvolgorde (= id-volgorde van de sweep):
     - dagverdeling ma→do: t/m 4 op ma/di/wo/do, meer eerst de maandag dubbel,
       dan de dinsdag, enz.; nooit vr/za/zo. Een vak nooit vóór zijn eigen
-      vroegste dag (`earliest`) of vóór de oogst van z'n vorige ronde. Kan de
+      vroegste dag (`earliest`); een nieuwe ronde in hetzelfde vak mag wél
+      vóór de oogst van de vorige ronde vallen (overlap toegestaan). Kan de
       eerste planting van een week niet op maandag (bodem valt later), dan mag
       die week op di/wo/do beginnen i.p.v. helemaal over te slaan. Nooit meer
       dan MAX_VAKKEN_PER_WEEK eenheden per week; het teveel schuift door.
@@ -2304,7 +2301,6 @@ def _naverwerk_planning(earliest=None):
         return a + (b - a) * (start.weekday() / 7.0) if b is not None else a
 
     vorige_oogst = None
-    laatste_oogst_vak = {}  # vaknummer -> verwachte oogst vorige ronde in dit plan
     nv_week = {}             # maandag -> aantal poot-eenheden (19+20 telt als 1)
     with get_connection() as conn:
         cursor = conn.cursor()
@@ -2319,10 +2315,6 @@ def _naverwerk_planning(earliest=None):
                 vr = earliest.get(pid)
                 if vr is not None and start < vr:
                     start = _naar_plantdag(vr)
-                # nooit planten vóór de oogst van de vorige ronde in ditzelfde vak
-                vorige_vak_oogst = laatste_oogst_vak.get(vak)
-                if vorige_vak_oogst is not None and start <= vorige_vak_oogst:
-                    start = _naar_plantdag(vorige_vak_oogst + timedelta(days=1))
                 # cyclusvolgorde binnen de week: nooit vóór de vorige planting
                 # (dubbel op één dag mag wél, dat is de "maandag dubbel"-regel).
                 if laatste_start is not None and start < laatste_start:
@@ -2350,7 +2342,6 @@ def _naverwerk_planning(earliest=None):
                     if vorige_oogst is not None and oogst <= vorige_oogst:
                         oogst = _naar_werkdag(vorige_oogst + timedelta(days=1))
                     vorige_oogst = oogst
-                laatste_oogst_vak[vak] = oogst
                 cursor.execute(
                     "UPDATE teeltplanning SET verwachte_startdatum = %s, verwachte_duur_weken = %s, "
                     "verwachte_oogstdatum = %s WHERE id = %s",
