@@ -1,0 +1,4 @@
+[theme]
+# Groen accent i.p.v. het standaard Streamlit-rood, zodat rood gereserveerd
+# blijft voor fouten en waarschuwingen.
+primaryColor = "#2E6A4C"
