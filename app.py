@@ -63,7 +63,6 @@ from database import (
     set_planning_weekdoel,
     set_planning_weekdoel_vak1,
     wis_planning_weekdoelen,
-    get_planning_besteld_tot,
     bereken_verwachte_oogstdatum,
     get_strokenplanning,
     get_oogstregistraties_voor_periode,
@@ -1496,7 +1495,6 @@ with tab_planning:
         )
         st.markdown("---")
 
-    besteld_tot_huidig = get_planning_besteld_tot()
     # Horizon voor de jaarplanning-tabel en het (her)plannen: een vol jaar vooruit.
     aantal_weken_vooruit = 52
 
@@ -1641,7 +1639,6 @@ with tab_planning:
         huidige_weeksleutel = None
         for planning_id, vaknummer, start, duur, eind, notitie in planning_rijen:
             start_d = datetime.strptime(start, "%Y-%m-%d").date()
-            vast = besteld_tot_huidig is not None and start_d <= besteld_tot_huidig
             weeksleutel = get_isojaar_week(start)
             if weeksleutel != huidige_weeksleutel:
                 jaar_kop, week_kop = weeksleutel
@@ -1651,13 +1648,12 @@ with tab_planning:
             col1, col2, col2b, col3, col4, col5, col6, col7 = st.columns(
                 [0.8, 1.6, 0.6, 1, 1.6, 1.5, 0.8, 0.8]
             )
-            col1.write(f"{'🔒 ' if vast else ''}Vak {vaknummer}")
+            col1.write(f"Vak {vaknummer}")
             nieuwe_datum_plan = col2.date_input(
-                "Startdatum", value=start_d, disabled=vast,
+                "Startdatum", value=start_d,
                 key=f"plan_datum_{planning_id}", format="DD-MM-YYYY", label_visibility="collapsed",
             )
-            if col2b.button("💾", key=f"plan_datum_opslaan_{planning_id}", help="Startdatum aanpassen",
-                            disabled=vast):
+            if col2b.button("💾", key=f"plan_datum_opslaan_{planning_id}", help="Startdatum aanpassen"):
                 wijzig_planning(planning_id, nieuwe_datum_plan, gebruiker=huidige_gebruiker())
                 st.rerun()
             col3.write(f"{duur:g} wk" if duur is not None else "-")
@@ -1680,8 +1676,7 @@ with tab_planning:
                     teelt_id, code = resultaat
                     st.success(f"✅ Vak {vaknummer} gestart - code **{code}** (teelt-ID {teelt_id}).")
                 st.rerun()
-            if col7.button("🗑️", key=f"plan_verwijder_{planning_id}", help="Concept-planning verwijderen",
-                           disabled=vast):
+            if col7.button("🗑️", key=f"plan_verwijder_{planning_id}", help="Concept-planning verwijderen"):
                 verwijder_planning(planning_id, gebruiker=huidige_gebruiker())
                 st.rerun()
     else:
