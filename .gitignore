@@ -14,3 +14,6 @@ _brandweerrooster_wip/
 priva.env.example
 priva.gitignore
 priva_horti.py
+
+# Oude Excel-registratie (bron voor importeer_excel_historie.py), niet in git
+Teelt/

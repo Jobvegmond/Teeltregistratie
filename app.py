@@ -338,9 +338,11 @@ def jaargemiddelden_oogst(jaar):
             factoren.append(t["lengte_eind"] / t["lengte_half"])
         if t["oogstgewicht"] and t["lengte_eind"]:
             gewicht_10cm.append(t["oogstgewicht"] / t["lengte_eind"] * 10)
-        if t["aantal_planten"]:
-            registraties_t = get_oogstregistraties_voor_teelt(t["id"])
-            totaal_stelen_t = sum(r[2] for r in registraties_t) * 100 if registraties_t else 0
+        # Zonder emmerregistraties is de uitval onbekend, niet 100% (bijv.
+        # teelten uit de Excel-historie, of als de emmers nog niet zijn ingevoerd).
+        registraties_t = get_oogstregistraties_voor_teelt(t["id"]) if t["aantal_planten"] else []
+        if registraties_t:
+            totaal_stelen_t = sum(r[2] for r in registraties_t) * 100
             uitval.append((t["aantal_planten"] - totaal_stelen_t) / t["aantal_planten"] * 100)
 
     def _gem(lijst):
@@ -1197,7 +1199,7 @@ with tab_week:
     for t in afgerond_week:
         registraties_t = get_oogstregistraties_voor_teelt(t["id"])
         totaal_stelen_t = sum(r[2] for r in registraties_t) * 100 if registraties_t else 0
-        if t["aantal_planten"]:
+        if t["aantal_planten"] and registraties_t:
             uitval_pct_t = (t["aantal_planten"] - totaal_stelen_t) / t["aantal_planten"] * 100
             uitval_pct_week.append(uitval_pct_t)
         else:
@@ -1207,7 +1209,7 @@ with tab_week:
             "Code": t["code"] or "-",
             "Oogstdatum": format_datum(t["datum_oogst"]),
             "Planten": t["aantal_planten"] if t["aantal_planten"] is not None else "-",
-            "Geoogste stelen": totaal_stelen_t,
+            "Geoogste stelen": totaal_stelen_t if registraties_t else "-",
             "Uitval (%)": round(uitval_pct_t, 1) if uitval_pct_t is not None else "-",
             "Lengte (cm)": t["lengte_eind"] if t["lengte_eind"] is not None else "-",
             "Gewicht (g)": t["oogstgewicht"] if t["oogstgewicht"] is not None else "-",
@@ -1545,9 +1547,9 @@ with tab_detail:
         factor_lijst = []
         gewicht_per_10cm_lijst = []
         for t in afgeronde_groep:
-            if t["aantal_planten"]:
-                registraties_t = get_oogstregistraties_voor_teelt(t["id"])
-                totaal_stelen_t = sum(r[2] for r in registraties_t) * 100 if registraties_t else 0
+            registraties_t = get_oogstregistraties_voor_teelt(t["id"]) if t["aantal_planten"] else []
+            if registraties_t:
+                totaal_stelen_t = sum(r[2] for r in registraties_t) * 100
                 uitval_lijst.append((t["aantal_planten"] - totaal_stelen_t) / t["aantal_planten"] * 100)
             if t["lengte_half"] and t["lengte_eind"]:
                 factor_lijst.append(t["lengte_eind"] / t["lengte_half"])
