@@ -81,8 +81,11 @@ st.set_page_config(page_title="VEM teeltregistratie", page_icon="🌱", layout="
 # leesbaar blijven zonder de pagina te domineren.
 st.markdown("""
 <style>
-[data-testid="stMetricValue"] { font-size: 1.25rem; }
-[data-testid="stMetricLabel"] { font-size: 0.8rem; }
+[data-testid="stMetricValue"] { font-size: 1.05rem; }
+[data-testid="stMetricLabel"] { font-size: 0.75rem; }
+
+/* Kengetallen-kaders: standaard padding is fors, hier verkleind. */
+[data-testid="stMetric"] { padding: 0.5rem 0.75rem !important; }
 
 /* Compacte kop: titel links, week + datum rechts, altijd op één regel. */
 .vem-kop {
