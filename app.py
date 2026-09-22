@@ -1,5 +1,7 @@
+import html
 import math
 import os
+import re
 import secrets
 
 import streamlit as st
@@ -76,16 +78,27 @@ from database import (
 # browsertabblad.
 st.set_page_config(page_title="VEM teeltregistratie", page_icon="🌱", layout="wide")
 
-# Standaard rendert Streamlit st.metric-waarden in een erg groot lettertype;
-# hier wereldwijd verkleind zodat de kopgegevens (bijv. bij Teelt-detail)
-# leesbaar blijven zonder de pagina te domineren.
+# Gedeelde opmaak voor de hele app: kengetallen-tegels en de compacte kop.
 st.markdown("""
 <style>
-[data-testid="stMetricValue"] { font-size: 1.05rem; }
-[data-testid="stMetricLabel"] { font-size: 0.75rem; }
-
-/* Kengetallen-kaders: standaard padding is fors, hier verkleind. */
-[data-testid="stMetric"] { padding: 0.5rem 0.75rem !important; }
+/* Kengetallen: compacte tegels in een raster dat de regel vult (ca. 7 per rij op
+   een laptop, 2 op een telefoon), i.p.v. brede st.metric-kaders met veel lege ruimte. */
+.vem-kg-titel {
+    font-size: 0.72rem; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.06em; opacity: 0.6; margin: 0.9rem 0 0.35rem;
+}
+.vem-kg {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(8.5rem, 1fr));
+    gap: 0.4rem; margin-bottom: 0.4rem;
+}
+.vem-kg-tegel {
+    border: 1px solid rgba(128, 128, 128, 0.25); border-radius: 0.4rem;
+    padding: 0.35rem 0.55rem; line-height: 1.25;
+}
+.vem-kg-label { font-size: 0.72rem; opacity: 0.7; }
+.vem-kg-label abbr { text-decoration: none; cursor: help; opacity: 0.8; margin-left: 0.2rem; }
+.vem-kg-waarde { font-size: 1rem; font-weight: 600; margin-top: 0.1rem; }
+.vem-kg-delta { font-size: 0.68rem; opacity: 0.65; margin-top: 0.1rem; }
 
 /* Compacte kop: titel links, week + datum rechts, altijd op één regel. */
 .vem-kop {
@@ -95,29 +108,6 @@ st.markdown("""
 }
 .vem-titel { font-size: 1.15rem; font-weight: 600; }
 .vem-week { font-size: 0.85rem; opacity: 0.7; white-space: nowrap; }
-
-/* Kengetallen: label, waarde en delta mogen afbreken i.p.v. afgekapt worden ("Ge..."). */
-[data-testid="stMetric"] * {
-    white-space: normal !important; overflow: visible !important;
-    text-overflow: clip !important; overflow-wrap: anywhere;
-}
-/* Kaders in één rij krijgen dezelfde hoogte. */
-[data-testid="stHorizontalBlock"]:has([data-testid="stMetric"]) [data-testid="stColumn"] [data-testid="stVerticalBlock"],
-[data-testid="stHorizontalBlock"]:has([data-testid="stMetric"]) [data-testid="stColumn"] [data-testid="stLayoutWrapper"] {
-    height: 100% !important;
-}
-/* Op een telefoon twee kengetallen naast elkaar i.p.v. elk op een eigen regel;
-   een oneven laatste vakje blijft half breed. */
-@media (max-width: 640px) {
-    [data-testid="stHorizontalBlock"]:has([data-testid="stMetric"]) {
-        flex-wrap: wrap; gap: 0.5rem;
-    }
-    [data-testid="stHorizontalBlock"]:has([data-testid="stMetric"]) > [data-testid="stColumn"],
-    [data-testid="stHorizontalBlock"]:has([data-testid="stMetric"]) > [data-testid="column"] {
-        min-width: calc(50% - 0.25rem) !important; max-width: calc(50% - 0.25rem) !important;
-        flex: 0 0 calc(50% - 0.25rem) !important;
-    }
-}
 
 /* Minder lege ruimte boven de inhoud; nog wel onder de vaste Streamlit-balk (3.75rem). */
 [data-testid="stMainBlockContainer"], .block-container { padding-top: 3.75rem !important; }
@@ -295,30 +285,37 @@ def toon_tabel(df, kolommen, verberg_leeg=False, pin_eerste=False):
     st.dataframe(df[volgorde], hide_index=True, column_config=config)
 
 
-def metric_gekaderd(kolom, label, waarde, delta=None, delta_color="normal", help=None):
+def toon_kengetallen(items, titel=None):
     """
-    st.metric in een gekaderd vakje (i.p.v. los/gecentreerd), zodat een rij
-    kengetallen leesbaarder van elkaar te onderscheiden is.
-    """
-    with kolom.container(border=True):
-        st.metric(label, waarde, delta=delta, delta_color=delta_color, help=help)
+    Toont kengetallen (lijst dicts met label, waarde en optioneel delta en
+    help) als compacte tegels in een raster dat zelf bepaalt hoeveel er naast
+    elkaar passen. Met `titel` komt er een klein kopje boven de groep.
 
-
-def toon_kengetallen(items, max_per_rij=4):
-    """
-    Toont kengetallen (lijst dicts met label, waarde en optioneel delta,
-    delta_color, help) in gekaderde vakjes, maximaal `max_per_rij` naast
-    elkaar. Zijn het er meer, dan gaan ze over gelijke rijen verdeeld
-    (5 wordt 3+2, 6 wordt 3+3) i.p.v. 4+1, zodat het netjes blijft.
+    Eigen HTML i.p.v. st.metric: st.metric in st.columns gaf brede, hoge
+    kaders met veel lege ruimte en liet zich niet compacter krijgen.
     """
     if not items:
         return
-    aantal_rijen = -(-len(items) // max_per_rij)
-    per_rij = -(-len(items) // aantal_rijen)
-    for begin in range(0, len(items), per_rij):
-        kolommen = st.columns(per_rij)
-        for kolom, item in zip(kolommen, items[begin:begin + per_rij]):
-            metric_gekaderd(kolom, **item)
+    tegels = []
+    for item in items:
+        uitleg = item.get("help")
+        uitleg_html = f' <abbr title="{html.escape(uitleg)}">ⓘ</abbr>' if uitleg else ""
+        delta = item.get("delta")
+        delta_html = ""
+        if delta:
+            tekst = str(delta).strip()
+            getal = re.match(r"[+\-−]?(\d+(?:[.,]\d+)?)", tekst)
+            nul = getal is not None and float(getal.group(1).replace(",", ".")) == 0
+            pijl = "" if nul else "↑ " if tekst.startswith("+") else "↓ " if tekst.startswith(("-", "−")) else ""
+            delta_html = f'<div class="vem-kg-delta">{pijl}{html.escape(tekst)}</div>'
+        tegels.append(
+            '<div class="vem-kg-tegel">'
+            f'<div class="vem-kg-label">{html.escape(str(item["label"]))}{uitleg_html}</div>'
+            f'<div class="vem-kg-waarde">{html.escape(str(item["waarde"]))}</div>'
+            f"{delta_html}</div>"
+        )
+    kop = f'<div class="vem-kg-titel">{html.escape(titel)}</div>' if titel else ""
+    st.markdown(f'{kop}<div class="vem-kg">{"".join(tegels)}</div>', unsafe_allow_html=True)
 
 
 def jaargemiddelden_oogst(jaar):
@@ -1511,21 +1508,20 @@ with tab_detail:
                     verwachte_oogsten.append(verwacht_t)
             oogst_tekst = _datum_bereik(sorted(verwachte_oogsten), "~") if verwachte_oogsten else "-"
 
-        toon_kengetallen([
+        toon_kengetallen(titel="Teelt", items=[
             {"label": "Eerste start", "waarde": format_datum(start_datums[0])},
             {"label": "Oogst", "waarde": oogst_tekst,
              "help": "Werkelijke oogstdatum(s); met ~ de verwachte datum uit de teeltduur-tabel."},
             {"label": "Gem. duur", "waarde": teeltduur_tekst,
-             "delta": teeltduur_delta, "delta_color": "off",
+             "delta": teeltduur_delta,
              "help": "Gemiddelde teeltduur van de teelten in deze plantweek."},
             {"label": "Status", "waarde": status_tekst},
         ])
 
-        toon_kengetallen([
+        toon_kengetallen(titel="Klimaat", items=[
             {"label": "Gem. temp.",
              "waarde": f"{sum(temp_lijst) / len(temp_lijst):.1f} °C" if temp_lijst else "-",
              "delta": f"{sum(delta_temp_lijst) / len(delta_temp_lijst):+.1f} °C t.o.v. ideaal" if delta_temp_lijst else None,
-             "delta_color": "off",
              "help": "Gemiddelde etmaaltemperatuur. Ideaal is afhankelijk van de lichtsom: "
                      f"{LICHT_TEMP_FACTOR} x lichtsom + {LICHT_TEMP_BASIS} °C."},
             {"label": "Gem. RV", "waarde": f"{sum(rv_lijst) / len(rv_lijst):.0f} %" if rv_lijst else "-"},
@@ -1573,26 +1569,26 @@ with tab_detail:
         gem_gewicht_10cm = (
             sum(gewicht_per_10cm_lijst) / len(gewicht_per_10cm_lijst) if gewicht_per_10cm_lijst else None
         )
-        toon_kengetallen([
+        toon_kengetallen(titel="Oogst", items=[
             {"label": "Florgib",
              "waarde": f"{gem_halve_lengte:.1f} cm" if gem_halve_lengte is not None else "-",
              "help": "Gemiddelde lengte bij de Florgib-meting halverwege de teelt."},
             {"label": "Gem. taklengte",
              "waarde": f"{gem_lengte:.1f} cm" if gem_lengte is not None else "-",
-             "delta": _delta_jaar(gem_lengte, jaar_gem["lengte"], " cm"), "delta_color": "off"},
+             "delta": _delta_jaar(gem_lengte, jaar_gem["lengte"], " cm")},
             {"label": "Gem. takgewicht",
              "waarde": f"{gem_gewicht:.0f} g" if gem_gewicht is not None else "-",
-             "delta": _delta_jaar(gem_gewicht, jaar_gem["gewicht"], " g", 0), "delta_color": "off"},
+             "delta": _delta_jaar(gem_gewicht, jaar_gem["gewicht"], " g", 0)},
             {"label": "Gem. uitval",
              "waarde": f"{gem_uitval:.1f} %" if gem_uitval is not None else "-",
-             "delta": _delta_jaar(gem_uitval, jaar_gem["uitval"], " %-punt"), "delta_color": "off"},
+             "delta": _delta_jaar(gem_uitval, jaar_gem["uitval"], " %-punt")},
             {"label": "Gem. factor",
              "waarde": f"{gem_factor:.2f}" if gem_factor is not None else "-",
-             "delta": _delta_jaar(gem_factor, jaar_gem["factor"], "", 2), "delta_color": "off",
+             "delta": _delta_jaar(gem_factor, jaar_gem["factor"], "", 2),
              "help": "Eindlengte gedeeld door de lengte bij de Florgib-meting halverwege."},
             {"label": "Gewicht/10 cm",
              "waarde": f"{gem_gewicht_10cm:.1f} g" if gem_gewicht_10cm is not None else "-",
-             "delta": _delta_jaar(gem_gewicht_10cm, jaar_gem["gewicht_10cm"], " g"), "delta_color": "off",
+             "delta": _delta_jaar(gem_gewicht_10cm, jaar_gem["gewicht_10cm"], " g"),
              "help": "Gemiddeld takgewicht per 10 cm taklengte."},
         ])
 
