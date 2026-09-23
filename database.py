@@ -79,13 +79,17 @@ def genereer_teelt_code(datum_teelt_start, vaknummer):
     """
     Bouwt de unieke teelt-code: laatste 2 cijfers van het jaar + plantweek (2 cijfers)
     + vaknummer (2 cijfers). Bijv. gestart in 2026, week 9, vak 4 -> '260904'.
+
+    Het jaar is het ISO-jaar dat bij de plantweek hoort, niet het kalenderjaar:
+    29-12-2025 valt in week 1 van 2026 en krijgt dus '2601..'. Met het
+    kalenderjaar stond daar '2501..', een week 1 in een jaar dat toen al bijna
+    om was.
     """
     if isinstance(datum_teelt_start, str):
         datum_teelt_start = datetime.strptime(datum_teelt_start, "%Y-%m-%d").date()
 
-    jaar_kort = datum_teelt_start.year % 100
-    plantweek = get_weeknummer(datum_teelt_start)
-    return f"{jaar_kort:02d}{plantweek:02d}{int(vaknummer):02d}"
+    isojaar, plantweek = get_isojaar_week(datum_teelt_start)
+    return f"{isojaar % 100:02d}{plantweek:02d}{int(vaknummer):02d}"
 
 
 # --- VERBINDING (POOL) ---
@@ -2626,3 +2630,104 @@ def verdeel_bakjes(totaal_bakjes, planten_per_vak, stap=0.25):
     for i in volgorde[:te_verdelen]:
         naar_beneden[i] += stap
     return [round(b, 2) for b in naar_beneden]
+
+
+# --- TEELTOVERZICHT ---
+
+def get_teeltkengetallen():
+    """
+    Geeft per teelt de kengetallen die je naast elkaar wilt zien: klimaat
+    (lichtsom en etmaaltemperatuur van de eigen afdeling), watergift van het
+    vak, warmteverbruik van de kas en het oogstresultaat.
+
+    Alles in één query: per teelt losse vragen stellen kost bij ruim 200
+    teelten te veel tijd. De klimaat-, water- en energietellingen zeggen over
+    hoeveel dagen het gaat, zodat de app een half gevulde periode kan herkennen
+    (bijv. een teelt uit 2025, waarvan alleen het laatste stuk klimaatdata heeft).
+
+    Een lopende teelt rekent t/m vandaag.
+    """
+    vandaag = str(date.today())
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            WITH basis AS (
+                SELECT t.id, t.code, v.vaknummer, t.datum_teelt_start AS start,
+                       t.datum_oogst,
+                       COALESCE(t.datum_oogst, %s) AS eind,
+                       t.aantal_planten, t.lengte_half, t.lengte_eind, t.oogstgewicht, t.rijpheid,
+                       CASE
+                           WHEN v.vaknummer BETWEEN 1 AND 9 THEN 1
+                           WHEN v.vaknummer BETWEEN 30 AND 39 THEN 2
+                           WHEN v.vaknummer BETWEEN 10 AND 19 THEN 3
+                           WHEN v.vaknummer BETWEEN 20 AND 29 THEN 4
+                       END AS afdeling
+                FROM teelten t
+                JOIN teeltvakken v ON v.id = t.teeltvak_id
+                WHERE v.vaknummer IS NOT NULL
+            )
+            SELECT b.id, b.code, b.vaknummer, b.afdeling, b.start, b.datum_oogst, b.eind,
+                   b.aantal_planten, b.lengte_half, b.lengte_eind, b.oogstgewicht, b.rijpheid,
+                   k.lichtsom, k.gem_temperatuur, k.dagen,
+                   w.liters, w.dagen, w.excel_dagen,
+                   e.mj_per_m2, e.dagen,
+                   o.emmers
+            FROM basis b
+            LEFT JOIN LATERAL (
+                SELECT SUM(stralingssom_dag) AS lichtsom, AVG(gem_temperatuur) AS gem_temperatuur,
+                       COUNT(*) AS dagen
+                FROM klimaatdata_dag k
+                WHERE k.afdeling = b.afdeling AND k.datum BETWEEN b.start AND b.eind
+            ) k ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT SUM(liter_per_m2) AS liters, COUNT(*) AS dagen,
+                       COUNT(*) FILTER (WHERE bron = 'excel') AS excel_dagen
+                FROM watergift_dag w
+                WHERE w.vaknummer = b.vaknummer AND w.datum BETWEEN b.start AND b.eind
+            ) w ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT SUM(mj) AS mj_per_m2, COUNT(*) AS dagen
+                FROM (
+                    SELECT datum, SUM(mj_per_m2) AS mj
+                    FROM (
+                        SELECT datum, warmte_mj_per_m2 AS mj_per_m2 FROM energiedata_dag
+                        WHERE datum BETWEEN b.start AND b.eind
+                        UNION ALL
+                        SELECT datum, gas_mj_per_m2 AS mj_per_m2 FROM gasdata_dag
+                        WHERE datum BETWEEN b.start AND b.eind
+                    ) bronnen
+                    GROUP BY datum
+                ) per_dag
+            ) e ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT SUM(aantal_emmers) AS emmers
+                FROM oogstregistraties o WHERE o.teelt_id = b.id
+            ) o ON TRUE
+            ORDER BY b.start, b.vaknummer
+        """, (vandaag,))
+        rijen = cursor.fetchall()
+
+    kengetallen = []
+    for (teelt_id, code, vaknummer, afdeling, start, datum_oogst, eind, aantal_planten,
+         lengte_half, lengte_eind, oogstgewicht, rijpheid, lichtsom, gem_temperatuur,
+         klimaatdagen, liters, waterdagen, water_excel_dagen, mj_per_m2, energiedagen,
+         emmers) in rijen:
+        looptijd = (datetime.strptime(eind, "%Y-%m-%d").date()
+                    - datetime.strptime(start, "%Y-%m-%d").date()).days + 1
+        isojaar, week = get_isojaar_week(start)
+        kengetallen.append({
+            "id": teelt_id, "code": code, "vaknummer": vaknummer, "afdeling": afdeling,
+            "datum_teelt_start": start, "datum_oogst": datum_oogst,
+            "plantjaar": isojaar, "plantweek": week, "looptijd_dagen": looptijd,
+            "teeltduur": (datetime.strptime(datum_oogst, "%Y-%m-%d").date()
+                          - datetime.strptime(start, "%Y-%m-%d").date()).days if datum_oogst else None,
+            "aantal_planten": aantal_planten, "lengte_half": lengte_half,
+            "lengte_eind": lengte_eind, "oogstgewicht": oogstgewicht, "rijpheid": rijpheid,
+            "stelen": (emmers or 0) * 100 if emmers else None,
+            "lichtsom": lichtsom, "gem_temperatuur": gem_temperatuur,
+            "klimaatdagen": klimaatdagen or 0,
+            "liters": liters, "waterdagen": waterdagen or 0,
+            "water_uit_excel": bool(water_excel_dagen),
+            "warmte_mj_per_m2": mj_per_m2, "energiedagen": energiedagen or 0,
+        })
+    return kengetallen

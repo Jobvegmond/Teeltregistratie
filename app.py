@@ -76,6 +76,7 @@ from database import (
     get_instelling,
     set_instelling,
     get_stekweken,
+    get_teeltkengetallen,
     get_stek_voor_week,
     sla_stekbeoordeling_op,
     stek_uitval_pct,
@@ -1074,7 +1075,7 @@ elif actie == "4. Registratie wijzigen of verwijderen":
 
 # --- HOOFDSCHERM: TABBLADEN ---
 tab_overzicht, tab_week, tab_detail, tab_planning, tab_stek, tab_klimaat, tab_stats, tab_meer = st.tabs([
-    "📊 Overzicht", "📆 Weekoverzicht", "🔍 Teelt-detail", "🗓️ Planning", "🌱 Stek", "🌡️ Klimaatdata",
+    "📊 Teeltoverzicht", "📆 Weekoverzicht", "🔍 Teelt-detail", "🗓️ Planning", "🌱 Stek", "🌡️ Klimaatdata",
     "📈 Statistieken", "ℹ️ Meer",
 ])
 # Weinig gebruikt: logboek en uitleg als subtabbladen onder "Meer".
@@ -1107,7 +1108,7 @@ OVERZICHT_KOLOMMEN = [
 
 # --- OVERZICHT ---
 with tab_overzicht:
-    st.subheader("📊 Overzicht Teelten")
+    st.subheader("📊 Teeltoverzicht")
 
     if rijen:
         # Maak een DataFrame van de rijen (zonder de ID-kolom voor display)
@@ -1146,6 +1147,140 @@ with tab_overzicht:
             toon_tabel(df_ov_afgerond, OVERZICHT_KOLOMMEN, pin_eerste=True)
     else:
         st.info("Nog geen teelten geregistreerd. Gebruik de zijbalk om te beginnen.")
+
+    # --- KENGETALLEN PER TEELT ---
+    st.markdown("---")
+    st.write("**Kengetallen per teelt**")
+
+    kengetallen = get_teeltkengetallen()
+    if not kengetallen:
+        st.info("Nog geen teelten om door te rekenen.")
+    else:
+        jaren_teelt = sorted({r["plantjaar"] for r in kengetallen}, reverse=True)
+        keuze_jaar = st.selectbox(
+            "Plantjaar", ["Alle jaren"] + jaren_teelt,
+            index=1 if jaren_teelt else 0, key="teeltoverzicht_jaar",
+        )
+        gekozen = [r for r in kengetallen
+                   if keuze_jaar == "Alle jaren" or r["plantjaar"] == keuze_jaar]
+
+        # Een periode die maar deels klimaat-, water- of energiedata heeft geeft
+        # een te lage som; die laten we leeg in plaats van misleidend laag.
+        def _volledig(rij, dagen_veld, drempel=0.9):
+            return rij[dagen_veld] >= rij["looptijd_dagen"] * drempel
+
+        df_keng = pd.DataFrame([{
+            "Code": r["code"] or "-",
+            "Vak": r["vaknummer"],
+            "Afdeling": r["afdeling"],
+            "Plantweek": r["plantweek"],
+            "Start": format_datum(r["datum_teelt_start"]),
+            "Oogst": format_datum(r["datum_oogst"]) if r["datum_oogst"] else "",
+            "Duur (dgn)": r["teeltduur"],
+            "Planten": r["aantal_planten"],
+            "Lichtsom": round(r["lichtsom"]) if r["lichtsom"] and _volledig(r, "klimaatdagen") else None,
+            "Licht/dag": (round(r["lichtsom"] / r["klimaatdagen"])
+                          if r["lichtsom"] and r["klimaatdagen"] else None),
+            "Etmaal (°C)": round(r["gem_temperatuur"], 1) if r["gem_temperatuur"] else None,
+            # Geen dekkingseis: in de oude Excel staan alleen de dagen met een gift,
+            # een lege dag betekent daar nul en niet "onbekend".
+            "Water (l/m²)": round(r["liters"], 1) if r["liters"] else None,
+            "Warmte (MJ/m²)": (round(r["warmte_mj_per_m2"], 1)
+                               if r["warmte_mj_per_m2"] and _volledig(r, "energiedagen") else None),
+            "Lengte (cm)": r["lengte_eind"],
+            "Gewicht (g)": r["oogstgewicht"],
+        } for r in gekozen])
+
+        toon_tabel(df_keng, [
+            ("Code", "Code", "tekst", None, "medium"),
+            ("Vak", "Vak", "getal", "%d", "small"),
+            ("Afdeling", "Afd", "getal", "%d", "small"),
+            ("Plantweek", "Wk", "getal", "%d", "small"),
+            ("Start", "Start", "datum", None, "small"),
+            ("Oogst", "Oogst", "datum", None, "small"),
+            ("Duur (dgn)", "Duur (dgn)", "getal", "%d", "small"),
+            ("Planten", "Planten", "getal", "%d", "small"),
+            ("Lichtsom", "Lichtsom", "getal", "%d", "small"),
+            ("Licht/dag", "Licht/dag", "getal", "%d", "small"),
+            ("Etmaal (°C)", "Etmaal (°C)", "getal", "%.1f", "small"),
+            ("Water (l/m²)", "Water (l/m²)", "getal", "%.1f", "small"),
+            ("Warmte (MJ/m²)", "Warmte (MJ/m²)", "getal", "%.1f", "small"),
+            ("Lengte (cm)", "Lengte (cm)", "getal", "%.1f", "small"),
+            ("Gewicht (g)", "Gewicht (g)", "getal", "%d", "small"),
+        ], pin_eerste=True)
+        st.caption(
+            "Lichtsom en warmte zijn opgeteld over de hele teelt, de etmaaltemperatuur is "
+            "een gemiddelde; klimaat komt van de eigen afdeling, warmte van de hele kas. "
+            "Is een periode maar deels gemeten, dan blijft de cel leeg in plaats van te laag. "
+            "Klimaatdata begint op 29-12-25, warmte op 29-06-26; watergift vóór 05-09-26 is de "
+            "ingestelde gift uit de oude Excel: alleen dagen met een gift, dus mogelijk "
+            "iets aan de lage kant."
+        )
+
+        # --- GRAFIEKEN PER PLANTWEEK ---
+        # Staaf = gemiddelde van de teelten in die plantweek, punten = de losse
+        # teelten, zodat je de spreiding binnen een week ziet.
+        df_grafiek = pd.DataFrame([{
+            "Plantweek": r["plantweek"],
+            "Jaarweek": f"{r['plantjaar']}-{r['plantweek']:02d}",
+            "Vak": r["vaknummer"],
+            "Lichtsom": r["lichtsom"] if r["lichtsom"] and _volledig(r, "klimaatdagen") else None,
+            "Etmaaltemperatuur": r["gem_temperatuur"],
+            "Water": r["liters"],
+            "Warmte": r["warmte_mj_per_m2"] if r["warmte_mj_per_m2"] and _volledig(r, "energiedagen") else None,
+            "Gewicht": r["oogstgewicht"],
+            "Lengte": r["lengte_eind"],
+        } for r in gekozen])
+
+        weekvolgorde = [w for w in sorted(df_grafiek["Jaarweek"].unique())]
+
+        def teeltgrafiek(staaf_veld, staaf_titel, punt_veld, punt_titel, titel):
+            """
+            Staafdiagram (rechteras) met daaroverheen een puntenwolk (linkeras),
+            beide per plantweek. Geeft None als er niets te tonen is.
+            """
+            data = df_grafiek.dropna(subset=[staaf_veld, punt_veld], how="all")
+            if data.empty:
+                return None
+            x = alt.X("Jaarweek:N", sort=weekvolgorde, title="Plantweek",
+                      axis=alt.Axis(labelAngle=0, labelOverlap=True))
+            staven = alt.Chart(data).mark_bar(color=AFDELING_KLEUR[3], opacity=0.35).encode(
+                x=x,
+                y=alt.Y(f"mean({staaf_veld}):Q", title=staaf_titel,
+                        axis=alt.Axis(orient="right"), scale=alt.Scale(zero=True)),
+                tooltip=[alt.Tooltip("Jaarweek:N", title="Plantweek"),
+                         alt.Tooltip(f"mean({staaf_veld}):Q", title=f"{staaf_titel} (gem.)", format=".1f")],
+            )
+            punten = alt.Chart(data).mark_circle(size=55, color=AFDELING_KLEUR[1]).encode(
+                x=x,
+                y=y_as(punt_veld, punt_titel, axis=alt.Axis(orient="left")),
+                tooltip=[alt.Tooltip("Jaarweek:N", title="Plantweek"),
+                         alt.Tooltip("Vak:Q", title="Vak"),
+                         alt.Tooltip(f"{punt_veld}:Q", title=punt_titel, format=".1f"),
+                         alt.Tooltip(f"{staaf_veld}:Q", title=staaf_titel, format=".1f")],
+            )
+            return alt.layer(staven, punten).resolve_scale(y="independent").properties(
+                height=260, title=titel
+            )
+
+        for staaf, staaf_titel, punt, punt_titel, titel, toelichting in [
+            ("Lichtsom", "Lichtsom per teelt (J/cm²)", "Etmaaltemperatuur", "Etmaaltemperatuur (°C)",
+             "Licht en temperatuur", None),
+            ("Water", "Watergift per teelt (l/m²)", "Etmaaltemperatuur", "Etmaaltemperatuur (°C)",
+             "Water en temperatuur", None),
+            ("Gewicht", "Oogstgewicht (g)", "Lengte", "Oogstlengte (cm)",
+             "Oogstgewicht en lengte", "Alleen teelten waarvan gewicht en lengte zijn gemeten."),
+            ("Warmte", "Warmte per teelt (MJ/m²)", "Etmaaltemperatuur", "Etmaaltemperatuur (°C)",
+             "Warmte en temperatuur", "Warmte wordt voor de hele kas gemeten, dus gelijk voor alle vakken."),
+        ]:
+            grafiek = teeltgrafiek(staaf, staaf_titel, punt, punt_titel, titel)
+            if grafiek is None:
+                st.caption(f"{titel}: nog geen data voor deze selectie.")
+            else:
+                st.altair_chart(grafiek, use_container_width=True)
+                if toelichting:
+                    st.caption(toelichting)
+        st.caption("Staven zijn het gemiddelde van de plantweek, de punten zijn de losse teelten.")
 
 # --- WEEKOVERZICHT ---
 with tab_week:
