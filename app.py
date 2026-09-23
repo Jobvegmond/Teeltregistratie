@@ -77,6 +77,8 @@ from database import (
     set_instelling,
     get_stekweken,
     get_teeltkengetallen,
+    get_rassen,
+    STANDAARD_RAS,
     get_stek_voor_week,
     sla_stekbeoordeling_op,
     stek_uitval_pct,
@@ -600,6 +602,7 @@ def huidige_gebruiker():
     return st.session_state.get("username") or st.session_state.get("name")
 
 
+ANDER_RAS = "➕ Ander ras…"
 RIJPHEID_OPTIES = [1, 2, 3, 4]
 
 
@@ -745,6 +748,16 @@ if actie == "1. Nieuwe teelt registreren":
     )
     standaard_stelen = bereken_aantal_stelen(int(vaknummer), dichtheid)
 
+    # Vrijwel alles is Cameron; af en toe een vak met een ander ras. Buiten het
+    # formulier, zodat "Ander ras" meteen een invoerveld toont.
+    ras_keuzes = get_rassen() + [ANDER_RAS]
+    ras_keuze = st.sidebar.selectbox(
+        "Ras", ras_keuzes, index=0, key="start_ras",
+        help="Een ander ras dan normaal wordt apart geteld in de vergelijkingen.",
+    )
+    if ras_keuze == ANDER_RAS:
+        ras_keuze = st.sidebar.text_input("Naam van het ras", key="start_ras_nieuw").strip()
+
     with st.sidebar.form("start_form"):
         aantal_planten = st.number_input(
             "Aantal geplante planten",
@@ -757,15 +770,18 @@ if actie == "1. Nieuwe teelt registreren":
 
         if submit_start:
             try:
+                if not ras_keuze:
+                    raise ValueError("vul de naam van het ras in")
                 teelt_id, code = start_nieuwe_teelt(
                     int(vaknummer),
                     datum_teelt_start,
                     aantal_planten if aantal_planten else None,
                     gebruiker=huidige_gebruiker(),
+                    ras=ras_keuze,
                 )
                 st.sidebar.success(
                     f"✅ Vak {int(vaknummer)} gestart op {format_datum(datum_teelt_start)} (week {week_start}) "
-                    f"- code **{code}** (teelt-ID: {teelt_id})"
+                    f"- code **{code}**, ras {ras_keuze} (teelt-ID: {teelt_id})"
                 )
                 st.rerun()
             except Exception as e:
@@ -1157,12 +1173,22 @@ with tab_overzicht:
         st.info("Nog geen teelten om door te rekenen.")
     else:
         jaren_teelt = sorted({r["plantjaar"] for r in kengetallen}, reverse=True)
-        keuze_jaar = st.selectbox(
+        rassen_teelt = sorted({r["ras"] for r in kengetallen})
+        kol_jaar, kol_ras = st.columns(2)
+        keuze_jaar = kol_jaar.selectbox(
             "Plantjaar", ["Alle jaren"] + jaren_teelt,
             index=1 if jaren_teelt else 0, key="teeltoverzicht_jaar",
         )
+        # Rassen niet door elkaar: een ander ras heeft een eigen teeltduur en
+        # oogstgewicht, dus die hoort niet in hetzelfde gemiddelde.
+        keuze_ras = kol_ras.selectbox(
+            "Ras", rassen_teelt + ["Alle rassen"],
+            index=rassen_teelt.index(STANDAARD_RAS) if STANDAARD_RAS in rassen_teelt else 0,
+            key="teeltoverzicht_ras",
+        ) if len(rassen_teelt) > 1 else rassen_teelt[0]
         gekozen = [r for r in kengetallen
-                   if keuze_jaar == "Alle jaren" or r["plantjaar"] == keuze_jaar]
+                   if (keuze_jaar == "Alle jaren" or r["plantjaar"] == keuze_jaar)
+                   and (keuze_ras == "Alle rassen" or r["ras"] == keuze_ras)]
 
         # Een periode die maar deels klimaat-, water- of energiedata heeft geeft
         # een te lage som; die laten we leeg in plaats van misleidend laag.
@@ -1173,6 +1199,7 @@ with tab_overzicht:
             "Code": r["code"] or "-",
             "Vak": r["vaknummer"],
             "Afdeling": r["afdeling"],
+            "Ras": r["ras"],
             "Plantweek": r["plantweek"],
             "Start": format_datum(r["datum_teelt_start"]),
             "Oogst": format_datum(r["datum_oogst"]) if r["datum_oogst"] else "",
@@ -1195,6 +1222,7 @@ with tab_overzicht:
             ("Code", "Code", "tekst", None, "medium"),
             ("Vak", "Vak", "getal", "%d", "small"),
             ("Afdeling", "Afd", "getal", "%d", "small"),
+            ("Ras", "Ras", "tekst", None, "small"),
             ("Plantweek", "Wk", "getal", "%d", "small"),
             ("Start", "Start", "datum", None, "small"),
             ("Oogst", "Oogst", "datum", None, "small"),

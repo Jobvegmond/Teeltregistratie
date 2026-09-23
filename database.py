@@ -361,6 +361,9 @@ def init_db():
         cursor.execute("UPDATE watergift_dag SET bron = 'priva' WHERE bron IS NULL")
 
         cursor.execute("ALTER TABLE teelten ADD COLUMN IF NOT EXISTS rijpheid TEXT")
+        # Ras (cultivar) per teelt. Leeg betekent het vaste ras (zie STANDAARD_RAS);
+        # zo hoeven de honderden bestaande teelten niet bijgewerkt te worden.
+        cursor.execute("ALTER TABLE teelten ADD COLUMN IF NOT EXISTS ras TEXT")
         cursor.execute("ALTER TABLE teelten ADD COLUMN IF NOT EXISTS aantal_planten INTEGER")
         cursor.execute("ALTER TABLE teelten ADD COLUMN IF NOT EXISTS code TEXT")
 
@@ -476,7 +479,8 @@ def get_alle_teeltvakken():
 
 # --- TEELTEN ---
 
-def start_nieuwe_teelt(vaknummer, datum_teelt_start, aantal_planten=None, naam=None, gebruiker=None):
+def start_nieuwe_teelt(vaknummer, datum_teelt_start, aantal_planten=None, naam=None,
+                       gebruiker=None, ras=None):
     """
     Start een nieuwe teelt in een teeltvak (op basis van vaknummer 1-39).
     Maakt het teeltvak aan indien het nog niet bestaat.
@@ -490,17 +494,18 @@ def start_nieuwe_teelt(vaknummer, datum_teelt_start, aantal_planten=None, naam=N
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT INTO teelten (teeltvak_id, datum_teelt_start, aantal_planten, code)
-            VALUES (%s, %s, %s, %s)
+            INSERT INTO teelten (teeltvak_id, datum_teelt_start, aantal_planten, code, ras)
+            VALUES (%s, %s, %s, %s, %s)
             RETURNING id
-        """, (teeltvak_id, str(datum_teelt_start), aantal_planten, code))
+        """, (teeltvak_id, str(datum_teelt_start), aantal_planten, code,
+              ras if ras and ras != STANDAARD_RAS else None))
         nieuwe_teelt_id = cursor.fetchone()[0]
         conn.commit()
 
     log_wijziging(
         gebruiker, "aangemaakt", "teelt", nieuwe_teelt_id,
         f"Nieuwe teelt gestart in vak {vaknummer} op {datum_teelt_start} "
-        f"(code {code}, {aantal_planten or 0} planten)"
+        f"(code {code}, {aantal_planten or 0} planten, ras {ras or STANDAARD_RAS})"
     )
 
     return nieuwe_teelt_id, code
@@ -2656,6 +2661,7 @@ def get_teeltkengetallen():
                        t.datum_oogst,
                        COALESCE(t.datum_oogst, %s) AS eind,
                        t.aantal_planten, t.lengte_half, t.lengte_eind, t.oogstgewicht, t.rijpheid,
+                       COALESCE(NULLIF(t.ras, ''), %s) AS ras,
                        CASE
                            WHEN v.vaknummer BETWEEN 1 AND 9 THEN 1
                            WHEN v.vaknummer BETWEEN 30 AND 39 THEN 2
@@ -2667,7 +2673,7 @@ def get_teeltkengetallen():
                 WHERE v.vaknummer IS NOT NULL
             )
             SELECT b.id, b.code, b.vaknummer, b.afdeling, b.start, b.datum_oogst, b.eind,
-                   b.aantal_planten, b.lengte_half, b.lengte_eind, b.oogstgewicht, b.rijpheid,
+                   b.aantal_planten, b.lengte_half, b.lengte_eind, b.oogstgewicht, b.rijpheid, b.ras,
                    k.lichtsom, k.gem_temperatuur, k.dagen,
                    w.liters, w.dagen, w.excel_dagen,
                    e.mj_per_m2, e.dagen,
@@ -2704,12 +2710,12 @@ def get_teeltkengetallen():
                 FROM oogstregistraties o WHERE o.teelt_id = b.id
             ) o ON TRUE
             ORDER BY b.start, b.vaknummer
-        """, (vandaag,))
+        """, (vandaag, STANDAARD_RAS))
         rijen = cursor.fetchall()
 
     kengetallen = []
     for (teelt_id, code, vaknummer, afdeling, start, datum_oogst, eind, aantal_planten,
-         lengte_half, lengte_eind, oogstgewicht, rijpheid, lichtsom, gem_temperatuur,
+         lengte_half, lengte_eind, oogstgewicht, rijpheid, ras, lichtsom, gem_temperatuur,
          klimaatdagen, liters, waterdagen, water_excel_dagen, mj_per_m2, energiedagen,
          emmers) in rijen:
         looptijd = (datetime.strptime(eind, "%Y-%m-%d").date()
@@ -2723,6 +2729,7 @@ def get_teeltkengetallen():
                           - datetime.strptime(start, "%Y-%m-%d").date()).days if datum_oogst else None,
             "aantal_planten": aantal_planten, "lengte_half": lengte_half,
             "lengte_eind": lengte_eind, "oogstgewicht": oogstgewicht, "rijpheid": rijpheid,
+            "ras": ras,
             "stelen": (emmers or 0) * 100 if emmers else None,
             "lichtsom": lichtsom, "gem_temperatuur": gem_temperatuur,
             "klimaatdagen": klimaatdagen or 0,
@@ -2731,3 +2738,31 @@ def get_teeltkengetallen():
             "warmte_mj_per_m2": mj_per_m2, "energiedagen": energiedagen or 0,
         })
     return kengetallen
+
+
+# --- RASSEN (CULTIVARS) ---
+#
+# Vrijwel alles is Cameron; af en toe staat er een vak met een ander ras. Dat
+# hoort apart herkenbaar te zijn, anders vervuilt het de teeltduur- en
+# oogstvergelijkingen. Een lege ras-kolom betekent STANDAARD_RAS.
+
+STANDAARD_RAS = "Cameron"
+
+
+def get_rassen():
+    """Alle rassen die in de teelten voorkomen, standaardras eerst."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT DISTINCT ras FROM teelten WHERE ras IS NOT NULL AND ras <> '' ORDER BY ras")
+        overige = [r[0] for r in cursor.fetchall()]
+    return [STANDAARD_RAS] + [r for r in overige if r != STANDAARD_RAS]
+
+
+def zet_ras(teelt_id, ras, gebruiker=None):
+    """Zet (of wist) het ras van een bestaande teelt."""
+    waarde = ras if ras and ras != STANDAARD_RAS else None
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE teelten SET ras = %s WHERE id = %s", (waarde, teelt_id))
+        conn.commit()
+    log_wijziging(gebruiker, "gewijzigd", "teelt", teelt_id, f"Ras gezet op {ras or STANDAARD_RAS}")
