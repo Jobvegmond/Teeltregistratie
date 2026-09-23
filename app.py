@@ -1,8 +1,10 @@
 import html
+import io
 import math
 import os
 import re
 import secrets
+import urllib.parse
 
 import streamlit as st
 import streamlit_authenticator as stauth
@@ -71,6 +73,14 @@ from database import (
     get_oogstregistraties_voor_periode,
     get_watergift_per_vak_voor_periode,
     get_watergift_per_dag_voor_periode,
+    get_instelling,
+    set_instelling,
+    get_stekweken,
+    get_stek_voor_week,
+    sla_stekbeoordeling_op,
+    stek_uitval_pct,
+    STEK_KEUZES,
+    STEK_STANDAARD_RAS,
 )
 
 # --- PAGINA-INSTELLINGEN ---
@@ -1062,8 +1072,8 @@ elif actie == "4. Registratie wijzigen of verwijderen":
         st.sidebar.info("Er zijn nog geen registraties om te wijzigen.")
 
 # --- HOOFDSCHERM: TABBLADEN ---
-tab_overzicht, tab_week, tab_detail, tab_planning, tab_klimaat, tab_stats, tab_meer = st.tabs([
-    "📊 Overzicht", "📆 Weekoverzicht", "🔍 Teelt-detail", "🗓️ Planning", "🌡️ Klimaatdata",
+tab_overzicht, tab_week, tab_detail, tab_planning, tab_stek, tab_klimaat, tab_stats, tab_meer = st.tabs([
+    "📊 Overzicht", "📆 Weekoverzicht", "🔍 Teelt-detail", "🗓️ Planning", "🌱 Stek", "🌡️ Klimaatdata",
     "📈 Statistieken", "ℹ️ Meer",
 ])
 # Weinig gebruikt: logboek en uitleg als subtabbladen onder "Meer".
@@ -1965,6 +1975,224 @@ with tab_planning:
                 st.rerun()
     else:
         st.info("Nog geen concept-planningen.")
+
+
+# --- STEK ---
+# Kolommen van het weekrapport, zoals de stekleverancier ze uit het oude
+# Excel-blad "Weekrapport" gewend is.
+STEK_RAPPORT_KOLOMMEN = [
+    "Datum", "Vak", "Plant", "Te poten", "Bakjes gepoot", "Uitval (%)",
+    "Wortel", "Plantmaat", "Uniformiteit", "Beoordeling", "Opmerkingen",
+]
+_DAGEN_STEK = ["ma", "di", "wo", "do", "vr", "za", "zo"]
+
+
+def _leeg_naar_none(waarde):
+    """Lege cel uit st.data_editor (None, NaN of lege tekst) -> None."""
+    if waarde is None or (not isinstance(waarde, str) and pd.isna(waarde)):
+        return None
+    if isinstance(waarde, str) and not waarde.strip():
+        return None
+    return waarde.strip() if isinstance(waarde, str) else waarde
+
+
+def _getal_nl(waarde, decimalen=1):
+    """Getal met komma, zoals in een Nederlandse mail."""
+    return f"{waarde:.{decimalen}f}".replace(".", ",")
+
+
+def _stek_mailtekst(rapport, week, jaar, afzender):
+    """
+    Platte tekst voor de mail: één regel per vak. Geen uitgelijnde tabel,
+    want die valt in een mailprogramma met gewoon lettertype uit elkaar.
+    """
+    regels = []
+    for _, r in rapport.iterrows():
+        delen = [f"Vak {r['Vak']} ({r['Datum']})"]
+        if pd.notna(r["Te poten"]):
+            delen.append(f"{int(r['Te poten'])} gepoot")
+        if pd.notna(r["Bakjes gepoot"]):
+            delen.append(f"{_getal_nl(r['Bakjes gepoot']).removesuffix(',0')} bakjes")
+        if pd.notna(r["Uitval (%)"]):
+            delen.append(f"uitval {_getal_nl(r['Uitval (%)'])}%")
+        for kolom in ("Wortel", "Plantmaat", "Uniformiteit"):
+            if r[kolom]:
+                delen.append(f"{kolom.lower()} {r[kolom].lower()}")
+        if pd.notna(r["Beoordeling"]):
+            delen.append(f"cijfer {int(r['Beoordeling'])}")
+        regel = " · ".join(delen)
+        if r["Opmerkingen"]:
+            regel += f"\n    {r['Opmerkingen']}"
+        regels.append(regel)
+    return (
+        f"Beste,\n\nHierbij de stekresultaten van week {week} ({jaar}):\n\n"
+        + "\n".join(regels)
+        + "\n\nUitval = het deel van de geleverde stekken (bakjes x 600) dat niet gepoot is."
+        + f"\n\nMet vriendelijke groet,\n{afzender}\nVan Egmond Matricaria"
+    )
+
+
+with tab_stek:
+    st.subheader("🌱 Stek")
+    stekweken = get_stekweken()
+    if not stekweken:
+        st.info("Er zijn nog geen teelten gestart.")
+    else:
+        vandaag_stek = date.today()
+        deze_maandag = vandaag_stek - timedelta(days=vandaag_stek.weekday())
+        # Standaard de huidige week; is daar nog niets gepoot, dan de laatste week waarin wel.
+        standaard_stekweek = next((m for m in stekweken if m <= deze_maandag), stekweken[-1])
+
+        def _stekweek_label(maandag):
+            jaar_s, week_s = get_isojaar_week(maandag)
+            return (f"Week {week_s} - {jaar_s} "
+                    f"({format_datum(maandag)} t/m {format_datum(maandag + timedelta(days=6))})")
+
+        stek_maandag = st.selectbox(
+            "Pootweek", stekweken, index=stekweken.index(standaard_stekweek),
+            format_func=_stekweek_label, key="stek_week",
+        )
+        stek_jaar, stek_week = get_isojaar_week(stek_maandag)
+        rijen_stek = get_stek_voor_week(stek_maandag)
+
+        st.caption(
+            "Vul per vak het geleverde stek in. Te poten komt uit de teeltregistratie; "
+            "de uitval rekent de app zelf uit (bakjes × 600 stekken)."
+        )
+        df_stek = pd.DataFrame(
+            [{
+                "Datum": f"{_DAGEN_STEK[date.fromisoformat(r['datum'][:10]).weekday()]} {format_datum(r['datum'])}",
+                "Vak": r["vaknummer"],
+                "Te poten": r["aantal_planten"],
+                "Plant": r["ras"] or STEK_STANDAARD_RAS,
+                "Bakjes": r["bakjes"],
+                "Wortel": r["wortel"],
+                "Plantmaat": r["plantmaat"],
+                "Uniformiteit": r["uniformiteit"],
+                "Beoordeling": r["beoordeling"],
+                "Opmerking": r["opmerking"] or "",
+            } for r in rijen_stek],
+            index=[r["teelt_id"] for r in rijen_stek],
+        )
+        bewerkt_stek = st.data_editor(
+            df_stek,
+            hide_index=True,
+            key=f"stek_editor_{stek_maandag}",
+            disabled=["Datum", "Vak", "Te poten"],
+            column_config={
+                "Vak": st.column_config.NumberColumn(format="%d", width="small"),
+                "Te poten": st.column_config.NumberColumn(format="%d", width="small"),
+                "Plant": st.column_config.TextColumn(width="small"),
+                "Bakjes": st.column_config.NumberColumn(
+                    min_value=0.0, step=0.5, format="%.1f", width="small",
+                    help="Aantal gepote bakjes (600 stekken per bakje)",
+                ),
+                "Wortel": st.column_config.SelectboxColumn(options=STEK_KEUZES["wortel"], width="small"),
+                "Plantmaat": st.column_config.SelectboxColumn(options=STEK_KEUZES["plantmaat"], width="small"),
+                "Uniformiteit": st.column_config.SelectboxColumn(
+                    options=STEK_KEUZES["uniformiteit"], width="small"
+                ),
+                "Beoordeling": st.column_config.NumberColumn(
+                    min_value=1, max_value=10, step=1, format="%d", width="small",
+                    help="Totaalcijfer 1-10",
+                ),
+                "Opmerking": st.column_config.TextColumn(width="large"),
+            },
+        )
+
+        niet_opgeslagen = not bewerkt_stek.fillna("").astype(str).equals(df_stek.fillna("").astype(str))
+        col_opslaan, col_status = st.columns([1, 3])
+        if col_opslaan.button("💾 Opslaan", key="stek_opslaan", type="primary", disabled=not niet_opgeslagen):
+            opgeslagen = 0
+            for teelt_id, rij in bewerkt_stek.iterrows():
+                velden = {
+                    "ras": _leeg_naar_none(rij["Plant"]),
+                    "bakjes": None if pd.isna(rij["Bakjes"]) else float(rij["Bakjes"]),
+                    "wortel": _leeg_naar_none(rij["Wortel"]),
+                    "plantmaat": _leeg_naar_none(rij["Plantmaat"]),
+                    "uniformiteit": _leeg_naar_none(rij["Uniformiteit"]),
+                    "beoordeling": None if pd.isna(rij["Beoordeling"]) else int(rij["Beoordeling"]),
+                    "opmerking": _leeg_naar_none(rij["Opmerking"]),
+                }
+                # Alleen het (vooringevulde) ras en verder niets: geen lege beoordeling aanmaken.
+                if all(waarde is None for veld, waarde in velden.items() if veld != "ras"):
+                    continue
+                if sla_stekbeoordeling_op(int(teelt_id), velden, gebruiker=huidige_gebruiker()):
+                    opgeslagen += 1
+            st.session_state["stek_melding"] = f"{opgeslagen} vak(ken) opgeslagen."
+            st.rerun()
+        if "stek_melding" in st.session_state:
+            col_status.success(st.session_state.pop("stek_melding"))
+        elif niet_opgeslagen:
+            col_status.warning("Wijzigingen nog niet opgeslagen.")
+
+        # Het rapport volgt het invulblad direct, ook vóór het opslaan.
+        st.markdown("---")
+        st.write(f"**📧 Weekrapport voor de stekleverancier — week {stek_week}**")
+        rapport_stek = pd.DataFrame({
+            "Datum": [format_datum(r["datum"]) for r in rijen_stek],
+            "Vak": bewerkt_stek["Vak"].to_list(),
+            "Plant": [(_leeg_naar_none(v) or "") for v in bewerkt_stek["Plant"]],
+            "Te poten": bewerkt_stek["Te poten"].to_list(),
+            "Bakjes gepoot": bewerkt_stek["Bakjes"].to_list(),
+            "Uitval (%)": [
+                round(u, 1) if (u := stek_uitval_pct(p, None if pd.isna(b) else b)) is not None else None
+                for p, b in zip(bewerkt_stek["Te poten"], bewerkt_stek["Bakjes"])
+            ],
+            "Wortel": [(_leeg_naar_none(v) or "") for v in bewerkt_stek["Wortel"]],
+            "Plantmaat": [(_leeg_naar_none(v) or "") for v in bewerkt_stek["Plantmaat"]],
+            "Uniformiteit": [(_leeg_naar_none(v) or "") for v in bewerkt_stek["Uniformiteit"]],
+            "Beoordeling": bewerkt_stek["Beoordeling"].to_list(),
+            "Opmerkingen": [(_leeg_naar_none(v) or "") for v in bewerkt_stek["Opmerking"]],
+        }, columns=STEK_RAPPORT_KOLOMMEN)
+        toon_tabel(rapport_stek, [
+            ("Datum", "Datum", "datum", None, "small"),
+            ("Vak", "Vak", "getal", "%d", "small"),
+            ("Plant", "Plant", "tekst", None, "small"),
+            ("Te poten", "Te poten", "getal", "%d", "small"),
+            ("Bakjes gepoot", "Bakjes gepoot", "getal", "%.1f", "small"),
+            ("Uitval (%)", "Uitval (%)", "getal", "%.1f", "small"),
+            ("Wortel", "Wortel", "tekst", None, "small"),
+            ("Plantmaat", "Plantmaat", "tekst", None, "small"),
+            ("Uniformiteit", "Uniformiteit", "tekst", None, "small"),
+            ("Beoordeling", "Beoordeling", "getal", "%d", "small"),
+            ("Opmerkingen", "Opmerkingen", "tekst", None, "large"),
+        ])
+
+        excel_buffer = io.BytesIO()
+        with pd.ExcelWriter(excel_buffer, engine="openpyxl") as schrijver:
+            rapport_stek.to_excel(schrijver, index=False, sheet_name=f"Week {stek_week}")
+        leverancier_email = get_instelling("stek_leverancier_email", "")
+        onderwerp_stek = f"Stekresultaten week {stek_week} - {stek_jaar} - Van Egmond Matricaria"
+        mailtekst_stek = _stek_mailtekst(
+            rapport_stek, stek_week, stek_jaar, st.session_state.get("name") or "",
+        )
+
+        col_excel, col_mail = st.columns(2)
+        col_excel.download_button(
+            "⬇️ Download als Excel", excel_buffer.getvalue(),
+            file_name=f"Stekresultaten week {stek_week:02d}-{stek_jaar}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="stek_download",
+        )
+        col_mail.link_button(
+            "✉️ Mail opstellen",
+            f"mailto:{leverancier_email}?subject={urllib.parse.quote(onderwerp_stek)}"
+            f"&body={urllib.parse.quote(mailtekst_stek)}",
+        )
+        if niet_opgeslagen:
+            st.caption("Let op: het rapport toont ook wat nog niet is opgeslagen.")
+        with st.expander("Voorbeeld van de mailtekst"):
+            st.text(mailtekst_stek)
+        with st.expander("⚙️ E-mailadres stekleverancier"):
+            nieuw_email = st.text_input(
+                "Wordt als ontvanger ingevuld bij 'Mail opstellen'", value=leverancier_email,
+                key="stek_email_invoer",
+            )
+            if st.button("Opslaan", key="stek_email_opslaan") and nieuw_email.strip() != leverancier_email:
+                set_instelling("stek_leverancier_email", nieuw_email.strip() or None, gebruiker=huidige_gebruiker())
+                st.rerun()
+
 
 # --- KLIMAATDATA (KLIMAATCOMPUTER-CSV) ---
 with tab_klimaat:

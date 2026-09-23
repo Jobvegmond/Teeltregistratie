@@ -14,7 +14,11 @@ Wat wel en niet mee gaat:
     oogst en blijven hier buiten (anders lijken ze in de app nog te lopen);
   - Excel kent de oogst alleen per week. De oogstdatum wordt daarom gezet op
     dezelfde weekdag als de plantdag, in de oogstweek (±3 dagen nauwkeurig);
-  - lengte, gewicht en emmers staan niet in Excel en blijven leeg.
+  - lengte, gewicht en emmers staan niet in Excel en blijven leeg;
+  - de stekbeoordeling (bakjes, wortel, plantmaat, uniformiteit, cijfer,
+    opmerking) gaat mee naar stekbeoordelingen, voor elke teelt in de database
+    met hetzelfde vak en dezelfde plantdatum. Een beoordeling die al in de app
+    staat, wordt niet overschreven.
 
 Gebruik:
     python importeer_excel_historie.py              # proefdraai: toont alleen
@@ -40,21 +44,36 @@ EXCEL = os.path.join(HIER, "Teelt", "Klimaatregistratie tuin 3 kopie.xlsx")
 VANAF = (2025, 20)  # start Cameron
 GEBRUIKER = "excel-import"
 DAGNUMMER = {"ma": 1, "di": 2, "wo": 3, "do": 4, "vr": 5, "za": 6, "zo": 7}
+RAS_NAAM = {"Cam": "Cameron"}  # afkortingen in Excel -> naam voor de leverancier
 
 
 def lees_stek(wb):
-    """(jaar, week, vak) -> (plantdatum, aantal stelen) uit blad Stek."""
+    """(jaar, week, vak) -> gegevens van die planting uit blad Stek."""
     stek = {}
     rijen = wb["Stek"].iter_rows(values_only=True)
     next(rijen)
-    for jaar, week, dag, vak, _ras, te_poten, *_ in rijen:
+    for rij in rijen:
+        (jaar, week, dag, vak, ras, te_poten, bakjes, _uitval, _celdagen,
+         wortel, plantmaat, uniformiteit, cijfer, opmerking) = (list(rij) + [None] * 14)[:14]
         if None in (jaar, week, dag, vak) or (int(jaar), int(week)) < VANAF:
             continue
         dagnr = DAGNUMMER.get(str(dag).strip().lower()[:2])
         if dagnr is None:
             continue
-        plantdatum = date.fromisocalendar(int(jaar), int(week), dagnr)
-        stek[(int(jaar), int(week), int(vak))] = (plantdatum, int(te_poten) if te_poten else None)
+        tekst = lambda v: str(v).strip() if v not in (None, "") else None
+        stek[(int(jaar), int(week), int(vak))] = {
+            "plantdatum": date.fromisocalendar(int(jaar), int(week), dagnr),
+            "planten": int(te_poten) if te_poten else None,
+            "beoordeling": {
+                "ras": RAS_NAAM.get(tekst(ras), tekst(ras)),
+                "bakjes": float(bakjes) if bakjes not in (None, "") else None,
+                "wortel": tekst(wortel),
+                "plantmaat": tekst(plantmaat),
+                "uniformiteit": tekst(uniformiteit),
+                "beoordeling": int(cijfer) if cijfer not in (None, "") else None,
+                "opmerking": tekst(opmerking),
+            },
+        }
     return stek
 
 
@@ -101,7 +120,7 @@ def bouw_teelten(stek, teeltweken):
         if eerste != (jaar, week):
             overgeslagen["teeltregel begint niet in de plantweek"] += 1
             continue
-        plantdatum, aantal = stek[sleutel]
+        plantdatum, aantal = stek[sleutel]["plantdatum"], stek[sleutel]["planten"]
         oogstdatum = date.fromisocalendar(laatste[0], laatste[1], plantdatum.isoweekday())
         teelten.append({"vak": vak, "start": plantdatum, "oogst": oogstdatum, "planten": aantal})
     return teelten, overgeslagen, laatste_bijgehouden
@@ -115,6 +134,41 @@ def bestaande_teelten():
             FROM teelten t JOIN teeltvakken v ON v.id = t.teeltvak_id
         """)
         return {(vak, start[:10]) for vak, start in cur.fetchall()}
+
+
+def stek_bij_teelten(stek):
+    """
+    Koppelt de stekbeoordelingen uit Excel aan teelten in de database (zelfde
+    vak en plantdatum) die nog geen beoordeling hebben. Geeft (teelt_id, velden)
+    terug, plus het aantal dat geen teelt vond en het aantal dat al bestond.
+    """
+    with database.get_connection() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT t.id, v.vaknummer, t.datum_teelt_start, s.id IS NOT NULL
+            FROM teelten t
+            JOIN teeltvakken v ON v.id = t.teeltvak_id
+            LEFT JOIN stekbeoordelingen s ON s.teelt_id = t.id
+        """)
+        rijen = cur.fetchall()
+    teelt_per_plant = {(vak, start[:10]): (tid, heeft) for tid, vak, start, heeft in rijen}
+    # Excel en de app wijken soms een dag af in de plantdatum. Een vak heeft nooit
+    # twee teelten in één week, dus dan mag vak + week ook.
+    per_vakweek = {}
+    for tid, vak, start, heeft in rijen:
+        per_vakweek.setdefault((vak, date.fromisoformat(start[:10]).isocalendar()[:2]), []).append((tid, heeft))
+    koppel, geen_teelt, al_ingevuld = [], 0, 0
+    for (jaar, week, vak), gegevens in stek.items():
+        gevonden = teelt_per_plant.get((vak, str(gegevens["plantdatum"])))
+        if gevonden is None and len(per_vakweek.get((vak, (jaar, week)), [])) == 1:
+            gevonden = per_vakweek[(vak, (jaar, week))][0]
+        if gevonden is None:
+            geen_teelt += 1
+        elif gevonden[1]:
+            al_ingevuld += 1
+        else:
+            koppel.append((gevonden[0], gegevens["beoordeling"]))
+    return koppel, geen_teelt, al_ingevuld
 
 
 def schrijf(teelten):
@@ -143,7 +197,8 @@ def main():
 
     warnings.filterwarnings("ignore", module="openpyxl")
     wb = openpyxl.load_workbook(EXCEL, read_only=True, data_only=True)
-    teelten, overgeslagen, laatste_bijgehouden = bouw_teelten(lees_stek(wb), lees_teeltweken(wb))
+    stek = lees_stek(wb)
+    teelten, overgeslagen, laatste_bijgehouden = bouw_teelten(stek, lees_teeltweken(wb))
 
     bestaand = bestaande_teelten()
     nieuw = [t for t in teelten if (t["vak"], str(t["start"])) not in bestaand]
@@ -162,21 +217,29 @@ def main():
             print(f"  vak {t['vak']:>2}  start {t['start']:%d-%m-%y}  oogst ~{t['oogst']:%d-%m-%y}  "
                   f"{(t['oogst'] - t['start']).days} dgn  {t['planten']} planten")
 
+    if args.uitvoeren and nieuw:
+        schrijf(nieuw)
+        database.log_wijziging(
+            GEBRUIKER, "aangemaakt", "teelt", None,
+            f"{len(nieuw)} afgeronde teelten uit Excel geïmporteerd "
+            f"(gestart {min(t['start'] for t in nieuw):%d-%m-%y} t/m {max(t['start'] for t in nieuw):%d-%m-%y}; "
+            "oogstdatum op weekniveau)"
+        )
+        print(f"\n{len(nieuw)} teelten geïmporteerd.")
+
+    # Pas na de teelten: een beoordeling hangt aan een teelt die nu pas kan bestaan.
+    # In de proefdraai tellen de nog niet geïmporteerde teelten dus als "zonder teelt".
+    koppel, geen_teelt, al_ingevuld = stek_bij_teelten(stek)
+    print(f"\nStekbeoordelingen: {len(koppel)} nieuw, {al_ingevuld} stonden er al, "
+          f"{geen_teelt} zonder bijbehorende teelt in de database")
+
     if not args.uitvoeren:
         print("\nProefdraai: er is niets geschreven. Gebruik --uitvoeren om te importeren.")
         return
-    if not nieuw:
-        print("\nNiets te doen.")
-        return
-
-    schrijf(nieuw)
-    database.log_wijziging(
-        GEBRUIKER, "aangemaakt", "teelt", None,
-        f"{len(nieuw)} afgeronde teelten uit Excel geïmporteerd "
-        f"(gestart {min(t['start'] for t in nieuw):%d-%m-%y} t/m {max(t['start'] for t in nieuw):%d-%m-%y}; "
-        "oogstdatum op weekniveau)"
-    )
-    print(f"\n{len(nieuw)} teelten geïmporteerd.")
+    for teelt_id, velden in koppel:
+        database.sla_stekbeoordeling_op(teelt_id, velden, gebruiker=GEBRUIKER)
+    if koppel:
+        print(f"{len(koppel)} stekbeoordelingen geïmporteerd.")
 
 
 if __name__ == "__main__":

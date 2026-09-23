@@ -3,3 +3,4 @@ pandas
 psycopg2-binary
 streamlit-authenticator
 requests
+openpyxl

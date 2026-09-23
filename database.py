@@ -332,6 +332,23 @@ def init_db():
             )
         """)
 
+        # Beoordeling van het geleverde stek, één per teelt, ingevuld bij het poten.
+        # De stekuitval wordt niet opgeslagen maar berekend uit bakjes en
+        # teelten.aantal_planten (zie stek_uitval_pct).
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS stekbeoordelingen (
+                id SERIAL PRIMARY KEY,
+                teelt_id INTEGER NOT NULL UNIQUE REFERENCES teelten (id),
+                ras TEXT,
+                bakjes REAL,
+                wortel TEXT,
+                plantmaat TEXT,
+                uniformiteit TEXT,
+                beoordeling INTEGER,
+                opmerking TEXT
+            )
+        """)
+
         # Migratie: voeg ontbrekende kolommen toe aan bestaande databases.
         cursor.execute("ALTER TABLE teelten ADD COLUMN IF NOT EXISTS rijpheid TEXT")
         cursor.execute("ALTER TABLE teelten ADD COLUMN IF NOT EXISTS aantal_planten INTEGER")
@@ -2484,3 +2501,92 @@ def get_strokenplanning(weken_terug=8):
     rijen.sort(key=lambda r: (r["vaknummer"], r["start"]))
     return rijen
 
+
+
+# --- STEKBEOORDELING ---
+#
+# Bij het poten wordt het geleverde stek beoordeeld; wekelijks gaat een overzicht
+# naar de stekleverancier. Vroeger in Excel (blad Stek / Weekrapport).
+
+STEK_PER_BAKJE = 600  # afgeleid uit de Excel-registratie: klopt voor alle Cameron-regels
+STEK_KEUZES = {
+    "wortel": ["Goed", "Redelijk", "Matig", "Slecht"],
+    "plantmaat": ["Goed", "Redelijk", "Matig", "Klein", "Groot", "Slecht"],
+    "uniformiteit": ["Goed", "Matig", "Slecht"],
+}
+STEK_VELDEN = ("ras", "bakjes", "wortel", "plantmaat", "uniformiteit", "beoordeling", "opmerking")
+STEK_STANDAARD_RAS = "Cameron"
+
+
+def stek_uitval_pct(aantal_planten, bakjes):
+    """
+    Uitval van het stek in %: het deel van de geleverde stekken (bakjes x 600)
+    dat niet gepoot is. None als een van beide ontbreekt.
+    """
+    if not aantal_planten or not bakjes:
+        return None
+    geleverd = bakjes * STEK_PER_BAKJE
+    return (geleverd - aantal_planten) / geleverd * 100
+
+
+def get_stekweken():
+    """Maandagen (date) van alle weken waarin een teelt gestart is, nieuwste eerst."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT DISTINCT datum_teelt_start FROM teelten")
+        startdatums = [r[0] for r in cursor.fetchall()]
+    return sorted({_maandag(d) for d in startdatums}, reverse=True)
+
+
+def get_stek_voor_week(maandag):
+    """
+    Alle teelten die gestart zijn in de week vanaf `maandag`, met hun
+    stekbeoordeling (lege velden als die er nog niet is). Gesorteerd op
+    datum en vak.
+    """
+    zondag = maandag + timedelta(days=6)
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT t.id, t.datum_teelt_start, v.vaknummer, t.aantal_planten,
+                   s.ras, s.bakjes, s.wortel, s.plantmaat, s.uniformiteit, s.beoordeling, s.opmerking
+            FROM teelten t
+            JOIN teeltvakken v ON v.id = t.teeltvak_id
+            LEFT JOIN stekbeoordelingen s ON s.teelt_id = t.id
+            WHERE t.datum_teelt_start BETWEEN %s AND %s
+            ORDER BY t.datum_teelt_start, v.vaknummer
+        """, (str(maandag), str(zondag)))
+        rijen = cursor.fetchall()
+    return [
+        {"teelt_id": r[0], "datum": r[1], "vaknummer": r[2], "aantal_planten": r[3],
+         **dict(zip(STEK_VELDEN, r[4:]))}
+        for r in rijen
+    ]
+
+
+def sla_stekbeoordeling_op(teelt_id, velden, gebruiker=None):
+    """
+    Slaat de stekbeoordeling van één teelt op (nieuw of bijwerken). `velden` is
+    een dict met (een deel van) STEK_VELDEN. Logt alleen als er iets verandert.
+    """
+    waarden = {k: velden.get(k) for k in STEK_VELDEN}
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            f"SELECT {', '.join(STEK_VELDEN)} FROM stekbeoordelingen WHERE teelt_id = %s", (teelt_id,)
+        )
+        oud = cursor.fetchone()
+        if oud is not None and dict(zip(STEK_VELDEN, oud)) == waarden:
+            return False
+        cursor.execute(f"""
+            INSERT INTO stekbeoordelingen (teelt_id, {', '.join(STEK_VELDEN)})
+            VALUES (%s, {', '.join(['%s'] * len(STEK_VELDEN))})
+            ON CONFLICT (teelt_id) DO UPDATE SET
+                {', '.join(f'{k} = EXCLUDED.{k}' for k in STEK_VELDEN)}
+        """, (teelt_id, *waarden.values()))
+        conn.commit()
+    log_wijziging(
+        gebruiker, "aangemaakt" if oud is None else "gewijzigd", "stekbeoordeling", teelt_id,
+        "Stekbeoordeling: " + ", ".join(f"{k} {v}" for k, v in waarden.items() if v not in (None, "")),
+    )
+    return True
