@@ -4,8 +4,9 @@ de database, zodat de app ook de teeltduur van vóór de app kent (juist de
 wintermaanden, die de app zelf nog niet heeft meegemaakt).
 
 Bron: Teelt\\Klimaatregistratie tuin 3 kopie.xlsx
-  - blad "Stek":  plantdatum (jaar/week/dag), vak en aantal geplante stelen
-  - blad "Teelt": per teelt één regel die doorloopt t/m de oogstweek
+  - blad "Stek":     plantdatum (jaar/week/dag), vak en aantal geplante stelen
+  - blad "Teelt":    per teelt één regel die doorloopt t/m de oogstweek
+  - blad "Overview": watergift per vak per dag (de rijen "W")
 
 Wat wel en niet mee gaat:
   - alleen vanaf 2025 week 20 (start Cameron);
@@ -18,7 +19,11 @@ Wat wel en niet mee gaat:
   - de stekbeoordeling (bakjes, wortel, plantmaat, uniformiteit, cijfer,
     opmerking) gaat mee naar stekbeoordelingen, voor elke teelt in de database
     met hetzelfde vak en dezelfde plantdatum. Een beoordeling die al in de app
-    staat, wordt niet overschreven.
+    staat, wordt niet overschreven;
+  - de watergift uit blad Overview gaat naar watergift_dag met bron 'excel'.
+    Dat is de ingestelde gift; waar Priva gemeten heeft blijft die staan. Uit de
+    overlap (sep 2026) blijkt Excel een paar procent lager en mist het de kleine
+    giften, dus gebruik deze cijfers als benadering.
 
 Gebruik:
     python importeer_excel_historie.py              # proefdraai: toont alleen
@@ -96,6 +101,44 @@ def lees_teeltweken(wb):
         if gevuld:
             teelten[(int(jaar), int(week), int(vak))] = (gevuld[0], gevuld[-1])
     return teelten
+
+
+def lees_watergift(wb):
+    """(vak, datum) -> liter per m2 uit de "W"-rijen van blad Overview."""
+    rijen = wb["Overview"].iter_rows(values_only=True)
+    jaren, weken, dagen = next(rijen), next(rijen), next(rijen)
+    next(rijen)
+    # De kop staat in drie rijen: jaar en week alleen boven de eerste dag van
+    # het blok, daarna zeven dagkolommen (het blok begint op zondag).
+    kolomdatum = {}
+    jaar = week = None
+    positie = 0
+    blokstart = None
+    for i in range(15, len(jaren)):
+        if jaren[i] is not None:
+            jaar, week, positie = jaren[i], weken[i], 0
+            try:
+                blokstart = date.fromisocalendar(int(jaar), int(week), 1) - timedelta(days=1)
+            except ValueError:  # bijv. week 53 in een jaar dat er 52 heeft
+                blokstart = None
+        elif jaar is not None:
+            positie += 1
+        if blokstart and i < len(dagen) and dagen[i]:
+            kolomdatum[i] = blokstart + timedelta(days=positie)
+
+    eerste_dag = date.fromisocalendar(VANAF[0], VANAF[1], 1)
+    watergift = {}
+    vak = None
+    for rij in rijen:
+        if rij[0] is not None:
+            vak = rij[0]
+        if rij[1] != "W" or vak is None:
+            continue
+        for i, dag in kolomdatum.items():
+            waarde = rij[i] if i < len(rij) else None
+            if isinstance(waarde, (int, float)) and waarde and dag >= eerste_dag:
+                watergift[(int(vak), dag)] = float(waarde)
+    return watergift
 
 
 def bouw_teelten(stek, teeltweken):
@@ -233,6 +276,12 @@ def main():
     print(f"\nStekbeoordelingen: {len(koppel)} nieuw, {al_ingevuld} stonden er al, "
           f"{geen_teelt} zonder bijbehorende teelt in de database")
 
+    watergift = lees_watergift(wb)
+    if watergift:
+        dagen_wg = sorted({dag for _, dag in watergift})
+        print(f"Watergift (ingesteld): {len(watergift)} vak-dagen, "
+              f"{dagen_wg[0]:%d-%m-%y} t/m {dagen_wg[-1]:%d-%m-%y}")
+
     if not args.uitvoeren:
         print("\nProefdraai: er is niets geschreven. Gebruik --uitvoeren om te importeren.")
         return
@@ -240,6 +289,11 @@ def main():
         database.sla_stekbeoordeling_op(teelt_id, velden, gebruiker=GEBRUIKER)
     if koppel:
         print(f"{len(koppel)} stekbeoordelingen geïmporteerd.")
+
+    for (vak, dag), liter in sorted(watergift.items()):
+        database.upsert_watergift_dag(vak, dag, liter, bron="excel")
+    print(f"{len(watergift)} vak-dagen watergift weggeschreven (bron excel; "
+          "gemeten Priva-waarden blijven staan).")
 
 
 if __name__ == "__main__":

@@ -1986,6 +1986,7 @@ STEK_RAPPORT_KOLOMMEN = [
     "Wortel", "Plantmaat", "Uniformiteit", "Beoordeling", "Opmerkingen",
 ]
 _DAGEN_STEK = ["ma", "di", "wo", "do", "vr", "za", "zo"]
+NIET_WIJZIGEN = "— niet wijzigen —"
 
 
 def _leeg_naar_none(waarde):
@@ -2060,33 +2061,67 @@ with tab_stek:
             "Vul per vak het geleverde stek in. Te poten komt uit de teeltregistratie; "
             "de uitval rekent de app zelf uit (bakjes × 600 stekken)."
         )
+        # Het stek van een week komt uit dezelfde partij, dus de beoordeling is
+        # meestal voor alle vakken gelijk: hier één keer invullen, daarna in de
+        # tabel per vak aanpassen als een vak afwijkt.
+        def _gedeeld(veld):
+            """De waarde als alle ingevulde vakken het erover eens zijn, anders None."""
+            waarden = {r[veld] for r in rijen_stek if r[veld] not in (None, "")}
+            return waarden.pop() if len(waarden) == 1 else None
+
         with st.container(border=True):
-            st.write("**Bakjes verdelen**")
-            col_totaal, col_uitleg = st.columns([1, 2])
-            totaal_bakjes = col_totaal.number_input(
-                "Totaal geleverde bakjes deze week", min_value=0.0, step=0.25, format="%.2f",
+            st.write("**Hele week invullen**")
+            kol1, kol2, kol3 = st.columns(3)
+            totaal_bakjes = kol1.number_input(
+                "Totaal geleverde bakjes", min_value=0.0, step=0.25, format="%.2f",
                 value=float(sum(r["bakjes"] or 0 for r in rijen_stek)),
+                help="Wordt verdeeld naar rato van het aantal te poten planten, zodat een "
+                     "half vak de helft krijgt. Afronding op kwart bakjes; de som klopt precies.",
                 key=f"stek_totaal_{stek_maandag}",
             )
-            col_uitleg.caption(
-                "Verdeelt het totaal naar rato van het aantal te poten planten — een half vak "
-                "krijgt dus de helft — afgerond op kwart bakjes, zo dat de som precies uitkomt. "
-                "Dit overschrijft de bakjes die nu per vak staan."
+
+            def _keuze(kolom, veld, label, opties):
+                huidig = _gedeeld(veld)
+                keuzes = [NIET_WIJZIGEN] + list(opties)
+                return kolom.selectbox(
+                    label, keuzes,
+                    index=keuzes.index(huidig) if huidig in keuzes else 0,
+                    key=f"stek_week_{veld}_{stek_maandag}",
+                )
+
+            week_wortel = _keuze(kol2, "wortel", "Wortel", STEK_KEUZES["wortel"])
+            week_plantmaat = _keuze(kol3, "plantmaat", "Plantmaat", STEK_KEUZES["plantmaat"])
+            kol4, kol5, kol6 = st.columns([1, 1, 2])
+            week_uniformiteit = _keuze(kol4, "uniformiteit", "Uniformiteit", STEK_KEUZES["uniformiteit"])
+            week_cijfer = _keuze(kol5, "beoordeling", "Beoordeling", range(1, 11))
+            week_opmerking = kol6.text_input(
+                "Opmerking", value=_gedeeld("opmerking") or "",
+                key=f"stek_week_opmerking_{stek_maandag}",
             )
-            if col_uitleg.button("📦 Verdeel en sla op", key=f"stek_verdeel_{stek_maandag}",
-                                 disabled=not totaal_bakjes or not rijen_stek):
-                verdeling = verdeel_bakjes(totaal_bakjes, [r["aantal_planten"] for r in rijen_stek])
+            st.caption(
+                f"Vult alle {len(rijen_stek)} vakken van deze week in één keer. "
+                f"'{NIET_WIJZIGEN}' laat staan wat er per vak staat; wijkt een vak af, "
+                "pas het dan in de tabel hieronder aan."
+            )
+            if st.button("📋 Invullen voor alle vakken", key=f"stek_week_vullen_{stek_maandag}",
+                         disabled=not rijen_stek):
+                verdeling = (verdeel_bakjes(totaal_bakjes, [r["aantal_planten"] for r in rijen_stek])
+                             if totaal_bakjes else [r["bakjes"] for r in rijen_stek])
                 for rij_stek, bakjes_vak in zip(rijen_stek, verdeling):
+                    velden = {veld: rij_stek[veld] for veld in
+                              ("wortel", "plantmaat", "uniformiteit", "beoordeling", "opmerking")}
+                    for veld, gekozen in (("wortel", week_wortel), ("plantmaat", week_plantmaat),
+                                          ("uniformiteit", week_uniformiteit), ("beoordeling", week_cijfer)):
+                        if gekozen != NIET_WIJZIGEN:
+                            velden[veld] = gekozen
+                    if week_opmerking.strip() or _gedeeld("opmerking"):
+                        velden["opmerking"] = week_opmerking.strip() or None
                     sla_stekbeoordeling_op(
                         rij_stek["teelt_id"],
-                        {**{veld: rij_stek[veld] for veld in
-                            ("wortel", "plantmaat", "uniformiteit", "beoordeling", "opmerking")},
-                         "ras": rij_stek["ras"] or STEK_STANDAARD_RAS, "bakjes": bakjes_vak},
+                        {**velden, "ras": rij_stek["ras"] or STEK_STANDAARD_RAS, "bakjes": bakjes_vak},
                         gebruiker=huidige_gebruiker(),
                     )
-                st.session_state["stek_melding"] = (
-                    f"{totaal_bakjes:g} bakjes verdeeld over {len(rijen_stek)} vakken."
-                )
+                st.session_state["stek_melding"] = f"Ingevuld voor {len(rijen_stek)} vakken."
                 st.rerun()
 
         df_stek = pd.DataFrame(

@@ -350,6 +350,12 @@ def init_db():
         """)
 
         # Migratie: voeg ontbrekende kolommen toe aan bestaande databases.
+        # Waar komt een watergiftwaarde vandaan: 'priva' (gemeten) of 'excel'
+        # (ingesteld, uit de oude registratie). Alles wat er al stond kwam uit
+        # Priva. Zie ook WATERGIFT_BRONNEN.
+        cursor.execute("ALTER TABLE watergift_dag ADD COLUMN IF NOT EXISTS bron TEXT")
+        cursor.execute("UPDATE watergift_dag SET bron = 'priva' WHERE bron IS NULL")
+
         cursor.execute("ALTER TABLE teelten ADD COLUMN IF NOT EXISTS rijpheid TEXT")
         cursor.execute("ALTER TABLE teelten ADD COLUMN IF NOT EXISTS aantal_planten INTEGER")
         cursor.execute("ALTER TABLE teelten ADD COLUMN IF NOT EXISTS code TEXT")
@@ -1200,16 +1206,26 @@ def importeer_klimaat_uit_priva(dagen_terug=4, gebruiker=None):
 
 # --- WATERGIFT PER VAK (uit Priva) ---
 
-def upsert_watergift_dag(vaknummer, datum, liter_per_m2):
-    """Slaat één vak-dag watergift op (of overschrijft bij een herhaalde ophaal)."""
+WATERGIFT_BRONNEN = ("priva", "excel")
+
+
+def upsert_watergift_dag(vaknummer, datum, liter_per_m2, bron="priva"):
+    """
+    Slaat één vak-dag watergift op (of overschrijft bij een herhaalde ophaal).
+
+    `bron` is 'priva' (gemeten) of 'excel' (ingesteld, uit de oude registratie).
+    Een gemeten waarde overschrijft altijd; een waarde uit Excel alleen als er
+    nog niets staat of als daar ook Excel staat. Zo blijft de meting leidend.
+    """
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT INTO watergift_dag (vaknummer, datum, liter_per_m2)
-            VALUES (%s, %s, %s)
+            INSERT INTO watergift_dag (vaknummer, datum, liter_per_m2, bron)
+            VALUES (%s, %s, %s, %s)
             ON CONFLICT (vaknummer, datum)
-            DO UPDATE SET liter_per_m2 = EXCLUDED.liter_per_m2
-        """, (int(vaknummer), str(datum), liter_per_m2))
+            DO UPDATE SET liter_per_m2 = EXCLUDED.liter_per_m2, bron = EXCLUDED.bron
+            WHERE EXCLUDED.bron = 'priva' OR watergift_dag.bron = 'excel'
+        """, (int(vaknummer), str(datum), liter_per_m2, bron))
         conn.commit()
 
 
