@@ -360,6 +360,79 @@ def init_db():
         cursor.execute("ALTER TABLE watergift_dag ADD COLUMN IF NOT EXISTS bron TEXT")
         cursor.execute("UPDATE watergift_dag SET bron = 'priva' WHERE bron IS NULL")
 
+        # Tuinen: tuin 3 (Hartweg 20) en tuin 1 (Hartweg 29). Alles wat er al
+        # stond is van tuin 3; die blijft de standaard, zodat bestaande code
+        # zonder tuin blijft werken.
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS tuinen (
+                id SERIAL PRIMARY KEY,
+                nummer INTEGER UNIQUE NOT NULL,
+                naam TEXT NOT NULL,
+                adres TEXT,
+                priva_site_id TEXT,
+                priva_device_id TEXT
+            )
+        """)
+        for nummer, naam, adres in (
+            (1, "Tuin 1", "Albert van 't Hartweg 29"),
+            (3, "Tuin 3", "Albert van 't Hartweg 20"),
+        ):
+            cursor.execute("""
+                INSERT INTO tuinen (nummer, naam, adres) VALUES (%s, %s, %s)
+                ON CONFLICT (nummer) DO NOTHING
+            """, (nummer, naam, adres))
+
+        # Vakken horen bij een tuin en een afdeling; het aantal stelen bij 60/m2
+        # verschilt per vak (halve vakken) en stond eerst hard in de app.
+        cursor.execute("ALTER TABLE teeltvakken ADD COLUMN IF NOT EXISTS tuin_id INTEGER REFERENCES tuinen (id)")
+        cursor.execute("ALTER TABLE teeltvakken ADD COLUMN IF NOT EXISTS afdeling INTEGER")
+        cursor.execute("ALTER TABLE teeltvakken ADD COLUMN IF NOT EXISTS stelen_bij_60 INTEGER")
+        cursor.execute("SELECT id FROM tuinen WHERE nummer = 3")
+        tuin3_id = cursor.fetchone()[0]
+        cursor.execute("UPDATE teeltvakken SET tuin_id = %s WHERE tuin_id IS NULL", (tuin3_id,))
+        for vaknummer in range(1, 40):
+            cursor.execute("""
+                UPDATE teeltvakken SET afdeling = %s, stelen_bij_60 = %s
+                WHERE tuin_id = %s AND vaknummer = %s AND (afdeling IS NULL OR stelen_bij_60 IS NULL)
+            """, (_TUIN3_AFDELING(vaknummer), _TUIN3_STELEN(vaknummer), tuin3_id, vaknummer))
+
+        # Vaknamen zijn alleen binnen een tuin uniek: beide tuinen hebben een vak 1.
+        cursor.execute("ALTER TABLE teeltvakken DROP CONSTRAINT IF EXISTS teeltvakken_naam_key")
+        cursor.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS teeltvakken_tuin_vaknummer
+            ON teeltvakken (tuin_id, vaknummer) WHERE vaknummer IS NOT NULL
+        """)
+
+        # Meetgegevens horen bij een tuin. Alles wat er al stond is van tuin 3.
+        # De unieke sleutels gingen uit van een enkele tuin (bijv. een datum kon
+        # maar een keer voorkomen in energiedata_dag); die worden vervangen door
+        # dezelfde sleutel met de tuin erbij.
+        for tabel, sleutel in (
+            ("klimaatdata_dag", "tuin_id, afdeling, datum"),
+            ("watergift_dag", "tuin_id, vaknummer, datum"),
+            ("energiedata_dag", "tuin_id, datum"),
+            ("gasdata_dag", "tuin_id, datum"),
+        ):
+            cursor.execute(f"ALTER TABLE {tabel} ADD COLUMN IF NOT EXISTS tuin_id INTEGER REFERENCES tuinen (id)")
+            cursor.execute(f"UPDATE {tabel} SET tuin_id = %s WHERE tuin_id IS NULL", (tuin3_id,))
+            # Oude unieke sleutel(s) weg, ongeacht hoe ze heten.
+            cursor.execute("""
+                SELECT conname FROM pg_constraint
+                WHERE conrelid = %s::regclass AND contype = 'u'
+            """, (tabel,))
+            for (naam,) in cursor.fetchall():
+                cursor.execute(f'ALTER TABLE {tabel} DROP CONSTRAINT "{naam}"')
+            cursor.execute(
+                f"CREATE UNIQUE INDEX IF NOT EXISTS {tabel}_tuin_sleutel ON {tabel} ({sleutel})"
+            )
+
+        # Standaardtuin per gebruiker: Kees en Robert werken op tuin 1.
+        cursor.execute("ALTER TABLE gebruikers ADD COLUMN IF NOT EXISTS standaard_tuin INTEGER")
+        cursor.execute("UPDATE gebruikers SET standaard_tuin = 1 WHERE standaard_tuin IS NULL "
+                       "AND username IN ('kees', 'robert')")
+        cursor.execute("UPDATE gebruikers SET standaard_tuin = %s WHERE standaard_tuin IS NULL",
+                       (STANDAARD_TUIN,))
+
         cursor.execute("ALTER TABLE teelten ADD COLUMN IF NOT EXISTS rijpheid TEXT")
         # Ras (cultivar) per teelt. Leeg betekent het vaste ras (zie STANDAARD_RAS);
         # zo hoeven de honderden bestaande teelten niet bijgewerkt te worden.
@@ -441,7 +514,7 @@ def get_wijzigingenlog(limiet=300):
 
 # --- TEELTVAKKEN ---
 
-def get_of_maak_teeltvak(vaknummer, naam=None):
+def get_of_maak_teeltvak(vaknummer, naam=None, tuin_id=None):
     """
     Geeft het id van een teeltvak terug op basis van het vaknummer (1-39);
     maakt het aan als het nog niet bestaat.
@@ -449,7 +522,11 @@ def get_of_maak_teeltvak(vaknummer, naam=None):
     with get_connection() as conn:
         cursor = conn.cursor()
 
-        cursor.execute("SELECT id FROM teeltvakken WHERE vaknummer = %s", (vaknummer,))
+        tuin_id = _tuin_of_standaard(tuin_id)
+        cursor.execute(
+            "SELECT id FROM teeltvakken WHERE vaknummer = %s AND tuin_id = %s",
+            (vaknummer, tuin_id),
+        )
         resultaat = cursor.fetchone()
 
         if resultaat:
@@ -460,8 +537,10 @@ def get_of_maak_teeltvak(vaknummer, naam=None):
         else:
             vak_naam = naam or str(vaknummer)
             cursor.execute(
-                "INSERT INTO teeltvakken (naam, vaknummer) VALUES (%s, %s) RETURNING id",
-                (vak_naam, vaknummer)
+                "INSERT INTO teeltvakken (naam, vaknummer, tuin_id, afdeling, stelen_bij_60)"
+                " VALUES (%s, %s, %s, %s, %s) RETURNING id",
+                (vak_naam, vaknummer, tuin_id, afdeling_van_vak(vaknummer, tuin_id),
+                 stelen_bij_60_van_vak(vaknummer, tuin_id))
             )
             teeltvak_id = cursor.fetchone()[0]
             conn.commit()
@@ -480,7 +559,7 @@ def get_alle_teeltvakken():
 # --- TEELTEN ---
 
 def start_nieuwe_teelt(vaknummer, datum_teelt_start, aantal_planten=None, naam=None,
-                       gebruiker=None, ras=None):
+                       gebruiker=None, ras=None, tuin_id=None):
     """
     Start een nieuwe teelt in een teeltvak (op basis van vaknummer 1-39).
     Maakt het teeltvak aan indien het nog niet bestaat.
@@ -488,7 +567,7 @@ def start_nieuwe_teelt(vaknummer, datum_teelt_start, aantal_planten=None, naam=N
     aantal geplante planten op.
     Geeft het id van de nieuwe teelt terug.
     """
-    teeltvak_id = get_of_maak_teeltvak(vaknummer, naam)
+    teeltvak_id = get_of_maak_teeltvak(vaknummer, naam, tuin_id=tuin_id)
     code = genereer_teelt_code(datum_teelt_start, vaknummer)
 
     with get_connection() as conn:
@@ -511,7 +590,7 @@ def start_nieuwe_teelt(vaknummer, datum_teelt_start, aantal_planten=None, naam=N
     return nieuwe_teelt_id, code
 
 
-def get_lopende_teelten():
+def get_lopende_teelten(tuin_id=None):
     """
     Geeft alle teelten terug die daadwerkelijk lopen: nog niet afgerond
     (geen oogstdatum) én al gestart (startdatum ligt niet in de toekomst).
@@ -525,9 +604,9 @@ def get_lopende_teelten():
             SELECT t.id, v.vaknummer, t.datum_teelt_start, t.code
             FROM teelten t
             JOIN teeltvakken v ON t.teeltvak_id = v.id
-            WHERE t.datum_oogst IS NULL AND t.datum_teelt_start <= %s
+            WHERE v.tuin_id = %s AND t.datum_oogst IS NULL AND t.datum_teelt_start <= %s
             ORDER BY t.datum_teelt_start, v.vaknummer
-        """, (str(date.today()),))
+        """, (_tuin_of_standaard(tuin_id), str(date.today())))
         rijen = cursor.fetchall()
 
     resultaat = []
@@ -594,7 +673,7 @@ def markeer_teelt_afgerond(teelt_id, datum_oogst, gebruiker=None):
     log_wijziging(gebruiker, "gewijzigd", "teelt", teelt_id, f"Teelt afgerond op {datum_oogst}")
 
 
-def get_alle_teelten_voor_selectie():
+def get_alle_teelten_voor_selectie(tuin_id=None):
     """
     Geeft ALLE teelten terug (ook afgeronde), met een duidelijk label.
     Handig voor de 'wijzigen/verwijderen'-selectbox.
@@ -606,8 +685,9 @@ def get_alle_teelten_voor_selectie():
             SELECT t.id, v.vaknummer, t.datum_teelt_start, t.code
             FROM teelten t
             JOIN teeltvakken v ON t.teeltvak_id = v.id
+            WHERE v.tuin_id = %s
             ORDER BY t.datum_teelt_start, v.vaknummer
-        """)
+        """, (_tuin_of_standaard(tuin_id),))
         rijen = cursor.fetchall()
 
     resultaat = []
@@ -628,7 +708,7 @@ def get_isojaar_week(datum):
     return iso_jaar, week
 
 
-def get_alle_teelten_detail():
+def get_alle_teelten_detail(tuin_id=None):
     """
     Geeft alle teelten terug met de ruwe (onopgemaakte) velden, voor
     client-side aggregatie in het dashboard (bijv. groeperen per plantweek).
@@ -640,8 +720,9 @@ def get_alle_teelten_detail():
                    t.datum_oogst, t.lengte_eind, t.oogstgewicht, t.rijpheid, t.aantal_planten
             FROM teelten t
             JOIN teeltvakken v ON t.teeltvak_id = v.id
+            WHERE v.tuin_id = %s
             ORDER BY t.datum_teelt_start, v.vaknummer
-        """)
+        """, (_tuin_of_standaard(tuin_id),))
         rijen = cursor.fetchall()
 
     resultaat = []
@@ -852,7 +933,7 @@ def get_oogstregistraties_voor_periode(datum_start, datum_eind):
         ]
 
 
-def get_watergift_per_vak_voor_periode(datum_start, datum_eind):
+def get_watergift_per_vak_voor_periode(datum_start, datum_eind, tuin_id=None):
     """
     Totale watergift (liter/m²) per vak binnen een periode, voor alle vakken
     met data in die periode. Lijst van (vaknummer, totaal_liter_per_m2,
@@ -863,10 +944,10 @@ def get_watergift_per_vak_voor_periode(datum_start, datum_eind):
         cursor.execute("""
             SELECT vaknummer, SUM(liter_per_m2), COUNT(*)
             FROM watergift_dag
-            WHERE datum BETWEEN %s AND %s
+            WHERE tuin_id = %s AND datum BETWEEN %s AND %s
             GROUP BY vaknummer
             ORDER BY vaknummer
-        """, (str(datum_start), str(datum_eind)))
+        """, (_tuin_of_standaard(tuin_id), str(datum_start), str(datum_eind)))
         return cursor.fetchall()
 
 
@@ -939,7 +1020,7 @@ def get_alle_gebruikers():
         return cursor.fetchall()
 
 
-def get_overzicht_dataframe():
+def get_overzicht_dataframe(tuin_id=None):
     """
     Geeft alle teelten terug inclusief teeltvaknaam, code, weeknummers,
     teeltduur, geoogste emmers en uitvalpercentage.
@@ -961,8 +1042,9 @@ def get_overzicht_dataframe():
                 t.rijpheid
             FROM teelten t
             JOIN teeltvakken v ON t.teeltvak_id = v.id
+            WHERE v.tuin_id = %s
             ORDER BY (t.code IS NULL), t.code
-        """)
+        """, (_tuin_of_standaard(tuin_id),))
         teelt_rijen = cursor.fetchall()
 
     totaal_emmers_per_teelt = get_totaal_emmers_per_teelt()
@@ -1079,16 +1161,16 @@ def afdeling_van_vaknummer(vaknummer):
 
 def upsert_klimaatdata_dag(afdeling, datum, gem_temperatuur, gem_rv, stralingssom_dag,
                             gem_temperatuur_dag=None, gem_temperatuur_nacht=None,
-                            gem_rv_dag=None, gem_rv_nacht=None):
+                            gem_rv_dag=None, gem_rv_nacht=None, tuin_id=None):
     """Slaat één afdeling-dag klimaatgegevens op (of overschrijft de bestaande dag bij een herupload)."""
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
             INSERT INTO klimaatdata_dag
-                (afdeling, datum, gem_temperatuur, gem_rv, stralingssom_dag,
+                (tuin_id, afdeling, datum, gem_temperatuur, gem_rv, stralingssom_dag,
                  gem_temperatuur_dag, gem_temperatuur_nacht, gem_rv_dag, gem_rv_nacht)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (afdeling, datum)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (tuin_id, afdeling, datum)
             DO UPDATE SET gem_temperatuur = EXCLUDED.gem_temperatuur,
                           gem_rv = EXCLUDED.gem_rv,
                           stralingssom_dag = EXCLUDED.stralingssom_dag,
@@ -1097,13 +1179,13 @@ def upsert_klimaatdata_dag(afdeling, datum, gem_temperatuur, gem_rv, stralingsso
                           gem_rv_dag = EXCLUDED.gem_rv_dag,
                           gem_rv_nacht = EXCLUDED.gem_rv_nacht
         """, (
-            afdeling, str(datum), gem_temperatuur, gem_rv, stralingssom_dag,
-            gem_temperatuur_dag, gem_temperatuur_nacht, gem_rv_dag, gem_rv_nacht,
+            _tuin_of_standaard(tuin_id), afdeling, str(datum), gem_temperatuur, gem_rv,
+            stralingssom_dag, gem_temperatuur_dag, gem_temperatuur_nacht, gem_rv_dag, gem_rv_nacht,
         ))
         conn.commit()
 
 
-def verwerk_klimaat_csv(bestand, gebruiker=None):
+def verwerk_klimaat_csv(bestand, gebruiker=None, tuin_id=None):
     """
     Leest een klimaatcomputer-CSV in (tab- of puntkomma-gescheiden, decimale
     komma) en zet de dagregels om naar rijen in klimaatdata_dag, per
@@ -1167,7 +1249,7 @@ def verwerk_klimaat_csv(bestand, gebruiker=None):
     return verwerkt, overgeslagen
 
 
-def importeer_klimaat_uit_priva(dagen_terug=4, gebruiker=None):
+def importeer_klimaat_uit_priva(dagen_terug=4, gebruiker=None, tuin_id=None):
     """
     Haalt de etmaalklimaatcijfers (etmaaltemperatuur en dag/nacht, gemiddelde
     RV en dag/nacht, stralingssom) van de laatste afgeronde dagen rechtstreeks
@@ -1218,7 +1300,7 @@ def importeer_klimaat_uit_priva(dagen_terug=4, gebruiker=None):
 WATERGIFT_BRONNEN = ("priva", "excel")
 
 
-def upsert_watergift_dag(vaknummer, datum, liter_per_m2, bron="priva"):
+def upsert_watergift_dag(vaknummer, datum, liter_per_m2, bron="priva", tuin_id=None):
     """
     Slaat één vak-dag watergift op (of overschrijft bij een herhaalde ophaal).
 
@@ -1229,16 +1311,16 @@ def upsert_watergift_dag(vaknummer, datum, liter_per_m2, bron="priva"):
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT INTO watergift_dag (vaknummer, datum, liter_per_m2, bron)
-            VALUES (%s, %s, %s, %s)
-            ON CONFLICT (vaknummer, datum)
+            INSERT INTO watergift_dag (tuin_id, vaknummer, datum, liter_per_m2, bron)
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (tuin_id, vaknummer, datum)
             DO UPDATE SET liter_per_m2 = EXCLUDED.liter_per_m2, bron = EXCLUDED.bron
             WHERE EXCLUDED.bron = 'priva' OR watergift_dag.bron = 'excel'
-        """, (int(vaknummer), str(datum), liter_per_m2, bron))
+        """, (_tuin_of_standaard(tuin_id), int(vaknummer), str(datum), liter_per_m2, bron))
         conn.commit()
 
 
-def importeer_watergift_uit_priva(dagen_terug=4, gebruiker=None):
+def importeer_watergift_uit_priva(dagen_terug=4, gebruiker=None, tuin_id=None):
     """
     Haalt de daggift (liter/m²) per vak van de laatste afgeronde dagen op uit
     de Priva Horti API en zet die via upsert in watergift_dag.
@@ -1272,7 +1354,7 @@ def importeer_watergift_uit_priva(dagen_terug=4, gebruiker=None):
     return verwerkt, overgeslagen
 
 
-def get_watergift_voor_periode(vaknummer, datum_start, datum_eind):
+def get_watergift_voor_periode(vaknummer, datum_start, datum_eind, tuin_id=None):
     """
     Geeft het totaal aan watergift (liter/m²) en het aantal gemeten dagen
     terug voor een vak binnen een periode. Geeft None als er geen data is.
@@ -1282,8 +1364,8 @@ def get_watergift_voor_periode(vaknummer, datum_start, datum_eind):
         cursor.execute("""
             SELECT SUM(liter_per_m2), COUNT(*)
             FROM watergift_dag
-            WHERE vaknummer = %s AND datum BETWEEN %s AND %s
-        """, (int(vaknummer), str(datum_start), str(datum_eind)))
+            WHERE tuin_id = %s AND vaknummer = %s AND datum BETWEEN %s AND %s
+        """, (_tuin_of_standaard(tuin_id), int(vaknummer), str(datum_start), str(datum_eind)))
         rij = cursor.fetchone()
 
     if not rij or rij[1] == 0:
@@ -1291,20 +1373,20 @@ def get_watergift_voor_periode(vaknummer, datum_start, datum_eind):
     return {"totaal_liter_per_m2": rij[0] or 0.0, "aantal_dagen": rij[1]}
 
 
-def get_watergift_dagen_voor_periode(vaknummer, datum_start, datum_eind):
+def get_watergift_dagen_voor_periode(vaknummer, datum_start, datum_eind, tuin_id=None):
     """Losse dagregels (datum, liter_per_m2) voor grafieken, gesorteerd op datum."""
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
             SELECT datum, liter_per_m2
             FROM watergift_dag
-            WHERE vaknummer = %s AND datum BETWEEN %s AND %s
+            WHERE tuin_id = %s AND vaknummer = %s AND datum BETWEEN %s AND %s
             ORDER BY datum
-        """, (int(vaknummer), str(datum_start), str(datum_eind)))
+        """, (_tuin_of_standaard(tuin_id), int(vaknummer), str(datum_start), str(datum_eind)))
         return cursor.fetchall()
 
 
-def get_watergift_per_dag_voor_periode(datum_start, datum_eind):
+def get_watergift_per_dag_voor_periode(datum_start, datum_eind, tuin_id=None):
     """
     Losse (datum, vaknummer, liter_per_m2)-regels voor alle vakken binnen een
     periode, gesorteerd op datum en daarna vaknummer (laag naar hoog) — voor
@@ -1315,13 +1397,13 @@ def get_watergift_per_dag_voor_periode(datum_start, datum_eind):
         cursor.execute("""
             SELECT datum, vaknummer, liter_per_m2
             FROM watergift_dag
-            WHERE datum BETWEEN %s AND %s
+            WHERE tuin_id = %s AND datum BETWEEN %s AND %s
             ORDER BY datum, vaknummer
-        """, (str(datum_start), str(datum_eind)))
+        """, (_tuin_of_standaard(tuin_id), str(datum_start), str(datum_eind)))
         return cursor.fetchall()
 
 
-def get_watergift_dekking():
+def get_watergift_dekking(tuin_id=None):
     """
     Per vak: (vaknummer, eerste_datum, laatste_datum, aantal_dagen). Gesorteerd
     op vaknummer (laag naar hoog).
@@ -1331,9 +1413,10 @@ def get_watergift_dekking():
         cursor.execute("""
             SELECT vaknummer, MIN(datum), MAX(datum), COUNT(*)
             FROM watergift_dag
+            WHERE tuin_id = %s
             GROUP BY vaknummer
             ORDER BY vaknummer
-        """)
+        """, (_tuin_of_standaard(tuin_id),))
         return [(v, str(mn), str(mx), n) for v, mn, mx, n in cursor.fetchall()]
 
 
@@ -1378,41 +1461,45 @@ def oppervlakte_van_vaknummer(vaknummer):
 TUIN3_OPPERVLAKTE_M2 = (39 - len(VAKKEN_SMAL)) * VAK_OPPERVLAKTE_STANDAARD + len(VAKKEN_SMAL) * VAK_OPPERVLAKTE_SMAL
 
 
-def upsert_energiedata_dag(datum, warmte_mj_totaal):
+def upsert_energiedata_dag(datum, warmte_mj_totaal, tuin_id=None):
     """Slaat het totale warmteverbruik (MJ) van de hele kas voor één dag op."""
-    warmte_mj_per_m2 = warmte_mj_totaal / TUIN3_OPPERVLAKTE_M2 if warmte_mj_totaal is not None else None
+    tuin_id = _tuin_of_standaard(tuin_id)
+    oppervlakte = oppervlakte_van_tuin(tuin_id)
+    warmte_mj_per_m2 = warmte_mj_totaal / oppervlakte if warmte_mj_totaal is not None else None
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT INTO energiedata_dag (datum, warmte_mj_totaal, warmte_mj_per_m2)
-            VALUES (%s, %s, %s)
-            ON CONFLICT (datum)
+            INSERT INTO energiedata_dag (tuin_id, datum, warmte_mj_totaal, warmte_mj_per_m2)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (tuin_id, datum)
             DO UPDATE SET warmte_mj_totaal = EXCLUDED.warmte_mj_totaal,
                           warmte_mj_per_m2 = EXCLUDED.warmte_mj_per_m2
-        """, (str(datum), warmte_mj_totaal, warmte_mj_per_m2))
+        """, (tuin_id, str(datum), warmte_mj_totaal, warmte_mj_per_m2))
         conn.commit()
 
 
-def upsert_gasdata_dag(datum, gas_m3_totaal):
+def upsert_gasdata_dag(datum, gas_m3_totaal, tuin_id=None):
     """Slaat het gasverbruik (m3 en omgerekend naar MJ) van de hele kas voor één dag op."""
-    gas_m3_per_m2 = gas_m3_totaal / TUIN3_OPPERVLAKTE_M2 if gas_m3_totaal is not None else None
+    tuin_id = _tuin_of_standaard(tuin_id)
+    oppervlakte = oppervlakte_van_tuin(tuin_id)
+    gas_m3_per_m2 = gas_m3_totaal / oppervlakte if gas_m3_totaal is not None else None
     gas_mj_totaal = gas_m3_totaal * GAS_CALORISCHE_WAARDE_MJ_PER_M3 if gas_m3_totaal is not None else None
-    gas_mj_per_m2 = gas_mj_totaal / TUIN3_OPPERVLAKTE_M2 if gas_mj_totaal is not None else None
+    gas_mj_per_m2 = gas_mj_totaal / oppervlakte if gas_mj_totaal is not None else None
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT INTO gasdata_dag (datum, gas_m3_totaal, gas_m3_per_m2, gas_mj_totaal, gas_mj_per_m2)
-            VALUES (%s, %s, %s, %s, %s)
-            ON CONFLICT (datum)
+            INSERT INTO gasdata_dag (tuin_id, datum, gas_m3_totaal, gas_m3_per_m2, gas_mj_totaal, gas_mj_per_m2)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT (tuin_id, datum)
             DO UPDATE SET gas_m3_totaal = EXCLUDED.gas_m3_totaal,
                           gas_m3_per_m2 = EXCLUDED.gas_m3_per_m2,
                           gas_mj_totaal = EXCLUDED.gas_mj_totaal,
                           gas_mj_per_m2 = EXCLUDED.gas_mj_per_m2
-        """, (str(datum), gas_m3_totaal, gas_m3_per_m2, gas_mj_totaal, gas_mj_per_m2))
+        """, (tuin_id, str(datum), gas_m3_totaal, gas_m3_per_m2, gas_mj_totaal, gas_mj_per_m2))
         conn.commit()
 
 
-def verwerk_energie_csv(bestand, gebruiker=None):
+def verwerk_energie_csv(bestand, gebruiker=None, tuin_id=None):
     """
     Leest een energiecomputer-CSV in (Priva-export "Rapport Energie") en
     verwerkt twee bronnen uit dezelfde upload, beide onder het label
@@ -1469,24 +1556,25 @@ def verwerk_energie_csv(bestand, gebruiker=None):
     return verwerkt, overgeslagen, verwerkt_gas
 
 
-def get_energiedata_dagen_voor_periode(datum_start, datum_eind):
+def get_energiedata_dagen_voor_periode(datum_start, datum_eind, tuin_id=None):
     """Losse dagregels (datum, warmte_mj_totaal, warmte_mj_per_m2) voor grafieken."""
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
             SELECT datum, warmte_mj_totaal, warmte_mj_per_m2
             FROM energiedata_dag
-            WHERE datum BETWEEN %s AND %s
+            WHERE tuin_id = %s AND datum BETWEEN %s AND %s
             ORDER BY datum
-        """, (str(datum_start), str(datum_eind)))
+        """, (_tuin_of_standaard(tuin_id), str(datum_start), str(datum_eind)))
         return cursor.fetchall()
 
 
-def get_energiedata_dekking():
+def get_energiedata_dekking(tuin_id=None):
     """(eerste_datum, laatste_datum, aantal_dagen, ontbrekende_dagen) of None."""
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT MIN(datum), MAX(datum), COUNT(*) FROM energiedata_dag")
+        cursor.execute("SELECT MIN(datum), MAX(datum), COUNT(*) FROM energiedata_dag WHERE tuin_id = %s",
+                       (_tuin_of_standaard(tuin_id),))
         rij = cursor.fetchone()
 
     if not rij or rij[0] is None:
@@ -1498,24 +1586,25 @@ def get_energiedata_dekking():
     return (str(rij[0]), str(rij[1]), rij[2], ontbrekend)
 
 
-def get_gasdata_dagen_voor_periode(datum_start, datum_eind):
+def get_gasdata_dagen_voor_periode(datum_start, datum_eind, tuin_id=None):
     """Losse dagregels (datum, gas_m3_totaal, gas_mj_totaal, gas_mj_per_m2) voor grafieken."""
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
             SELECT datum, gas_m3_totaal, gas_mj_totaal, gas_mj_per_m2
             FROM gasdata_dag
-            WHERE datum BETWEEN %s AND %s
+            WHERE tuin_id = %s AND datum BETWEEN %s AND %s
             ORDER BY datum
-        """, (str(datum_start), str(datum_eind)))
+        """, (_tuin_of_standaard(tuin_id), str(datum_start), str(datum_eind)))
         return cursor.fetchall()
 
 
-def get_gasdata_dekking():
+def get_gasdata_dekking(tuin_id=None):
     """(eerste_datum, laatste_datum, aantal_dagen) of None."""
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT MIN(datum), MAX(datum), COUNT(*) FROM gasdata_dag")
+        cursor.execute("SELECT MIN(datum), MAX(datum), COUNT(*) FROM gasdata_dag WHERE tuin_id = %s",
+                       (_tuin_of_standaard(tuin_id),))
         rij = cursor.fetchone()
 
     if not rij or rij[0] is None:
@@ -1523,7 +1612,7 @@ def get_gasdata_dekking():
     return (str(rij[0]), str(rij[1]), rij[2])
 
 
-def get_warmte_voor_periode(vaknummer, datum_start, datum_eind):
+def get_warmte_voor_periode(vaknummer, datum_start, datum_eind, tuin_id=None):
     """
     Geeft het totale warmteverbruik (MJ) van één vak binnen een periode terug
     — Pulsteller-warmte plus (in weken met bijstook) gasgestookte warmte
@@ -1541,14 +1630,15 @@ def get_warmte_voor_periode(vaknummer, datum_start, datum_eind):
                 SELECT datum, SUM(mj_per_m2) AS totaal
                 FROM (
                     SELECT datum, warmte_mj_per_m2 AS mj_per_m2
-                    FROM energiedata_dag WHERE datum BETWEEN %s AND %s
+                    FROM energiedata_dag WHERE tuin_id = %s AND datum BETWEEN %s AND %s
                     UNION ALL
                     SELECT datum, gas_mj_per_m2 AS mj_per_m2
-                    FROM gasdata_dag WHERE datum BETWEEN %s AND %s
+                    FROM gasdata_dag WHERE tuin_id = %s AND datum BETWEEN %s AND %s
                 ) per_bron
                 GROUP BY datum
             ) per_dag
-        """, (str(datum_start), str(datum_eind), str(datum_start), str(datum_eind)))
+        """, (_tuin_of_standaard(tuin_id), str(datum_start), str(datum_eind),
+              _tuin_of_standaard(tuin_id), str(datum_start), str(datum_eind)))
         rij = cursor.fetchone()
 
     if not rij or rij[1] == 0:
@@ -1556,7 +1646,7 @@ def get_warmte_voor_periode(vaknummer, datum_start, datum_eind):
     return {"totaal_mj": (rij[0] or 0.0) * oppervlakte, "aantal_dagen": rij[1]}
 
 
-def get_klimaat_voor_periode(afdeling, datum_start, datum_eind):
+def get_klimaat_voor_periode(afdeling, datum_start, datum_eind, tuin_id=None):
     """
     Geeft de gemiddelde temperatuur, gemiddelde RV en gemiddelde dagstralingssom
     terug over alle opgeslagen dagen binnen de opgegeven periode (bijv. de
@@ -1567,8 +1657,8 @@ def get_klimaat_voor_periode(afdeling, datum_start, datum_eind):
         cursor.execute("""
             SELECT AVG(gem_temperatuur), AVG(gem_rv), AVG(stralingssom_dag)
             FROM klimaatdata_dag
-            WHERE afdeling = %s AND datum BETWEEN %s AND %s
-        """, (afdeling, str(datum_start), str(datum_eind)))
+            WHERE tuin_id = %s AND afdeling = %s AND datum BETWEEN %s AND %s
+        """, (_tuin_of_standaard(tuin_id), afdeling, str(datum_start), str(datum_eind)))
         rij = cursor.fetchone()
 
     if not rij or rij[0] is None:
@@ -1576,7 +1666,7 @@ def get_klimaat_voor_periode(afdeling, datum_start, datum_eind):
     return {"gem_temperatuur": rij[0], "gem_rv": rij[1], "gem_stralingssom_dag": rij[2]}
 
 
-def get_klimaatdata_dagen_voor_periode(afdeling, datum_start, datum_eind):
+def get_klimaatdata_dagen_voor_periode(afdeling, datum_start, datum_eind, tuin_id=None):
     """
     Geeft de losse dagregels terug (voor grafieken) binnen de opgegeven
     periode, gesorteerd op datum. Retourneert een lijst van tuples
@@ -1589,13 +1679,13 @@ def get_klimaatdata_dagen_voor_periode(afdeling, datum_start, datum_eind):
             SELECT datum, gem_temperatuur, gem_rv, stralingssom_dag,
                    gem_temperatuur_dag, gem_temperatuur_nacht, gem_rv_dag, gem_rv_nacht
             FROM klimaatdata_dag
-            WHERE afdeling = %s AND datum BETWEEN %s AND %s
+            WHERE tuin_id = %s AND afdeling = %s AND datum BETWEEN %s AND %s
             ORDER BY datum
-        """, (afdeling, str(datum_start), str(datum_eind)))
+        """, (_tuin_of_standaard(tuin_id), afdeling, str(datum_start), str(datum_eind)))
         return cursor.fetchall()
 
 
-def get_klimaatdata_dekking():
+def get_klimaatdata_dekking(tuin_id=None):
     """
     Geeft per afdeling terug tot welke dag er klimaatdata is geimporteerd:
     (afdeling, eerste_datum, laatste_datum, aantal_dagen, ontbrekende_dagen).
@@ -1607,9 +1697,10 @@ def get_klimaatdata_dekking():
         cursor.execute("""
             SELECT afdeling, MIN(datum), MAX(datum), COUNT(*)
             FROM klimaatdata_dag
+            WHERE tuin_id = %s
             GROUP BY afdeling
             ORDER BY afdeling
-        """)
+        """, (_tuin_of_standaard(tuin_id),))
         rijen = cursor.fetchall()
 
     resultaat = []
@@ -2554,16 +2645,20 @@ def stek_uitval_pct(aantal_planten, bakjes):
     return (geleverd - aantal_planten) / geleverd * 100
 
 
-def get_stekweken():
+def get_stekweken(tuin_id=None):
     """Maandagen (date) van alle weken waarin een teelt gestart is, nieuwste eerst."""
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT DISTINCT datum_teelt_start FROM teelten")
+        cursor.execute("""
+            SELECT DISTINCT t.datum_teelt_start
+            FROM teelten t JOIN teeltvakken v ON v.id = t.teeltvak_id
+            WHERE v.tuin_id = %s
+        """, (_tuin_of_standaard(tuin_id),))
         startdatums = [r[0] for r in cursor.fetchall()]
     return sorted({_maandag(d) for d in startdatums}, reverse=True)
 
 
-def get_stek_voor_week(maandag):
+def get_stek_voor_week(maandag, tuin_id=None):
     """
     Alle teelten die gestart zijn in de week vanaf `maandag`, met hun
     stekbeoordeling (lege velden als die er nog niet is). Gesorteerd op
@@ -2578,9 +2673,9 @@ def get_stek_voor_week(maandag):
             FROM teelten t
             JOIN teeltvakken v ON v.id = t.teeltvak_id
             LEFT JOIN stekbeoordelingen s ON s.teelt_id = t.id
-            WHERE t.datum_teelt_start BETWEEN %s AND %s
+            WHERE v.tuin_id = %s AND t.datum_teelt_start BETWEEN %s AND %s
             ORDER BY t.datum_teelt_start, v.vaknummer
-        """, (str(maandag), str(zondag)))
+        """, (_tuin_of_standaard(tuin_id), str(maandag), str(zondag)))
         rijen = cursor.fetchall()
     return [
         {"teelt_id": r[0], "datum": r[1], "vaknummer": r[2], "aantal_planten": r[3],
@@ -2639,7 +2734,7 @@ def verdeel_bakjes(totaal_bakjes, planten_per_vak, stap=0.25):
 
 # --- TEELTOVERZICHT ---
 
-def get_teeltkengetallen():
+def get_teeltkengetallen(tuin_id=None):
     """
     Geeft per teelt de kengetallen die je naast elkaar wilt zien: klimaat
     (lichtsom en etmaaltemperatuur van de eigen afdeling), watergift van het
@@ -2662,15 +2757,10 @@ def get_teeltkengetallen():
                        COALESCE(t.datum_oogst, %s) AS eind,
                        t.aantal_planten, t.lengte_half, t.lengte_eind, t.oogstgewicht, t.rijpheid,
                        COALESCE(NULLIF(t.ras, ''), %s) AS ras,
-                       CASE
-                           WHEN v.vaknummer BETWEEN 1 AND 9 THEN 1
-                           WHEN v.vaknummer BETWEEN 30 AND 39 THEN 2
-                           WHEN v.vaknummer BETWEEN 10 AND 19 THEN 3
-                           WHEN v.vaknummer BETWEEN 20 AND 29 THEN 4
-                       END AS afdeling
+                       v.tuin_id, v.afdeling
                 FROM teelten t
                 JOIN teeltvakken v ON v.id = t.teeltvak_id
-                WHERE v.vaknummer IS NOT NULL
+                WHERE v.vaknummer IS NOT NULL AND v.tuin_id = %s
             )
             SELECT b.id, b.code, b.vaknummer, b.afdeling, b.start, b.datum_oogst, b.eind,
                    b.aantal_planten, b.lengte_half, b.lengte_eind, b.oogstgewicht, b.rijpheid, b.ras,
@@ -2683,13 +2773,15 @@ def get_teeltkengetallen():
                 SELECT SUM(stralingssom_dag) AS lichtsom, AVG(gem_temperatuur) AS gem_temperatuur,
                        COUNT(*) AS dagen
                 FROM klimaatdata_dag k
-                WHERE k.afdeling = b.afdeling AND k.datum BETWEEN b.start AND b.eind
+                WHERE k.tuin_id = b.tuin_id AND k.afdeling = b.afdeling
+                  AND k.datum BETWEEN b.start AND b.eind
             ) k ON TRUE
             LEFT JOIN LATERAL (
                 SELECT SUM(liter_per_m2) AS liters, COUNT(*) AS dagen,
                        COUNT(*) FILTER (WHERE bron = 'excel') AS excel_dagen
                 FROM watergift_dag w
-                WHERE w.vaknummer = b.vaknummer AND w.datum BETWEEN b.start AND b.eind
+                WHERE w.tuin_id = b.tuin_id AND w.vaknummer = b.vaknummer
+                  AND w.datum BETWEEN b.start AND b.eind
             ) w ON TRUE
             LEFT JOIN LATERAL (
                 SELECT SUM(mj) AS mj_per_m2, COUNT(*) AS dagen
@@ -2697,10 +2789,10 @@ def get_teeltkengetallen():
                     SELECT datum, SUM(mj_per_m2) AS mj
                     FROM (
                         SELECT datum, warmte_mj_per_m2 AS mj_per_m2 FROM energiedata_dag
-                        WHERE datum BETWEEN b.start AND b.eind
+                        WHERE tuin_id = b.tuin_id AND datum BETWEEN b.start AND b.eind
                         UNION ALL
                         SELECT datum, gas_mj_per_m2 AS mj_per_m2 FROM gasdata_dag
-                        WHERE datum BETWEEN b.start AND b.eind
+                        WHERE tuin_id = b.tuin_id AND datum BETWEEN b.start AND b.eind
                     ) bronnen
                     GROUP BY datum
                 ) per_dag
@@ -2710,7 +2802,7 @@ def get_teeltkengetallen():
                 FROM oogstregistraties o WHERE o.teelt_id = b.id
             ) o ON TRUE
             ORDER BY b.start, b.vaknummer
-        """, (vandaag, STANDAARD_RAS))
+        """, (vandaag, STANDAARD_RAS, _tuin_of_standaard(tuin_id)))
         rijen = cursor.fetchall()
 
     kengetallen = []
@@ -2766,3 +2858,200 @@ def zet_ras(teelt_id, ras, gebruiker=None):
         cursor.execute("UPDATE teelten SET ras = %s WHERE id = %s", (waarde, teelt_id))
         conn.commit()
     log_wijziging(gebruiker, "gewijzigd", "teelt", teelt_id, f"Ras gezet op {ras or STANDAARD_RAS}")
+
+
+# --- TUINEN ---
+#
+# Tuin 3 (Hartweg 20) en tuin 1 (Hartweg 29). Tuin 3 is de standaard: alle
+# gegevens van voor deze uitbreiding horen daarbij, en functies zonder tuin
+# werken daarop verder.
+
+STANDAARD_TUIN = 3
+TUIN1_AFDELINGEN = {1: range(1, 8), 2: range(8, 14), 3: range(14, 21), 4: range(21, 28)}
+TUIN1_STELEN_BIJ_60 = {1: 26532}   # vak 1 is een half vak
+TUIN1_STELEN_STANDAARD = 53064     # vak 2 t/m 27
+
+
+def _TUIN3_AFDELING(vaknummer):
+    """Afdelingsindeling van tuin 3, zoals die eerder in afdeling_van_vaknummer stond."""
+    return afdeling_van_vaknummer(vaknummer)
+
+
+def _TUIN3_STELEN(vaknummer):
+    """Aantal stelen bij 60 per m2 voor een vak van tuin 3 (halve vakken: 19, 20)."""
+    vast = {1: 34000, 19: 15436, 20: 15436, 39: 31780}
+    if vaknummer in vast:
+        return vast[vaknummer]
+    return 32688 if 2 <= vaknummer <= 38 else None
+
+
+def tuin1_afdeling(vaknummer):
+    """Afdeling van een vak op tuin 1: 1-7, 8-13, 14-20, 21-27."""
+    for afdeling, vakken in TUIN1_AFDELINGEN.items():
+        if vaknummer in vakken:
+            return afdeling
+    return None
+
+
+def get_tuinen():
+    """Alle tuinen: [{'id', 'nummer', 'naam', 'adres', 'priva_site_id', 'priva_device_id'}], op nummer."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, nummer, naam, adres, priva_site_id, priva_device_id
+            FROM tuinen ORDER BY nummer
+        """)
+        velden = ("id", "nummer", "naam", "adres", "priva_site_id", "priva_device_id")
+        return [dict(zip(velden, rij)) for rij in cursor.fetchall()]
+
+
+def get_tuin_id(nummer=STANDAARD_TUIN):
+    """Het id van een tuin op basis van het tuinnummer (1 of 3)."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM tuinen WHERE nummer = %s", (nummer,))
+        rij = cursor.fetchone()
+    return rij[0] if rij else None
+
+
+def maak_vakken_tuin1(gebruiker=None):
+    """
+    Zet de 27 vakken van tuin 1 klaar (afdeling en aantal stelen bij 60/m2).
+    Bestaande vakken worden bijgewerkt, niet gedupliceerd. Geeft het aantal
+    aangemaakte vakken terug.
+    """
+    tuin_id = get_tuin_id(1)
+    aangemaakt = 0
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        for vaknummer in range(1, 28):
+            stelen = TUIN1_STELEN_BIJ_60.get(vaknummer, TUIN1_STELEN_STANDAARD)
+            cursor.execute(
+                "SELECT id FROM teeltvakken WHERE tuin_id = %s AND vaknummer = %s", (tuin_id, vaknummer)
+            )
+            bestaand = cursor.fetchone()
+            if bestaand:
+                cursor.execute("""
+                    UPDATE teeltvakken SET afdeling = %s, stelen_bij_60 = %s WHERE id = %s
+                """, (tuin1_afdeling(vaknummer), stelen, bestaand[0]))
+            else:
+                cursor.execute("""
+                    INSERT INTO teeltvakken (naam, vaknummer, tuin_id, afdeling, stelen_bij_60)
+                    VALUES (%s, %s, %s, %s, %s)
+                """, (str(vaknummer), vaknummer, tuin_id, tuin1_afdeling(vaknummer), stelen))
+                aangemaakt += 1
+        conn.commit()
+    if aangemaakt:
+        log_wijziging(gebruiker, "aangemaakt", "teeltvak", None,
+                      f"{aangemaakt} vakken aangemaakt voor tuin 1")
+    return aangemaakt
+
+
+# De app zet per scherm welke tuin actief is; alle queries zonder expliciete
+# tuin volgen die. Per thread, want Streamlit draait elke gebruiker in een eigen
+# thread binnen hetzelfde proces: een gewone globale zou van Job naar Kees lekken.
+_actieve_tuin = threading.local()
+
+
+def zet_actieve_tuin(tuin_id):
+    """Zet de tuin waar queries zonder expliciete tuin op werken (None = standaard)."""
+    _actieve_tuin.id = tuin_id
+
+
+def get_actieve_tuin():
+    """De actieve tuin van deze sessie, of de standaardtuin."""
+    return getattr(_actieve_tuin, "id", None) or get_tuin_id(STANDAARD_TUIN)
+
+
+def _tuin_of_standaard(tuin_id=None):
+    """Het opgegeven tuin-id, of de actieve tuin van deze sessie."""
+    return tuin_id if tuin_id is not None else get_actieve_tuin()
+
+
+def oppervlakte_van_tuin(tuin_id=None):
+    """
+    Teeltoppervlak (m2) van een tuin, om verbruik per m2 uit te rekenen.
+    Tuin 3 houdt zijn vaste 20.900 m2 aan, zodat eerder opgeslagen waarden
+    vergelijkbaar blijven; voor andere tuinen volgt het uit de vakken
+    (stelen bij 60 per m2, gedeeld door 60).
+    """
+    tuin_id = _tuin_of_standaard(tuin_id)
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT nummer FROM tuinen WHERE id = %s", (tuin_id,))
+        rij = cursor.fetchone()
+        if rij and rij[0] == STANDAARD_TUIN:
+            return TUIN3_OPPERVLAKTE_M2
+        cursor.execute(
+            "SELECT SUM(stelen_bij_60) FROM teeltvakken WHERE tuin_id = %s AND vaknummer IS NOT NULL",
+            (tuin_id,),
+        )
+        totaal_stelen = cursor.fetchone()[0]
+    return (totaal_stelen / 60) if totaal_stelen else None
+
+
+def _tuinnummer(tuin_id):
+    """Het tuinnummer (1 of 3) bij een tuin-id."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT nummer FROM tuinen WHERE id = %s", (tuin_id,))
+        rij = cursor.fetchone()
+    return rij[0] if rij else STANDAARD_TUIN
+
+
+def afdeling_van_vak(vaknummer, tuin_id=None):
+    """
+    Afdeling van een vak binnen een tuin. Komt uit de tabel; staat hij daar nog
+    niet, dan uit de vaste indeling van die tuin.
+    """
+    tuin_id = _tuin_of_standaard(tuin_id)
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT afdeling FROM teeltvakken WHERE tuin_id = %s AND vaknummer = %s",
+            (tuin_id, vaknummer),
+        )
+        rij = cursor.fetchone()
+    if rij and rij[0] is not None:
+        return rij[0]
+    return tuin1_afdeling(vaknummer) if _tuinnummer(tuin_id) == 1 else afdeling_van_vaknummer(vaknummer)
+
+
+def stelen_bij_60_van_vak(vaknummer, tuin_id=None):
+    """Aantal stelen bij 60 per m2 voor een vak; uit de tabel, anders de vaste waarde."""
+    tuin_id = _tuin_of_standaard(tuin_id)
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT stelen_bij_60 FROM teeltvakken WHERE tuin_id = %s AND vaknummer = %s",
+            (tuin_id, vaknummer),
+        )
+        rij = cursor.fetchone()
+    if rij and rij[0] is not None:
+        return rij[0]
+    if _tuinnummer(tuin_id) == 1:
+        return TUIN1_STELEN_BIJ_60.get(vaknummer, TUIN1_STELEN_STANDAARD)
+    return _TUIN3_STELEN(vaknummer)
+
+
+def get_vaknummers(tuin_id=None):
+    """De vaknummers van een tuin, laag naar hoog."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT vaknummer FROM teeltvakken WHERE tuin_id = %s AND vaknummer IS NOT NULL "
+            "ORDER BY vaknummer",
+            (_tuin_of_standaard(tuin_id),),
+        )
+        return [r[0] for r in cursor.fetchall()]
+
+
+def get_standaard_tuin_van_gebruiker(username):
+    """Het tuinnummer waarmee deze gebruiker begint (Kees en Robert: tuin 1)."""
+    if not username:
+        return STANDAARD_TUIN
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT standaard_tuin FROM gebruikers WHERE username = %s", (username,))
+        rij = cursor.fetchone()
+    return (rij[0] if rij and rij[0] else STANDAARD_TUIN)

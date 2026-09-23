@@ -78,6 +78,12 @@ from database import (
     get_stekweken,
     get_teeltkengetallen,
     get_rassen,
+    get_tuinen,
+    get_tuin_id,
+    get_vaknummers,
+    get_standaard_tuin_van_gebruiker,
+    zet_actieve_tuin,
+    stelen_bij_60_van_vak,
     STANDAARD_RAS,
     get_stek_voor_week,
     sla_stekbeoordeling_op,
@@ -596,6 +602,35 @@ if _auth_status is None:
 st.sidebar.caption(f"👤 Ingelogd als {st.session_state.get('name')}")
 authenticator.logout("Uitloggen", location="sidebar")
 
+# --- TUIN KIEZEN ---
+#
+# Eén app voor beide tuinen, met de tuin als keuze bovenaan. Alles wat daarna
+# uit de database komt gaat over die tuin: teelten, klimaat, water, energie en
+# het registratieformulier. Zo kun je niet per ongeluk op de verkeerde tuin
+# registreren, en kun je de tuinen wel naast elkaar leggen.
+TUINEN = get_tuinen()
+_standaard_tuin = get_standaard_tuin_van_gebruiker(st.session_state.get("username"))
+if "tuin_nummer" not in st.session_state:
+    st.session_state["tuin_nummer"] = _standaard_tuin
+
+_tuin_labels = {t["nummer"]: t["naam"] for t in TUINEN}
+_tuin_nummers = [t["nummer"] for t in TUINEN]
+if len(_tuin_nummers) > 1:
+    _kolom_tuin, _kolom_leeg = st.columns([2, 5])
+    _keuze = _kolom_tuin.segmented_control(
+        "Tuin", _tuin_nummers, format_func=lambda n: _tuin_labels.get(n, f"Tuin {n}"),
+        default=st.session_state["tuin_nummer"], key="tuin_keuze", label_visibility="collapsed",
+    )
+    if _keuze:
+        st.session_state["tuin_nummer"] = _keuze
+
+TUIN_NUMMER = st.session_state["tuin_nummer"]
+TUIN_ID = get_tuin_id(TUIN_NUMMER)
+TUIN_NAAM = _tuin_labels.get(TUIN_NUMMER, f"Tuin {TUIN_NUMMER}")
+# Vanaf hier werken alle databasefuncties zonder expliciete tuin op deze tuin.
+zet_actieve_tuin(TUIN_ID)
+st.sidebar.caption(f"🏡 {TUIN_NAAM}")
+
 
 def huidige_gebruiker():
     """Identificeert de ingelogde gebruiker voor het wijzigingenlog."""
@@ -631,28 +666,15 @@ def rijpheid_tekst_naar_bereik(tekst):
 PLANTDICHTHEID_OPTIES = [40, 50, 60]  # stelen per m²
 
 
-def standaard_aantal_stelen(vaknummer):
-    """
-    Aantal stelen per teeltvak bij 60 stelen per m² — de oorspronkelijke,
-    vaste basiswaarden per vak. Dient als basis voor bereken_aantal_stelen()
-    bij een andere plantdichtheid (40/50/60 stelen per m²).
-    """
-    standaardwaarden = {1: 34000, 19: 15436, 20: 15436, 39: 31780}
-    if vaknummer in standaardwaarden:
-        return standaardwaarden[vaknummer]
-    if 2 <= vaknummer <= 38:
-        return 32688
-    return 0
-
-
-def bereken_aantal_stelen(vaknummer, stelen_per_m2):
+def bereken_aantal_stelen(vaknummer, stelen_per_m2, tuin_id=None):
     """
     Vooringevuld aantal stelen voor een vak bij de gekozen plantdichtheid
-    (40, 50 of 60 stelen per m²), herschaald vanaf de vaste 60-stelen/m²-
-    basiswaarde van dat vak. Wordt bij het aanmaken van een nieuwe teelt als
-    beginwaarde gebruikt; je kunt het altijd handmatig overschrijven.
+    (40, 50 of 60 stelen per m²), herschaald vanaf de basiswaarde bij 60
+    stelen/m² van dat vak. Die basiswaarde staat per vak in de database
+    (halve vakken hebben er de helft van), zodat beide tuinen dezelfde
+    berekening gebruiken.
     """
-    basis_60 = standaard_aantal_stelen(vaknummer)
+    basis_60 = stelen_bij_60_van_vak(int(vaknummer), tuin_id) or 0
     return round(basis_60 / 60 * stelen_per_m2)
 
 
@@ -736,8 +758,10 @@ if actie == "1. Nieuwe teelt registreren":
 
     # Vaknummer en plantdichtheid buiten het formulier: zo wordt het aantal
     # stelen meteen vooringevuld zodra je een van beide kiest.
-    vaknummer = st.sidebar.number_input(
-        "Vaknummer", min_value=1, max_value=39, step=1, value=1, key="start_vaknummer"
+    _vakken_tuin = get_vaknummers() or [1]
+    vaknummer = st.sidebar.selectbox(
+        "Vaknummer", _vakken_tuin, key=f"start_vaknummer_{TUIN_NUMMER}",
+        help=f"Alleen de vakken van {TUIN_NAAM}.",
     )
     voorgestelde_dichtheid = standaard_dichtheid_voor_plantweek(week_start)
     dichtheid = st.sidebar.radio(
@@ -746,7 +770,7 @@ if actie == "1. Nieuwe teelt registreren":
         key=f"start_dichtheid_{week_start}", horizontal=True,
         help=f"Voorgesteld op basis van plantweek {week_start}: {voorgestelde_dichtheid} stelen/m². Pas gerust aan.",
     )
-    standaard_stelen = bereken_aantal_stelen(int(vaknummer), dichtheid)
+    standaard_stelen = bereken_aantal_stelen(int(vaknummer), dichtheid, tuin_id=TUIN_ID)
 
     # Vrijwel alles is Cameron; af en toe een vak met een ander ras. Buiten het
     # formulier, zodat "Ander ras" meteen een invoerveld toont.
@@ -762,7 +786,7 @@ if actie == "1. Nieuwe teelt registreren":
         aantal_planten = st.number_input(
             "Aantal geplante planten",
             min_value=0, step=1, value=standaard_stelen,
-            key=f"start_aantal_{int(vaknummer)}_{dichtheid}",
+            key=f"start_aantal_{TUIN_NUMMER}_{int(vaknummer)}_{dichtheid}",
             help=f"Vooringevuld op basis van het vaknummer bij {dichtheid} stelen per m²; pas aan indien nodig.",
         )
 
@@ -778,9 +802,10 @@ if actie == "1. Nieuwe teelt registreren":
                     aantal_planten if aantal_planten else None,
                     gebruiker=huidige_gebruiker(),
                     ras=ras_keuze,
+                    tuin_id=TUIN_ID,
                 )
                 st.sidebar.success(
-                    f"✅ Vak {int(vaknummer)} gestart op {format_datum(datum_teelt_start)} (week {week_start}) "
+                    f"✅ {TUIN_NAAM} vak {int(vaknummer)} gestart op {format_datum(datum_teelt_start)} (week {week_start}) "
                     f"- code **{code}**, ras {ras_keuze} (teelt-ID: {teelt_id})"
                 )
                 st.rerun()
