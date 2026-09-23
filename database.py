@@ -2590,3 +2590,23 @@ def sla_stekbeoordeling_op(teelt_id, velden, gebruiker=None):
         "Stekbeoordeling: " + ", ".join(f"{k} {v}" for k, v in waarden.items() if v not in (None, "")),
     )
     return True
+
+
+def verdeel_bakjes(totaal_bakjes, planten_per_vak, stap=0.25):
+    """
+    Verdeelt het totaal geleverde aantal bakjes over de vakken naar rato van
+    het aantal te poten planten (een half vak krijgt dus de helft), afgerond
+    op `stap` bakjes. De restjes gaan naar de vakken die het meest zijn
+    afgerond, zodat de som precies het totaal blijft.
+    """
+    totaal_planten = sum(p or 0 for p in planten_per_vak)
+    if not totaal_bakjes or not totaal_planten:
+        return [None] * len(planten_per_vak)
+
+    exact = [totaal_bakjes * (p or 0) / totaal_planten for p in planten_per_vak]
+    naar_beneden = [int(e / stap) * stap for e in exact]
+    te_verdelen = round((totaal_bakjes - sum(naar_beneden)) / stap)
+    volgorde = sorted(range(len(exact)), key=lambda i: exact[i] - naar_beneden[i], reverse=True)
+    for i in volgorde[:te_verdelen]:
+        naar_beneden[i] += stap
+    return [round(b, 2) for b in naar_beneden]

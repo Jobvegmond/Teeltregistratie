@@ -79,6 +79,7 @@ from database import (
     get_stek_voor_week,
     sla_stekbeoordeling_op,
     stek_uitval_pct,
+    verdeel_bakjes,
     STEK_KEUZES,
     STEK_STANDAARD_RAS,
 )
@@ -2059,6 +2060,35 @@ with tab_stek:
             "Vul per vak het geleverde stek in. Te poten komt uit de teeltregistratie; "
             "de uitval rekent de app zelf uit (bakjes × 600 stekken)."
         )
+        with st.container(border=True):
+            st.write("**Bakjes verdelen**")
+            col_totaal, col_uitleg = st.columns([1, 2])
+            totaal_bakjes = col_totaal.number_input(
+                "Totaal geleverde bakjes deze week", min_value=0.0, step=0.25, format="%.2f",
+                value=float(sum(r["bakjes"] or 0 for r in rijen_stek)),
+                key=f"stek_totaal_{stek_maandag}",
+            )
+            col_uitleg.caption(
+                "Verdeelt het totaal naar rato van het aantal te poten planten — een half vak "
+                "krijgt dus de helft — afgerond op kwart bakjes, zo dat de som precies uitkomt. "
+                "Dit overschrijft de bakjes die nu per vak staan."
+            )
+            if col_uitleg.button("📦 Verdeel en sla op", key=f"stek_verdeel_{stek_maandag}",
+                                 disabled=not totaal_bakjes or not rijen_stek):
+                verdeling = verdeel_bakjes(totaal_bakjes, [r["aantal_planten"] for r in rijen_stek])
+                for rij_stek, bakjes_vak in zip(rijen_stek, verdeling):
+                    sla_stekbeoordeling_op(
+                        rij_stek["teelt_id"],
+                        {**{veld: rij_stek[veld] for veld in
+                            ("wortel", "plantmaat", "uniformiteit", "beoordeling", "opmerking")},
+                         "ras": rij_stek["ras"] or STEK_STANDAARD_RAS, "bakjes": bakjes_vak},
+                        gebruiker=huidige_gebruiker(),
+                    )
+                st.session_state["stek_melding"] = (
+                    f"{totaal_bakjes:g} bakjes verdeeld over {len(rijen_stek)} vakken."
+                )
+                st.rerun()
+
         df_stek = pd.DataFrame(
             [{
                 "Datum": f"{_DAGEN_STEK[date.fromisoformat(r['datum'][:10]).weekday()]} {format_datum(r['datum'])}",
