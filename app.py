@@ -785,6 +785,7 @@ with _paneel[actie].container():
                 )
 
                 lengte_half = st.number_input("Lengte (cm)", min_value=0.0, format="%.1f")
+                florgib_gram = st.number_input("Florgib (g) per vak", min_value=0.0, step=0.5, format="%.1f")
             
                 submit_half = st.form_submit_button("Opslaan")
             
@@ -795,7 +796,9 @@ with _paneel[actie].container():
                     for label in geselecteerde_labels:
                         geselecteerd_id = keuzes[label]
                         try:
-                            update_halverwege(geselecteerd_id, datum_half, lengte_half, gebruiker=huidige_gebruiker())
+                            update_halverwege(geselecteerd_id, datum_half, lengte_half,
+                                              gebruiker=huidige_gebruiker(),
+                                              florgib_gram=florgib_gram or None)
                             successen.append(f"✅ {label}")
                         except Exception as e:
                             fouten.append(f"❌ {label}: {e}")
@@ -982,6 +985,12 @@ with _paneel[actie].container():
                     value=float(huidige["lengte_half"]) if huidige["lengte_half"] else 0.0,
                     disabled=not half_ingevuld
                 )
+                nieuw_florgib_gram = st.number_input(
+                    "Florgib (g) per vak",
+                    min_value=0.0, step=0.5, format="%.1f",
+                    value=float(huidige["florgib_gram"]) if huidige["florgib_gram"] else 0.0,
+                    disabled=not half_ingevuld
+                )
 
                 oogst_ingevuld = st.checkbox("Oogst bekend", value=huidige["datum_oogst"] is not None)
                 nieuwe_datum_oogst = st.date_input(
@@ -1025,6 +1034,7 @@ with _paneel[actie].container():
                             nieuw_aantal_planten if nieuw_aantal_planten else None,
                             huidige["vaknummer"],
                             gebruiker=huidige_gebruiker(),
+                            florgib_gram=(nieuw_florgib_gram or None) if half_ingevuld else None,
                         )
                         if gekozen_ras and gekozen_ras != huidig_ras:
                             zet_ras(geselecteerd_id, gekozen_ras, gebruiker=huidige_gebruiker())
@@ -1078,6 +1088,7 @@ OVERZICHT_KOLOMMEN = [
     ("Datum Halverwege", "Halverwege", "datum", None, "small"),
     ("Week Halverwege", "Wk half", "getal", "%d", "small"),
     ("Lengte Half (cm)", "Lengte half (cm)", "getal", "%.1f", "small"),
+    ("Florgib (g)", "Florgib (g)", "getal", "%.1f", "small"),
     ("Oogstdatum", "Oogst", "datum", None, "small"),
     ("Oogstweek", "Wk oogst", "getal", "%d", "small"),
     ("Teeltduur (dagen)", "Duur (dgn)", "getal", "%d", "small"),

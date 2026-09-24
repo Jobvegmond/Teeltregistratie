@@ -483,6 +483,8 @@ def init_db():
         # Gemeten uitval in procenten. Normaal rekent de app die uit de emmers,
         # maar in de oude registratie van tuin 1 staat alleen het percentage.
         cursor.execute("ALTER TABLE teelten ADD COLUMN IF NOT EXISTS uitval_pct REAL")
+        # Gespoten hoeveelheid Florgib in gram voor dat vak.
+        cursor.execute("ALTER TABLE teelten ADD COLUMN IF NOT EXISTS florgib_gram REAL")
         cursor.execute("ALTER TABLE teelten ADD COLUMN IF NOT EXISTS code TEXT")
 
         # Migratie: voeg het vaknummer toe aan teeltvakken.
@@ -681,20 +683,26 @@ def get_lopende_teelten(tuin_id=None, zonder_florgib=False):
     return resultaat
 
 
-def update_halverwege(teelt_id, datum_half, lengte_half, gebruiker=None):
-    """Slaat de halverwege-meting op voor een specifieke teelt."""
+def update_halverwege(teelt_id, datum_half, lengte_half, gebruiker=None, florgib_gram=None):
+    """
+    Slaat de Florgib-meting op: de datum, de lengte op dat moment en de
+    gespoten hoeveelheid in gram voor dat vak. Een lege hoeveelheid laat wat
+    er al stond ongemoeid.
+    """
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
             UPDATE teelten
-            SET datum_half = %s, lengte_half = %s
+            SET datum_half = %s, lengte_half = %s,
+                florgib_gram = COALESCE(%s, florgib_gram)
             WHERE id = %s
-        """, (str(datum_half), lengte_half, teelt_id))
+        """, (str(datum_half), lengte_half, florgib_gram, teelt_id))
         conn.commit()
 
     log_wijziging(
         gebruiker, "gewijzigd", "teelt", teelt_id,
         f"Florgib lengte {lengte_half} cm geregistreerd op {datum_half}"
+        + (f", {florgib_gram:g} gram gespoten" if florgib_gram else "")
     )
 
 
@@ -816,7 +824,7 @@ def get_teelt_by_id(teelt_id):
         cursor.execute("""
             SELECT t.id, v.naam, v.vaknummer, t.datum_teelt_start, t.datum_half, t.lengte_half,
                    t.datum_oogst, t.lengte_eind, t.oogstgewicht, t.rijpheid,
-                   t.aantal_planten, t.code, t.ras
+                   t.aantal_planten, t.code, t.ras, t.florgib_gram
             FROM teelten t
             JOIN teeltvakken v ON t.teeltvak_id = v.id
             WHERE t.id = %s
@@ -840,12 +848,14 @@ def get_teelt_by_id(teelt_id):
         "aantal_planten": rij[10],
         "code": rij[11],
         "ras": rij[12],
+        "florgib_gram": rij[13],
     }
 
 
 def update_teelt_volledig(teelt_id, datum_teelt_start, datum_half, lengte_half,
                            datum_oogst, lengte_eind, oogstgewicht, rijpheid=None,
-                           aantal_planten=None, vaknummer=None, gebruiker=None):
+                           aantal_planten=None, vaknummer=None, gebruiker=None,
+                           florgib_gram=None):
     """Overschrijft alle velden van een bestaande teelt (gebruikt bij handmatige correctie)."""
     code = genereer_teelt_code(datum_teelt_start, vaknummer) if vaknummer else None
 
@@ -854,6 +864,7 @@ def update_teelt_volledig(teelt_id, datum_teelt_start, datum_half, lengte_half,
         cursor.execute("""
             UPDATE teelten
             SET datum_teelt_start = %s, datum_half = %s, lengte_half = %s,
+                florgib_gram = %s,
                 datum_oogst = %s, lengte_eind = %s, oogstgewicht = %s, rijpheid = %s,
                 aantal_planten = %s, code = COALESCE(%s, code)
             WHERE id = %s
@@ -861,6 +872,7 @@ def update_teelt_volledig(teelt_id, datum_teelt_start, datum_half, lengte_half,
             str(datum_teelt_start) if datum_teelt_start else None,
             str(datum_half) if datum_half else None,
             lengte_half,
+            florgib_gram,
             str(datum_oogst) if datum_oogst else None,
             lengte_eind,
             oogstgewicht,
@@ -1105,6 +1117,7 @@ def get_overzicht_dataframe(tuin_id=None):
                 t.datum_teelt_start,
                 t.datum_half,
                 t.lengte_half,
+                t.florgib_gram,
                 t.datum_oogst,
                 t.lengte_eind,
                 t.oogstgewicht,
@@ -1123,7 +1136,7 @@ def get_overzicht_dataframe(tuin_id=None):
     rijen_uitgebreid = []
     for row in teelt_rijen:
         (teelt_id, code, naam, aantal_planten, start, half_datum, half_lengte,
-         oogst_datum, eind_lengte, gewicht, rijpheid, uitval_gemeten) = row
+         florgib_gram, oogst_datum, eind_lengte, gewicht, rijpheid, uitval_gemeten) = row
 
         start_week = get_weeknummer(start) if start else "-"
         teeltduur = get_teeltduur(start, oogst_datum) if (start and oogst_datum) else "-"
@@ -1155,6 +1168,7 @@ def get_overzicht_dataframe(tuin_id=None):
             status,
             get_weeknummer(half_datum) if half_datum else "-",
             half_lengte if half_lengte else "-",
+            florgib_gram if florgib_gram else "-",
             get_weeknummer(oogst_datum) if oogst_datum else "-",
             teeltduur,
             eind_lengte if eind_lengte else "-",
@@ -1171,7 +1185,7 @@ def get_overzicht_dataframe(tuin_id=None):
         ))
 
     kolommen = ["ID", "_startdatum_iso", "Teeltvak", "Startweek", "Status",
-                "Week Halverwege", "Lengte Half (cm)", "Oogstweek", "Teeltduur (dagen)",
+                "Week Halverwege", "Lengte Half (cm)", "Florgib (g)", "Oogstweek", "Teeltduur (dagen)",
                 "Oogstlengte (cm)", "Oogstgewicht (gram)", "Rijpheid", "Uitval (%)",
                 "Aantal Planten", "Aantal Emmers", "Aantal Stelen", "Code",
                 "Startdatum", "Datum Halverwege", "Oogstdatum"]

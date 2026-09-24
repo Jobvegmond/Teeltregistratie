@@ -143,6 +143,7 @@ def lees_aantekeningen(wb):
             "vakken": vakken,
             # Kolom Florgib is de dag van toedienen, kolom Lengte de lengte op dat moment.
             "florgib": lees_oogstdag(rij[4], jaar, week),
+            "florgib_gram": float(rij[5]) if isinstance(rij[5], (int, float)) else None,
             "florgib_lengte": float(rij[6]) if isinstance(rij[6], (int, float)) else None,
             "eerste_oogst": lees_oogstdag(rij[9], jaar, week),
             "laatste_oogst": lees_oogstdag(rij[10], jaar, week),
@@ -260,6 +261,7 @@ def bouw_teelten(stek, aantekeningen, teeltweken):
             "ras": gegevens["ras"],
             "lengte": planting.get("lengte"),
             "florgib": planting.get("florgib"),
+            "florgib_gram": planting.get("florgib_gram"),
             "florgib_lengte": planting.get("florgib_lengte"),
             "uitval_pct": planting.get("uitval_pct"),
         })
@@ -364,6 +366,7 @@ def werk_bij(teelten, tuin_id):
     velden = [
         ("datum_half", lambda t: str(t["florgib"]) if t["florgib"] else None),
         ("lengte_half", lambda t: t["florgib_lengte"]),
+        ("florgib_gram", lambda t: t["florgib_gram"]),
         ("uitval_pct", lambda t: t["uitval_pct"]),
         ("datum_oogst", lambda t: str(t["oogst"]) if t["oogst"] else None),
         ("lengte_eind", lambda t: t["lengte"]),
@@ -404,15 +407,15 @@ def schrijf(teelten, tuin_id):
             cur.execute("""
                 INSERT INTO teelten (teeltvak_id, datum_teelt_start, datum_oogst,
                                      aantal_planten, code, ras, lengte_eind,
-                                     datum_half, lengte_half, uitval_pct)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                     datum_half, lengte_half, uitval_pct, florgib_gram)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
                 database.get_of_maak_teeltvak(t["vak"], tuin_id=tuin_id),
                 str(t["start"]), str(t["oogst"]) if t["oogst"] else None,
                 t["planten"], database.genereer_teelt_code(t["start"], t["vak"]),
                 ras, t["lengte"],
                 str(t["florgib"]) if t["florgib"] else None, t["florgib_lengte"],
-                t["uitval_pct"],
+                t["uitval_pct"], t["florgib_gram"],
             ))
         conn.commit()
 
@@ -455,7 +458,8 @@ def main():
           f"{zonder_oogst} nog lopend")
     print("Rassen: " + ", ".join(f"{r} {a}x" for r, a in Counter(t["ras"] for t in teelten).items()))
     print(f"Florgib: {sum(1 for t in teelten if t['florgib'])} met datum, "
-          f"{sum(1 for t in teelten if t['florgib_lengte'])} met lengte | "
+          f"{sum(1 for t in teelten if t['florgib_lengte'])} met lengte, "
+          f"{sum(1 for t in teelten if t['florgib_gram'])} met dosering | "
           f"uitval bekend bij {sum(1 for t in teelten if t['uitval_pct'] is not None)} teelten")
     if nieuw:
         duren = [(t["oogst"] - t["start"]).days for t in nieuw if t["oogst"]]
