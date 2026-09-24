@@ -738,295 +738,302 @@ st.sidebar.header("Registratie")
 FLORGIB, OOGST, WIJZIGEN = "Florgib lengte", "Oogst", "Wijzigen of verwijderen"
 actie = st.sidebar.radio("Wat wil je doen?", [FLORGIB, OOGST, WIJZIGEN])
 
-# --- ACTIE 2: HALVERWEGE VOOR MEERDERE VAKKEN ---
-if actie == FLORGIB:
+# Elke actie krijgt een eigen plek in de zijbalk; de plekken van de andere twee
+# blijven leeg. Streamlit ruimt namelijk alleen op wat het opnieuw tekent: zonder
+# die vaste plekken bleven de velden van de vorige keuze er grijs onder staan.
+_paneel = {naam: st.sidebar.empty() for naam in (FLORGIB, OOGST, WIJZIGEN)}
+with _paneel[actie].container():
+
+    # --- ACTIE 2: HALVERWEGE VOOR MEERDERE VAKKEN ---
+    if actie == FLORGIB:
     
-    lopende = get_lopende_teelten()
-    
-    if lopende:
-        # Maak lookup dict
-        keuzes = {label: teelt_id for teelt_id, label in lopende}
+        # Alleen teelten die nog lopen én nog geen Florgib-lengte hebben: zodra je
+        # er een invult, verdwijnt hij uit de lijst, dus wat er staat moet nog.
+        lopende = get_lopende_teelten(zonder_florgib=True)
+
+        if lopende:
+            keuzes = {label: teelt_id for teelt_id, label in lopende}
         
-        # Datum buiten het formulier: zo ververst het weeknummer meteen bij het kiezen
-        datum_half = st.sidebar.date_input(
-            "Datum", key="half_datum", format="DD-MM-YYYY"
-        )
-        week_half = get_weeknummer(datum_half)
-        st.sidebar.caption(f"Week {week_half}")
-
-        with st.sidebar.form("half_form"):
-            geselecteerde_labels = st.multiselect(
-                "Teelten", list(keuzes.keys())
+            # Datum buiten het formulier: zo ververst het weeknummer meteen bij het kiezen
+            datum_half = st.date_input(
+                "Datum", key="half_datum", format="DD-MM-YYYY"
             )
+            week_half = get_weeknummer(datum_half)
+            st.caption(f"Week {week_half}")
 
-            lengte_half = st.number_input("Lengte (cm)", min_value=0.0, format="%.1f")
-            
-            submit_half = st.form_submit_button("Opslaan")
-            
-            if submit_half and geselecteerde_labels:
-                successen = []
-                fouten = []
-                
-                for label in geselecteerde_labels:
-                    geselecteerd_id = keuzes[label]
-                    try:
-                        update_halverwege(geselecteerd_id, datum_half, lengte_half, gebruiker=huidige_gebruiker())
-                        successen.append(f"✅ {label}")
-                    except Exception as e:
-                        fouten.append(f"❌ {label}: {e}")
-                
-                if successen:
-                    st.sidebar.success(
-                        f"Opgeslagen voor {len(successen)} teelten."
-                    )
-                if fouten:
-                    st.sidebar.warning("Mislukt:\n" + "\n".join(fouten))
-                
-                if successen:
-                    st.rerun()
-            elif submit_half and not geselecteerde_labels:
-                st.sidebar.warning("Kies minstens één teelt.")
-    else:
-        st.sidebar.info("Geen lopende teelten.")
-
-# --- ACTIE 3: UITVAL (EMMERS) + OOGSTGEWICHT EN LENGTE ---
-elif actie == OOGST:
-
-    tab_uitval, tab_eind = st.sidebar.tabs(["🪣 Emmers", "📏 Lengte en gewicht"])
-
-    # --- TABBLAD: UITVAL (EMMERS, 100 STELEN PER EMMER) ---
-    with tab_uitval:
-        lopende_uitval = get_lopende_teelten()
-
-        if lopende_uitval:
-            keuzes_uitval = {label: teelt_id for teelt_id, label in lopende_uitval}
-
-            uitval_label = st.selectbox(
-                "Teelt", list(keuzes_uitval.keys()), key="uitval_selectie"
-            )
-            uitval_id = keuzes_uitval[uitval_label]
-            huidige_uitval = get_teelt_by_id(uitval_id)
-
-            st.caption(
-                f"Vak {huidige_uitval['vaknummer']} · {huidige_uitval['code'] or '-'}"
-                + (f" · {huidige_uitval['aantal_planten']} planten" if huidige_uitval["aantal_planten"] else "")
-            )
-
-            if "emmers_form_versie" not in st.session_state:
-                st.session_state["emmers_form_versie"] = 0
-
-            with st.form("emmers_form"):
-                datum_emmers = st.date_input(
-                    "Datum", key="emmers_datum", format="DD-MM-YYYY"
-                )
-                st.caption(f"Week {get_weeknummer(datum_emmers)}")
-                aantal_emmers = st.number_input("Emmers", min_value=0, step=1)
-                laatste_emmers = st.checkbox(
-                    "Teelt afronden",
-                    key=f"emmers_laatste_{st.session_state['emmers_form_versie']}",
-                )
-
-                submit_emmers = st.form_submit_button("Opslaan")
-
-                if submit_emmers:
-                    if aantal_emmers > 0:
-                        voeg_oogstregistratie_toe(uitval_id, datum_emmers, aantal_emmers, gebruiker=huidige_gebruiker())
-                        if laatste_emmers:
-                            markeer_teelt_afgerond(uitval_id, datum_emmers, gebruiker=huidige_gebruiker())
-                            st.success(f"{aantal_emmers} emmers opgeslagen, teelt afgerond.")
-                        else:
-                            st.success(f"{aantal_emmers} emmers opgeslagen.")
-                        # Nieuwe key voor het vinkje bij de volgende weergave, zodat het
-                        # altijd weer uit staat na het opslaan (i.p.v. aan te blijven staan).
-                        st.session_state["emmers_form_versie"] += 1
-                        st.rerun()
-                    else:
-                        st.warning("Vul een aantal emmers in.")
-
-            toon_oogstregistraties_beheer(uitval_id, huidige_uitval)
-        else:
-            st.info("Geen lopende teelten. Start ze in het tabblad Planning.")
-
-    # --- TABBLAD: OOGSTGEWICHT EN LENGTE ---
-    with tab_eind:
-        # Alleen teelten die nog niet zijn afgerond bij de uitval.
-        alle_teelten = get_lopende_teelten()
-
-        if alle_teelten:
-            keuzes_eind = {label: teelt_id for teelt_id, label in alle_teelten}
-
-            with st.form("oogst_form"):
+            with st.form("half_form"):
                 geselecteerde_labels = st.multiselect(
-                    "Teelten", list(keuzes_eind.keys())
+                    "Teelten", list(keuzes.keys())
                 )
 
-                lengte_eind = st.number_input("Lengte (cm)", min_value=0.0, format="%.1f")
-                oogstgewicht = st.number_input("Gewicht (g)", min_value=0, step=1)
-                rijpheid_bereik = st.select_slider(
-                    "Rijpheid", options=RIJPHEID_OPTIES, value=(1, 4),
-                    help="1 = rauw, 4 = rijp. Zet beide punten gelijk voor één stadium.",
-                )
-
-                submit_oogst = st.form_submit_button("Opslaan")
-
-                if submit_oogst and geselecteerde_labels:
+                lengte_half = st.number_input("Lengte (cm)", min_value=0.0, format="%.1f")
+            
+                submit_half = st.form_submit_button("Opslaan")
+            
+                if submit_half and geselecteerde_labels:
                     successen = []
                     fouten = []
-                    rijpheid_tekst = rijpheid_bereik_naar_tekst(rijpheid_bereik)
-
+                
                     for label in geselecteerde_labels:
+                        geselecteerd_id = keuzes[label]
                         try:
-                            update_oogst(
-                                keuzes_eind[label], lengte_eind, oogstgewicht, rijpheid_tekst,
-                                gebruiker=huidige_gebruiker(),
-                            )
+                            update_halverwege(geselecteerd_id, datum_half, lengte_half, gebruiker=huidige_gebruiker())
                             successen.append(f"✅ {label}")
                         except Exception as e:
                             fouten.append(f"❌ {label}: {e}")
-
+                
                     if successen:
-                        st.success(f"Opgeslagen voor {len(successen)} teelten.")
+                        st.success(
+                            f"Opgeslagen voor {len(successen)} teelten."
+                        )
                     if fouten:
                         st.warning("Mislukt:\n" + "\n".join(fouten))
+                
                     if successen:
                         st.rerun()
-                elif submit_oogst and not geselecteerde_labels:
+                elif submit_half and not geselecteerde_labels:
                     st.warning("Kies minstens één teelt.")
         else:
-            st.info("Geen lopende teelten.")
+            st.info("Alle lopende teelten hebben hun Florgib-lengte al.")
 
-# --- ACTIE 4: WIJZIGEN / VERWIJDEREN ---
-elif actie == WIJZIGEN:
+    # --- ACTIE 3: UITVAL (EMMERS) + OOGSTGEWICHT EN LENGTE ---
+    elif actie == OOGST:
 
-    alle_teelten = get_alle_teelten_voor_selectie()
+        tab_uitval, tab_eind = st.tabs(["🪣 Emmers", "📏 Lengte en gewicht"])
 
-    if alle_teelten:
-        keuzes = {label: teelt_id for teelt_id, label in alle_teelten}
-        geselecteerd_label = st.sidebar.selectbox(
-            "Teelt", list(keuzes.keys()), key="wijzig_selectie"
-        )
-        geselecteerd_id = keuzes[geselecteerd_label]
-        huidige = get_teelt_by_id(geselecteerd_id)
+        # --- TABBLAD: UITVAL (EMMERS, 100 STELEN PER EMMER) ---
+        with tab_uitval:
+            lopende_uitval = get_lopende_teelten()
 
-        st.sidebar.caption(f"Vak {huidige['vaknummer']} · {huidige['code'] or '-'}")
+            if lopende_uitval:
+                keuzes_uitval = {label: teelt_id for teelt_id, label in lopende_uitval}
 
-        # Het ras staat buiten het formulier, zodat "Ander ras" meteen een
-        # invoerveld toont in plaats van er altijd een te laten staan.
-        rassen = get_rassen()
-        huidig_ras = huidige["ras"] or STANDAARD_RAS
-        if huidig_ras not in rassen:
-            rassen = rassen + [huidig_ras]
-        gekozen_ras = st.sidebar.selectbox(
-            "Ras", rassen + [ANDER_RAS], index=rassen.index(huidig_ras),
-            key=f"wijzig_ras_{geselecteerd_id}",
-        )
-        if gekozen_ras == ANDER_RAS:
-            gekozen_ras = st.sidebar.text_input(
-                "Naam van het ras", key=f"wijzig_ras_nieuw_{geselecteerd_id}"
-            ).strip()
+                uitval_label = st.selectbox(
+                    "Teelt", list(keuzes_uitval.keys()), key="uitval_selectie"
+                )
+                uitval_id = keuzes_uitval[uitval_label]
+                huidige_uitval = get_teelt_by_id(uitval_id)
 
-        # Helper om string-datums om te zetten naar date-objecten voor de widgets
-        def naar_date(waarde):
-            if waarde:
-                return datetime.strptime(waarde, "%Y-%m-%d").date()
-            return None
+                st.caption(
+                    f"Vak {huidige_uitval['vaknummer']} · {huidige_uitval['code'] or '-'}"
+                    + (f" · {huidige_uitval['aantal_planten']} planten" if huidige_uitval["aantal_planten"] else "")
+                )
 
-        with st.sidebar.form("wijzig_form"):
-            nieuwe_start = st.date_input(
-                "Startdatum",
-                value=naar_date(huidige["datum_teelt_start"]) or datetime.today().date(),
-                format="DD-MM-YYYY"
-            )
-            st.caption(f"Week {get_weeknummer(nieuwe_start)}")
+                if "emmers_form_versie" not in st.session_state:
+                    st.session_state["emmers_form_versie"] = 0
 
-            nieuw_aantal_planten = st.number_input(
-                "Planten", min_value=0, step=1,
-                value=int(huidige["aantal_planten"]) if huidige["aantal_planten"] else 0
-            )
-
-            half_ingevuld = st.checkbox("Florgib bekend", value=huidige["datum_half"] is not None)
-            nieuwe_datum_half = st.date_input(
-                "Datum Florgib",
-                value=naar_date(huidige["datum_half"]) or datetime.today().date(),
-                disabled=not half_ingevuld,
-                format="DD-MM-YYYY"
-            )
-            nieuwe_lengte_half = st.number_input(
-                "Florgib lengte (cm)",
-                min_value=0.0, format="%.1f",
-                value=float(huidige["lengte_half"]) if huidige["lengte_half"] else 0.0,
-                disabled=not half_ingevuld
-            )
-
-            oogst_ingevuld = st.checkbox("Oogst bekend", value=huidige["datum_oogst"] is not None)
-            nieuwe_datum_oogst = st.date_input(
-                "Oogstdatum",
-                value=naar_date(huidige["datum_oogst"]) or datetime.today().date(),
-                disabled=not oogst_ingevuld,
-                format="DD-MM-YYYY"
-            )
-            nieuwe_lengte_eind = st.number_input(
-                "Oogstlengte (cm)",
-                min_value=0.0, format="%.1f",
-                value=float(huidige["lengte_eind"]) if huidige["lengte_eind"] else 0.0,
-                disabled=not oogst_ingevuld
-            )
-            nieuw_gewicht = st.number_input(
-                "Oogstgewicht (g)",
-                min_value=0, step=1,
-                value=int(round(huidige["oogstgewicht"])) if huidige["oogstgewicht"] else 0,
-                disabled=not oogst_ingevuld
-            )
-            nieuwe_rijpheid_bereik = st.select_slider(
-                "Rijpheid", options=RIJPHEID_OPTIES,
-                value=rijpheid_tekst_naar_bereik(huidige["rijpheid"]),
-                help="1 = rauw, 4 = rijp.",
-                disabled=not oogst_ingevuld
-            )
-
-            opslaan = st.form_submit_button("Opslaan")
-
-            if opslaan:
-                try:
-                    update_teelt_volledig(
-                        geselecteerd_id,
-                        nieuwe_start,
-                        nieuwe_datum_half if half_ingevuld else None,
-                        nieuwe_lengte_half if half_ingevuld else None,
-                        nieuwe_datum_oogst if oogst_ingevuld else None,
-                        nieuwe_lengte_eind if oogst_ingevuld else None,
-                        nieuw_gewicht if oogst_ingevuld else None,
-                        rijpheid_bereik_naar_tekst(nieuwe_rijpheid_bereik) if oogst_ingevuld else None,
-                        nieuw_aantal_planten if nieuw_aantal_planten else None,
-                        huidige["vaknummer"],
-                        gebruiker=huidige_gebruiker(),
+                with st.form("emmers_form"):
+                    datum_emmers = st.date_input(
+                        "Datum", key="emmers_datum", format="DD-MM-YYYY"
                     )
-                    if gekozen_ras and gekozen_ras != huidig_ras:
-                        zet_ras(geselecteerd_id, gekozen_ras, gebruiker=huidige_gebruiker())
-                    st.sidebar.success("Opgeslagen.")
-                    st.rerun()
-                except Exception as e:
-                    st.sidebar.error(str(e))
+                    st.caption(f"Week {get_weeknummer(datum_emmers)}")
+                    aantal_emmers = st.number_input("Emmers", min_value=0, step=1)
+                    laatste_emmers = st.checkbox(
+                        "Teelt afronden",
+                        key=f"emmers_laatste_{st.session_state['emmers_form_versie']}",
+                    )
 
-        # Oogstregistraties (emmers) staan hier ook, zodat je ze ook voor
-        # een afgeronde teelt nog kunt corrigeren.
-        st.sidebar.markdown("---")
-        st.sidebar.caption("Oogstmomenten")
-        with st.sidebar:
-            toon_oogstregistraties_beheer(geselecteerd_id, huidige)
+                    submit_emmers = st.form_submit_button("Opslaan")
 
-        # Verwijderen staat buiten het formulier, met expliciete bevestiging
-        st.sidebar.markdown("---")
-        bevestig_verwijderen = st.sidebar.checkbox(
-            "Definitief verwijderen",
-            key="bevestig_verwijderen"
-        )
-        if st.sidebar.button("🗑️ Verwijderen", disabled=not bevestig_verwijderen):
-            delete_teelt(geselecteerd_id, gebruiker=huidige_gebruiker())
-            st.sidebar.success("Verwijderd.")
-            st.rerun()
-    else:
-        st.sidebar.info("Nog geen registraties.")
+                    if submit_emmers:
+                        if aantal_emmers > 0:
+                            voeg_oogstregistratie_toe(uitval_id, datum_emmers, aantal_emmers, gebruiker=huidige_gebruiker())
+                            if laatste_emmers:
+                                markeer_teelt_afgerond(uitval_id, datum_emmers, gebruiker=huidige_gebruiker())
+                                st.success(f"{aantal_emmers} emmers opgeslagen, teelt afgerond.")
+                            else:
+                                st.success(f"{aantal_emmers} emmers opgeslagen.")
+                            # Nieuwe key voor het vinkje bij de volgende weergave, zodat het
+                            # altijd weer uit staat na het opslaan (i.p.v. aan te blijven staan).
+                            st.session_state["emmers_form_versie"] += 1
+                            st.rerun()
+                        else:
+                            st.warning("Vul een aantal emmers in.")
+
+                toon_oogstregistraties_beheer(uitval_id, huidige_uitval)
+            else:
+                st.info("Geen lopende teelten. Start ze in het tabblad Planning.")
+
+        # --- TABBLAD: OOGSTGEWICHT EN LENGTE ---
+        with tab_eind:
+            # Alleen teelten die nog niet zijn afgerond bij de uitval.
+            alle_teelten = get_lopende_teelten()
+
+            if alle_teelten:
+                keuzes_eind = {label: teelt_id for teelt_id, label in alle_teelten}
+
+                with st.form("oogst_form"):
+                    geselecteerde_labels = st.multiselect(
+                        "Teelten", list(keuzes_eind.keys())
+                    )
+
+                    lengte_eind = st.number_input("Lengte (cm)", min_value=0.0, format="%.1f")
+                    oogstgewicht = st.number_input("Gewicht (g)", min_value=0, step=1)
+                    rijpheid_bereik = st.select_slider(
+                        "Rijpheid", options=RIJPHEID_OPTIES, value=(1, 4),
+                        help="1 = rauw, 4 = rijp. Zet beide punten gelijk voor één stadium.",
+                    )
+
+                    submit_oogst = st.form_submit_button("Opslaan")
+
+                    if submit_oogst and geselecteerde_labels:
+                        successen = []
+                        fouten = []
+                        rijpheid_tekst = rijpheid_bereik_naar_tekst(rijpheid_bereik)
+
+                        for label in geselecteerde_labels:
+                            try:
+                                update_oogst(
+                                    keuzes_eind[label], lengte_eind, oogstgewicht, rijpheid_tekst,
+                                    gebruiker=huidige_gebruiker(),
+                                )
+                                successen.append(f"✅ {label}")
+                            except Exception as e:
+                                fouten.append(f"❌ {label}: {e}")
+
+                        if successen:
+                            st.success(f"Opgeslagen voor {len(successen)} teelten.")
+                        if fouten:
+                            st.warning("Mislukt:\n" + "\n".join(fouten))
+                        if successen:
+                            st.rerun()
+                    elif submit_oogst and not geselecteerde_labels:
+                        st.warning("Kies minstens één teelt.")
+            else:
+                st.info("Geen lopende teelten.")
+
+    # --- ACTIE 4: WIJZIGEN / VERWIJDEREN ---
+    elif actie == WIJZIGEN:
+
+        alle_teelten = get_alle_teelten_voor_selectie()
+
+        if alle_teelten:
+            keuzes = {label: teelt_id for teelt_id, label in alle_teelten}
+            geselecteerd_label = st.selectbox(
+                "Teelt", list(keuzes.keys()), key="wijzig_selectie"
+            )
+            geselecteerd_id = keuzes[geselecteerd_label]
+            huidige = get_teelt_by_id(geselecteerd_id)
+
+            st.caption(f"Vak {huidige['vaknummer']} · {huidige['code'] or '-'}")
+
+            # Het ras staat buiten het formulier, zodat "Ander ras" meteen een
+            # invoerveld toont in plaats van er altijd een te laten staan.
+            rassen = get_rassen()
+            huidig_ras = huidige["ras"] or STANDAARD_RAS
+            if huidig_ras not in rassen:
+                rassen = rassen + [huidig_ras]
+            gekozen_ras = st.selectbox(
+                "Ras", rassen + [ANDER_RAS], index=rassen.index(huidig_ras),
+                key=f"wijzig_ras_{geselecteerd_id}",
+            )
+            if gekozen_ras == ANDER_RAS:
+                gekozen_ras = st.text_input(
+                    "Naam van het ras", key=f"wijzig_ras_nieuw_{geselecteerd_id}"
+                ).strip()
+
+            # Helper om string-datums om te zetten naar date-objecten voor de widgets
+            def naar_date(waarde):
+                if waarde:
+                    return datetime.strptime(waarde, "%Y-%m-%d").date()
+                return None
+
+            with st.form("wijzig_form"):
+                nieuwe_start = st.date_input(
+                    "Startdatum",
+                    value=naar_date(huidige["datum_teelt_start"]) or datetime.today().date(),
+                    format="DD-MM-YYYY"
+                )
+                st.caption(f"Week {get_weeknummer(nieuwe_start)}")
+
+                nieuw_aantal_planten = st.number_input(
+                    "Planten", min_value=0, step=1,
+                    value=int(huidige["aantal_planten"]) if huidige["aantal_planten"] else 0
+                )
+
+                half_ingevuld = st.checkbox("Florgib bekend", value=huidige["datum_half"] is not None)
+                nieuwe_datum_half = st.date_input(
+                    "Datum Florgib",
+                    value=naar_date(huidige["datum_half"]) or datetime.today().date(),
+                    disabled=not half_ingevuld,
+                    format="DD-MM-YYYY"
+                )
+                nieuwe_lengte_half = st.number_input(
+                    "Florgib lengte (cm)",
+                    min_value=0.0, format="%.1f",
+                    value=float(huidige["lengte_half"]) if huidige["lengte_half"] else 0.0,
+                    disabled=not half_ingevuld
+                )
+
+                oogst_ingevuld = st.checkbox("Oogst bekend", value=huidige["datum_oogst"] is not None)
+                nieuwe_datum_oogst = st.date_input(
+                    "Oogstdatum",
+                    value=naar_date(huidige["datum_oogst"]) or datetime.today().date(),
+                    disabled=not oogst_ingevuld,
+                    format="DD-MM-YYYY"
+                )
+                nieuwe_lengte_eind = st.number_input(
+                    "Oogstlengte (cm)",
+                    min_value=0.0, format="%.1f",
+                    value=float(huidige["lengte_eind"]) if huidige["lengte_eind"] else 0.0,
+                    disabled=not oogst_ingevuld
+                )
+                nieuw_gewicht = st.number_input(
+                    "Oogstgewicht (g)",
+                    min_value=0, step=1,
+                    value=int(round(huidige["oogstgewicht"])) if huidige["oogstgewicht"] else 0,
+                    disabled=not oogst_ingevuld
+                )
+                nieuwe_rijpheid_bereik = st.select_slider(
+                    "Rijpheid", options=RIJPHEID_OPTIES,
+                    value=rijpheid_tekst_naar_bereik(huidige["rijpheid"]),
+                    help="1 = rauw, 4 = rijp.",
+                    disabled=not oogst_ingevuld
+                )
+
+                opslaan = st.form_submit_button("Opslaan")
+
+                if opslaan:
+                    try:
+                        update_teelt_volledig(
+                            geselecteerd_id,
+                            nieuwe_start,
+                            nieuwe_datum_half if half_ingevuld else None,
+                            nieuwe_lengte_half if half_ingevuld else None,
+                            nieuwe_datum_oogst if oogst_ingevuld else None,
+                            nieuwe_lengte_eind if oogst_ingevuld else None,
+                            nieuw_gewicht if oogst_ingevuld else None,
+                            rijpheid_bereik_naar_tekst(nieuwe_rijpheid_bereik) if oogst_ingevuld else None,
+                            nieuw_aantal_planten if nieuw_aantal_planten else None,
+                            huidige["vaknummer"],
+                            gebruiker=huidige_gebruiker(),
+                        )
+                        if gekozen_ras and gekozen_ras != huidig_ras:
+                            zet_ras(geselecteerd_id, gekozen_ras, gebruiker=huidige_gebruiker())
+                        st.success("Opgeslagen.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(str(e))
+
+            # Oogstregistraties (emmers) staan hier ook, zodat je ze ook voor
+            # een afgeronde teelt nog kunt corrigeren.
+            st.markdown("---")
+            st.caption("Oogstmomenten")
+            with st.container():
+                toon_oogstregistraties_beheer(geselecteerd_id, huidige)
+
+            # Verwijderen staat buiten het formulier, met expliciete bevestiging
+            st.markdown("---")
+            bevestig_verwijderen = st.checkbox(
+                "Definitief verwijderen",
+                key="bevestig_verwijderen"
+            )
+            if st.button("🗑️ Verwijderen", disabled=not bevestig_verwijderen):
+                delete_teelt(geselecteerd_id, gebruiker=huidige_gebruiker())
+                st.success("Verwijderd.")
+                st.rerun()
+        else:
+            st.info("Nog geen registraties.")
 
 # --- HOOFDSCHERM: TABBLADEN ---
 tab_overzicht, tab_week, tab_detail, tab_planning, tab_stek, tab_klimaat, tab_stats, tab_meer = st.tabs([

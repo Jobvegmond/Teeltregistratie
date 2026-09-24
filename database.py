@@ -613,21 +613,25 @@ def start_nieuwe_teelt(vaknummer, datum_teelt_start, aantal_planten=None, naam=N
     return nieuwe_teelt_id, code
 
 
-def get_lopende_teelten(tuin_id=None):
+def get_lopende_teelten(tuin_id=None, zonder_florgib=False):
     """
     Geeft alle teelten terug die daadwerkelijk lopen: nog niet afgerond
     (geen oogstdatum) én al gestart (startdatum ligt niet in de toekomst).
     Een teelt met een toekomstige startdatum is nog niet geplant en hoort
     dus niet tussen de Florgib-/oogstregistratie-keuzes. Handig voor
     selectboxen. Retourneert lijst van tuples: (teelt_id, label_voor_selectbox)
+
+    Met zonder_florgib=True blijven ook de teelten weg die hun Florgib-lengte
+    al hebben: bij het invullen daarvan zie je zo alleen wat nog moet.
     """
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT t.id, v.vaknummer, t.datum_teelt_start, t.code
             FROM teelten t
             JOIN teeltvakken v ON t.teeltvak_id = v.id
             WHERE v.tuin_id = %s AND t.datum_oogst IS NULL AND t.datum_teelt_start <= %s
+            {"AND t.lengte_half IS NULL" if zonder_florgib else ""}
             ORDER BY t.datum_teelt_start, v.vaknummer
         """, (_tuin_of_standaard(tuin_id), str(date.today())))
         rijen = cursor.fetchall()
