@@ -266,6 +266,40 @@ def bouw_teelten(stek, aantekeningen, teeltweken):
     return teelten, geschat, zonder_oogst, oogstduur
 
 
+def emmers_uit_uitval(tuin_id):
+    """
+    Rekent het aantal emmers terug uit het uitvalpercentage en zet dat als
+    oogstmoment op de oogstdatum.
+
+    In de oude registratie van tuin 1 zijn de emmers niet per dag bijgehouden,
+    alleen de uitval van de hele planting. Met 100 stelen per emmer volgt het
+    aantal emmers daaruit: planten x (100 - uitval%) / 100 / 100. Het is dus
+    één regel op de laatste oogstdag, geen echte dagtelling — maar zo rekent
+    de app de uitval van tuin 1 op dezelfde manier uit als die van tuin 3.
+
+    Alleen teelten met een uitvalpercentage, een oogstdatum en een
+    plantaantal, en die nog geen enkel oogstmoment hebben. Geeft het aantal
+    toegevoegde oogstmomenten terug.
+    """
+    with database.get_connection() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT t.id, t.datum_oogst, t.aantal_planten, t.uitval_pct
+            FROM teelten t
+            JOIN teeltvakken v ON v.id = t.teeltvak_id
+            LEFT JOIN oogstregistraties o ON o.teelt_id = t.id
+            WHERE v.tuin_id = %s AND t.uitval_pct IS NOT NULL
+              AND t.datum_oogst IS NOT NULL AND t.aantal_planten IS NOT NULL
+              AND o.id IS NULL
+        """, (tuin_id,))
+        rijen = cur.fetchall()
+
+    for teelt_id, datum_oogst, planten, uitval in rijen:
+        emmers = round(planten * (100 - uitval) / 100 / 100)
+        database.voeg_oogstregistratie_toe(teelt_id, datum_oogst, emmers, gebruiker=GEBRUIKER)
+    return len(rijen)
+
+
 def bestaande_teelten(tuin_id):
     """
     De teelten die al in de database staan, als (vak, plantweek). Excel en de
@@ -459,6 +493,10 @@ def main():
             )
             print(f"{bijgewerkt} bestaande teelten aangevuld "
                   "(plantaantal, Florgib, uitval, oogst).")
+        # Pas hierna: de emmers volgen uit de uitval die zojuist is weggeschreven.
+        emmers = emmers_uit_uitval(tuin_id)
+        if emmers:
+            print(f"{emmers} teelten kregen een oogstmoment, teruggerekend uit de uitval.")
 
     # Pas na de teelten: een beoordeling hangt aan een teelt die nu pas bestaat.
     koppel, geen_teelt, al_ingevuld = stek_bij_teelten(stek, tuin_id)

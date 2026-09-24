@@ -46,6 +46,7 @@ import database
 
 HIER = os.path.dirname(os.path.abspath(__file__))
 EXCEL = os.path.join(HIER, "Teelt", "Klimaatregistratie tuin 3 kopie.xlsx")
+TUIN = 3
 VANAF = (2025, 20)  # start Cameron
 GEBRUIKER = "excel-import"
 DAGNUMMER = {"ma": 1, "di": 2, "wo": 3, "do": 4, "vr": 5, "za": 6, "zo": 7}
@@ -166,26 +167,49 @@ def bouw_teelten(stek, teeltweken):
         plantdatum, aantal = stek[sleutel]["plantdatum"], stek[sleutel]["planten"]
         oogstdatum = date.fromisocalendar(laatste[0], laatste[1], plantdatum.isoweekday())
         teelten.append({"vak": vak, "start": plantdatum, "oogst": oogstdatum, "planten": aantal})
-    return teelten, overgeslagen, laatste_bijgehouden
+
+    # Een enkele planting staat wel in blad Stek maar heeft geen regel in blad
+    # Teelt; die zou anders helemaal wegvallen. De oogstdatum komt dan uit de
+    # teeltduur-tabel. Alleen als die datum in het verleden ligt: een teelt die
+    # volgens die schatting nog loopt, blijft open staan.
+    geschat_uit_stek = [0]
+    vandaag = date.today()
+    uit_stek = {(t["vak"], t["start"].isocalendar()[:2]) for t in teelten}
+    for (jaar, week, vak), gegevens in sorted(stek.items()):
+        if (jaar, week) < VANAF or (vak, (jaar, week)) in uit_stek:
+            continue
+        if (jaar, week, vak) in teeltweken:
+            continue  # stond in blad Teelt en is hierboven al beoordeeld
+        plantdatum = gegevens["plantdatum"]
+        _duur, verwacht = database.bereken_verwachte_oogstdatum(plantdatum)
+        if not verwacht or verwacht >= vandaag:
+            overgeslagen["geen regel in blad Teelt, oogst onbekend"] += 1
+            continue
+        teelten.append({"vak": vak, "start": plantdatum, "oogst": verwacht,
+                        "planten": gegevens["planten"], "oogst_geschat": True})
+        geschat_uit_stek[0] += 1
+
+    return teelten, overgeslagen, laatste_bijgehouden, geschat_uit_stek[0]
 
 
-def bestaande_teelten():
+def bestaande_teelten(tuin_id):
     """
-    De teelten die al in de database staan, als (vak, plantweek). Excel en de
-    app wijken soms een dag af in de plantdatum; een vak heeft nooit twee
-    teelten in één week, dus op vak + week herken je ze toch als dezelfde.
+    De teelten van deze tuin die al in de database staan, als (vak, plantweek).
+    Excel en de app wijken soms een dag af in de plantdatum; een vak heeft nooit
+    twee teelten in één week, dus op vak + week herken je ze toch als dezelfde.
     """
     with database.get_connection() as conn:
         cur = conn.cursor()
         cur.execute("""
             SELECT v.vaknummer, t.datum_teelt_start
             FROM teelten t JOIN teeltvakken v ON v.id = t.teeltvak_id
-        """)
+            WHERE v.tuin_id = %s
+        """, (tuin_id,))
         return {(vak, date.fromisoformat(start[:10]).isocalendar()[:2])
                 for vak, start in cur.fetchall()}
 
 
-def stek_bij_teelten(stek):
+def stek_bij_teelten(stek, tuin_id):
     """
     Koppelt de stekbeoordelingen uit Excel aan teelten in de database (zelfde
     vak en plantdatum) die nog geen beoordeling hebben. Geeft (teelt_id, velden)
@@ -198,7 +222,8 @@ def stek_bij_teelten(stek):
             FROM teelten t
             JOIN teeltvakken v ON v.id = t.teeltvak_id
             LEFT JOIN stekbeoordelingen s ON s.teelt_id = t.id
-        """)
+            WHERE v.tuin_id = %s
+        """, (tuin_id,))
         rijen = cur.fetchall()
     teelt_per_plant = {(vak, start[:10]): (tid, heeft) for tid, vak, start, heeft in rijen}
     # Excel en de app wijken soms een dag af in de plantdatum. Een vak heeft nooit
@@ -244,12 +269,18 @@ def main():
     if args.uitvoeren and "supabase" in doel and not args.productie:
         sys.exit("GESTOPT: .env wijst naar Supabase (productie). Voeg --productie toe als dat de bedoeling is.")
 
+    tuin_id = database.get_tuin_id(TUIN)
+    if tuin_id is None:
+        sys.exit(f"GESTOPT: tuin {TUIN} bestaat niet in de database.")
+    # Alles in dit script gaat over tuin 3, ook de functies zonder expliciete tuin.
+    database.zet_actieve_tuin(tuin_id)
+
     warnings.filterwarnings("ignore", module="openpyxl")
     wb = openpyxl.load_workbook(EXCEL, read_only=True, data_only=True)
     stek = lees_stek(wb)
-    teelten, overgeslagen, laatste_bijgehouden = bouw_teelten(stek, lees_teeltweken(wb))
+    teelten, overgeslagen, laatste_bijgehouden, geschat = bouw_teelten(stek, lees_teeltweken(wb))
 
-    bestaand = bestaande_teelten()
+    bestaand = bestaande_teelten(tuin_id)
     nieuw = [t for t in teelten
              if (t["vak"], t["start"].isocalendar()[:2]) not in bestaand]
     if len(nieuw) < len(teelten):
@@ -257,6 +288,9 @@ def main():
 
     print(f"Excel bijgehouden t/m week {laatste_bijgehouden[1]} van {laatste_bijgehouden[0]}")
     print(f"Af te ronden teelten gevonden: {len(teelten)}, nieuw: {len(nieuw)}")
+    if geschat:
+        print(f"  {geschat} teelten staan alleen in blad Stek; hun oogstdatum is geschat "
+              "uit de teeltduur-tabel")
     for reden, aantal in overgeslagen.items():
         print(f"  overgeslagen: {aantal:>3} x {reden}")
     if nieuw:
@@ -279,7 +313,7 @@ def main():
 
     # Pas na de teelten: een beoordeling hangt aan een teelt die nu pas kan bestaan.
     # In de proefdraai tellen de nog niet geïmporteerde teelten dus als "zonder teelt".
-    koppel, geen_teelt, al_ingevuld = stek_bij_teelten(stek)
+    koppel, geen_teelt, al_ingevuld = stek_bij_teelten(stek, tuin_id)
     print(f"\nStekbeoordelingen: {len(koppel)} nieuw, {al_ingevuld} stonden er al, "
           f"{geen_teelt} zonder bijbehorende teelt in de database")
 
