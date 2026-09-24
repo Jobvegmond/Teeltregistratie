@@ -85,6 +85,7 @@ from database import (
     zet_actieve_tuin,
     stelen_bij_60_van_vak,
     STANDAARD_RAS,
+    STANDAARD_TUIN,
     get_stek_voor_week,
     sla_stekbeoordeling_op,
     stek_uitval_pct,
@@ -1843,7 +1844,8 @@ with tab_planning:
         )
         vak_y = alt.Y(
             "vaknummer:O", title="Vak", sort="ascending",
-            scale=alt.Scale(domain=list(range(1, 40))),
+            # De vakken van deze tuin, zodat tuin 1 geen lege rijen 28-39 krijgt.
+            scale=alt.Scale(domain=get_vaknummers() or list(range(1, 40))),
         )
         balken = (
             alt.Chart(df_stroken)
@@ -1933,57 +1935,70 @@ with tab_planning:
                     "worden (vorige ronde nog niet klaar, of die week al vol)."
                 )
 
-    st.markdown("---")
-    st.write("**Jaarplanning: vakken per week**")
-    st.caption(
-        "Vul zelf per week in hoeveel poot-eenheden je wilt voor de vak 2-39-cyclus (19+20 = 1, "
-        "max 5) en of vak 1 die week gepoot moet worden (los van de cyclus, hooguit 1x). Een lege "
-        "cel bij 'Vakken (2-39)' betekent: die week wordt niets gepland voor die cyclus. De planner "
-        "bepaalt zelf niets meer bij — hij plant precies wat hier staat, mits er op dat moment ook "
-        "echt vakken/vak 1 klaar zijn."
-    )
-    weekoverzicht = get_planning_weekoverzicht(int(aantal_weken_vooruit))
-    df_weekdoel = pd.DataFrame([
-        {
-            "Week": f"Week {r['week']} - {r['jaar']}",
-            "Nu gepland": r["concepten"],
-            "Vakken (2-39)": r["weekdoel"],
-            "Vak 1": r["vak1_planten"],
-        }
-        for r in weekoverzicht
-    ])
-    bewerkt_weekdoel = st.data_editor(
-        df_weekdoel,
-        hide_index=True, key="weekdoel_editor",
-        column_config={
-            "Week": st.column_config.TextColumn(disabled=True),
-            "Nu gepland": st.column_config.NumberColumn(
-                disabled=True, help="Aantal poot-eenheden (2-39-cyclus) dat nu voor die week gepland staat"
-            ),
-            "Vakken (2-39)": st.column_config.NumberColumn(
-                min_value=0, max_value=5, step=1, help="Leeg = die week niets plannen voor deze cyclus"
-            ),
-            "Vak 1": st.column_config.CheckboxColumn(help="Vak 1 in deze week poten"),
-        },
-    )
-    col_herplan, col_wis = st.columns([2, 1])
-    if col_herplan.button("🔄 Plan opnieuw met deze aantallen", key="plan_herplan"):
-        for r, (_, rij) in zip(weekoverzicht, bewerkt_weekdoel.iterrows()):
-            waarde = rij["Vakken (2-39)"]
-            nieuw = None if pd.isna(waarde) else int(waarde)
-            if nieuw != r["weekdoel"]:
-                set_planning_weekdoel(r["week_start"], nieuw, gebruiker=huidige_gebruiker())
-            nieuw_vak1 = bool(rij["Vak 1"])
-            if nieuw_vak1 != r["vak1_planten"]:
-                set_planning_weekdoel_vak1(r["week_start"], nieuw_vak1, gebruiker=huidige_gebruiker())
-        resultaten, weekdoel_waarschuwingen, vak1_waarschuwingen = plan_x_weken_vooruit(
-            int(aantal_weken_vooruit), gebruiker=huidige_gebruiker(), verwijder_bestaande=True
+    # De automatische planner kent alleen het ritme van tuin 3 (de cyclus
+    # 2 t/m 39, 19+20 samen, vak 1 apart). Op een andere tuin plan je met de
+    # hand, zodat daar niet per ongeluk een tuin 3-ritme wordt neergezet.
+    AUTOMATISCH_PLANNEN = TUIN_NUMMER == STANDAARD_TUIN
+
+    if AUTOMATISCH_PLANNEN:
+        st.markdown("---")
+        st.write("**Jaarplanning: vakken per week**")
+        st.caption(
+            "Vul zelf per week in hoeveel poot-eenheden je wilt voor de vak 2-39-cyclus (19+20 = 1, "
+            "max 5) en of vak 1 die week gepoot moet worden (los van de cyclus, hooguit 1x). Een lege "
+            "cel bij 'Vakken (2-39)' betekent: die week wordt niets gepland voor die cyclus. De planner "
+            "bepaalt zelf niets meer bij — hij plant precies wat hier staat, mits er op dat moment ook "
+            "echt vakken/vak 1 klaar zijn."
         )
-        _toon_planresultaat(resultaten, weekdoel_waarschuwingen, vak1_waarschuwingen)
-        st.rerun()
-    if col_wis.button("↩︎ Wis mijn jaarplanning", key="plan_wis_weekdoelen"):
-        wis_planning_weekdoelen(gebruiker=huidige_gebruiker())
-        st.rerun()
+        weekoverzicht = get_planning_weekoverzicht(int(aantal_weken_vooruit))
+        df_weekdoel = pd.DataFrame([
+            {
+                "Week": f"Week {r['week']} - {r['jaar']}",
+                "Nu gepland": r["concepten"],
+                "Vakken (2-39)": r["weekdoel"],
+                "Vak 1": r["vak1_planten"],
+            }
+            for r in weekoverzicht
+        ])
+        bewerkt_weekdoel = st.data_editor(
+            df_weekdoel,
+            hide_index=True, key="weekdoel_editor",
+            column_config={
+                "Week": st.column_config.TextColumn(disabled=True),
+                "Nu gepland": st.column_config.NumberColumn(
+                    disabled=True, help="Aantal poot-eenheden (2-39-cyclus) dat nu voor die week gepland staat"
+                ),
+                "Vakken (2-39)": st.column_config.NumberColumn(
+                    min_value=0, max_value=5, step=1, help="Leeg = die week niets plannen voor deze cyclus"
+                ),
+                "Vak 1": st.column_config.CheckboxColumn(help="Vak 1 in deze week poten"),
+            },
+        )
+        col_herplan, col_wis = st.columns([2, 1])
+        if col_herplan.button("🔄 Plan opnieuw met deze aantallen", key="plan_herplan"):
+            for r, (_, rij) in zip(weekoverzicht, bewerkt_weekdoel.iterrows()):
+                waarde = rij["Vakken (2-39)"]
+                nieuw = None if pd.isna(waarde) else int(waarde)
+                if nieuw != r["weekdoel"]:
+                    set_planning_weekdoel(r["week_start"], nieuw, gebruiker=huidige_gebruiker())
+                nieuw_vak1 = bool(rij["Vak 1"])
+                if nieuw_vak1 != r["vak1_planten"]:
+                    set_planning_weekdoel_vak1(r["week_start"], nieuw_vak1, gebruiker=huidige_gebruiker())
+            resultaten, weekdoel_waarschuwingen, vak1_waarschuwingen = plan_x_weken_vooruit(
+                int(aantal_weken_vooruit), gebruiker=huidige_gebruiker(), verwijder_bestaande=True
+            )
+            _toon_planresultaat(resultaten, weekdoel_waarschuwingen, vak1_waarschuwingen)
+            st.rerun()
+        if col_wis.button("↩︎ Wis mijn jaarplanning", key="plan_wis_weekdoelen"):
+            wis_planning_weekdoelen(gebruiker=huidige_gebruiker())
+            st.rerun()
+    else:
+        st.markdown("---")
+        st.info(
+            f"Automatisch plannen kent voorlopig alleen het ritme van tuin {STANDAARD_TUIN}. "
+            f"Plan {TUIN_NAAM} hieronder per vak; de concepten en de strokenplanning zijn "
+            "verder hetzelfde."
+        )
 
     st.markdown("---")
     st.write("**Overzicht per plantweek**")
@@ -2855,6 +2870,9 @@ with tab_help:
       los van de vak 2-39-cyclus, en telt niet mee in dat wekelijkse aantal.
     - Een concept-planning is nog geen echte teelt: pas nadat je 'm bevestigt (✅) wordt er een
       teeltregistratie met een eigen code aangemaakt. Met 🗑️ verwijder je een concept weer.
+    - Elke tuin heeft zijn eigen planning: je ziet en bevestigt alleen de concepten van de tuin
+      die bovenaan gekozen is. Automatisch plannen kent voorlopig alleen het ritme van tuin 3;
+      op tuin 1 plan je per vak met "Eén vak handmatig plannen".
 
     **Weeknummers**
     - Elke datum toont het ISO-weeknummer (1-53)

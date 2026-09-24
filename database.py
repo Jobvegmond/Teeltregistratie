@@ -426,6 +426,29 @@ def init_db():
                 f"CREATE UNIQUE INDEX IF NOT EXISTS {tabel}_tuin_sleutel ON {tabel} ({sleutel})"
             )
 
+        # Ook de planning hoort bij een tuin: elke tuin plant zijn eigen vakken,
+        # en wat er al stond is van tuin 3. Zonder deze kolom zou je op tuin 1
+        # de concepten van tuin 3 zien staan en per ongeluk kunnen bevestigen.
+        cursor.execute("ALTER TABLE teeltplanning ADD COLUMN IF NOT EXISTS tuin_id INTEGER REFERENCES tuinen (id)")
+        cursor.execute("UPDATE teeltplanning SET tuin_id = %s WHERE tuin_id IS NULL", (tuin3_id,))
+        cursor.execute("ALTER TABLE planning_weekdoel ADD COLUMN IF NOT EXISTS tuin_id INTEGER REFERENCES tuinen (id)")
+        cursor.execute("UPDATE planning_weekdoel SET tuin_id = %s WHERE tuin_id IS NULL", (tuin3_id,))
+        # De jaarplanning had de week als sleutel; dat moet nu week + tuin zijn.
+        cursor.execute("""
+            SELECT conname FROM pg_constraint
+            WHERE conrelid = 'planning_weekdoel'::regclass AND contype = 'p'
+        """)
+        for (naam,) in cursor.fetchall():
+            if naam != "planning_weekdoel_tuin_week":
+                cursor.execute(f'ALTER TABLE planning_weekdoel DROP CONSTRAINT "{naam}"')
+        cursor.execute("""
+            SELECT 1 FROM pg_constraint
+            WHERE conrelid = 'planning_weekdoel'::regclass AND conname = 'planning_weekdoel_tuin_week'
+        """)
+        if not cursor.fetchone():
+            cursor.execute("ALTER TABLE planning_weekdoel ADD CONSTRAINT planning_weekdoel_tuin_week "
+                           "PRIMARY KEY (tuin_id, week_start)")
+
         # Standaardtuin per gebruiker: Kees en Robert werken op tuin 1.
         cursor.execute("ALTER TABLE gebruikers ADD COLUMN IF NOT EXISTS standaard_tuin INTEGER")
         cursor.execute("UPDATE gebruikers SET standaard_tuin = 1 WHERE standaard_tuin IS NULL "
@@ -1855,9 +1878,9 @@ def _harde_bodem_vak(vaknummer):
             SELECT t.datum_teelt_start, t.datum_oogst
             FROM teelten t
             JOIN teeltvakken v ON t.teeltvak_id = v.id
-            WHERE v.vaknummer = %s
+            WHERE v.vaknummer = %s AND v.tuin_id = %s
             ORDER BY t.datum_teelt_start DESC LIMIT 1
-        """, (vaknummer,))
+        """, (vaknummer, get_tuin_id(STANDAARD_TUIN)))
         rij = cursor.fetchone()
 
     if not rij:
@@ -1876,8 +1899,8 @@ def _laatste_concept_oogst(vaknummer):
         cursor = conn.cursor()
         cursor.execute("""
             SELECT MAX(verwachte_oogstdatum) FROM teeltplanning
-            WHERE vaknummer = %s AND verwachte_oogstdatum IS NOT NULL
-        """, (vaknummer,))
+            WHERE vaknummer = %s AND tuin_id = %s AND verwachte_oogstdatum IS NOT NULL
+        """, (vaknummer, get_tuin_id(STANDAARD_TUIN)))
         rij = cursor.fetchone()
     if rij and rij[0]:
         return datetime.strptime(rij[0], "%Y-%m-%d").date()
@@ -1951,7 +1974,7 @@ def set_planning_besteld_tot(datum, gebruiker=None):
                    datum.isoformat() if datum else None, gebruiker=gebruiker)
 
 
-def get_planning_weekdoelen():
+def get_planning_weekdoelen(tuin_id=None):
     """
     Handmatig ingevulde jaarplanning per plantweek. Geeft
     {week_start (maandag-date): {"aantal_vakken": int of None,
@@ -1961,7 +1984,10 @@ def get_planning_weekdoelen():
     """
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT week_start, aantal_vakken, vak1_planten FROM planning_weekdoel")
+        cursor.execute(
+            "SELECT week_start, aantal_vakken, vak1_planten FROM planning_weekdoel WHERE tuin_id = %s",
+            (_tuin_of_standaard(tuin_id),),
+        )
         return {
             datetime.strptime(w, "%Y-%m-%d").date(): {
                 "aantal_vakken": int(a) if a is not None else None,
@@ -1971,7 +1997,7 @@ def get_planning_weekdoelen():
         }
 
 
-def set_planning_weekdoel(week_start, aantal_vakken, gebruiker=None):
+def set_planning_weekdoel(week_start, aantal_vakken, gebruiker=None, tuin_id=None):
     """
     Zet (of wist bij aantal_vakken=None) het handmatige streefaantal
     poot-eenheden (vak 2-39-cyclus) voor de plantweek waarin `week_start`
@@ -1981,10 +2007,11 @@ def set_planning_weekdoel(week_start, aantal_vakken, gebruiker=None):
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT INTO planning_weekdoel (week_start, aantal_vakken)
-            VALUES (%s, %s)
-            ON CONFLICT (week_start) DO UPDATE SET aantal_vakken = EXCLUDED.aantal_vakken
-        """, (str(week), int(aantal_vakken) if aantal_vakken is not None else None))
+            INSERT INTO planning_weekdoel (tuin_id, week_start, aantal_vakken)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (tuin_id, week_start) DO UPDATE SET aantal_vakken = EXCLUDED.aantal_vakken
+        """, (_tuin_of_standaard(tuin_id), str(week),
+              int(aantal_vakken) if aantal_vakken is not None else None))
         conn.commit()
     log_wijziging(
         gebruiker, "gewijzigd", "planning_weekdoel", str(week),
@@ -1993,7 +2020,7 @@ def set_planning_weekdoel(week_start, aantal_vakken, gebruiker=None):
     )
 
 
-def set_planning_weekdoel_vak1(week_start, vak1_planten, gebruiker=None):
+def set_planning_weekdoel_vak1(week_start, vak1_planten, gebruiker=None, tuin_id=None):
     """
     Zet of vak 1 in de plantweek waarin `week_start` valt gepoot moet
     worden. Laat een eventueel streefaantal voor die week ongemoeid.
@@ -2002,10 +2029,10 @@ def set_planning_weekdoel_vak1(week_start, vak1_planten, gebruiker=None):
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT INTO planning_weekdoel (week_start, vak1_planten)
-            VALUES (%s, %s)
-            ON CONFLICT (week_start) DO UPDATE SET vak1_planten = EXCLUDED.vak1_planten
-        """, (str(week), bool(vak1_planten)))
+            INSERT INTO planning_weekdoel (tuin_id, week_start, vak1_planten)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (tuin_id, week_start) DO UPDATE SET vak1_planten = EXCLUDED.vak1_planten
+        """, (_tuin_of_standaard(tuin_id), str(week), bool(vak1_planten)))
         conn.commit()
     log_wijziging(
         gebruiker, "gewijzigd", "planning_weekdoel", str(week),
@@ -2013,17 +2040,18 @@ def set_planning_weekdoel_vak1(week_start, vak1_planten, gebruiker=None):
     )
 
 
-def wis_planning_weekdoelen(gebruiker=None):
+def wis_planning_weekdoelen(gebruiker=None, tuin_id=None):
     """Wist de hele handmatig ingevulde jaarplanning (streefaantallen en vak1-vlaggen)."""
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM planning_weekdoel")
+        cursor.execute("DELETE FROM planning_weekdoel WHERE tuin_id = %s",
+                       (_tuin_of_standaard(tuin_id),))
         conn.commit()
     log_wijziging(gebruiker, "verwijderd", "planning_weekdoel", None,
                   "Alle handmatige weekstreefaantallen gewist")
 
 
-def get_planning_weekoverzicht(aantal_weken=8):
+def get_planning_weekoverzicht(aantal_weken=8, tuin_id=None):
     """
     Per plantweek vanaf deze week t/m de horizon een dict met:
       week_start (maandag-date), jaar, week (ISO), concepten (aantal
@@ -2035,10 +2063,10 @@ def get_planning_weekoverzicht(aantal_weken=8):
     Voedt de "vakken per week"-invoertabel in de planningsmodule.
     """
     maandag_nu = _maandag(date.today())
-    weekdoelen = get_planning_weekdoelen()
+    weekdoelen = get_planning_weekdoelen(tuin_id)
 
     concept_vak_per_week = {}
-    for _pid, vaknummer, start, _d, _e, _n in get_planning():
+    for _pid, vaknummer, start, _d, _e, _n in get_planning(tuin_id):
         w = _maandag(start)
         concept_vak_per_week.setdefault(w, []).append(vaknummer)
 
@@ -2066,17 +2094,18 @@ def get_planning_weekoverzicht(aantal_weken=8):
     return resultaat
 
 
-def voeg_planning_toe(vaknummer, verwachte_startdatum, notitie=None, gebruiker=None):
+def voeg_planning_toe(vaknummer, verwachte_startdatum, notitie=None, gebruiker=None, tuin_id=None):
     """Maakt een concept-planningsregel aan voor een vak; duur/oogst worden automatisch berekend."""
     duur_weken, eind = bereken_verwachte_oogstdatum(verwachte_startdatum)
 
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT INTO teeltplanning (vaknummer, verwachte_startdatum, verwachte_duur_weken, verwachte_oogstdatum, notitie)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO teeltplanning (tuin_id, vaknummer, verwachte_startdatum, verwachte_duur_weken, verwachte_oogstdatum, notitie)
+            VALUES (%s, %s, %s, %s, %s, %s)
             RETURNING id
-        """, (vaknummer, str(verwachte_startdatum), duur_weken, str(eind) if eind else None, notitie))
+        """, (_tuin_of_standaard(tuin_id), vaknummer, str(verwachte_startdatum), duur_weken,
+              str(eind) if eind else None, notitie))
         planning_id = cursor.fetchone()[0]
         conn.commit()
 
@@ -2107,7 +2136,7 @@ def wijzig_planning(planning_id, nieuwe_startdatum, gebruiker=None):
     )
 
 
-def get_planning():
+def get_planning(tuin_id=None):
     """
     Geeft alle concept-planningsregels terug, gesorteerd op startdatum (dus
     chronologisch/per week) en bij een gelijke datum op vaknummer.
@@ -2119,12 +2148,13 @@ def get_planning():
         cursor.execute("""
             SELECT id, vaknummer, verwachte_startdatum, verwachte_duur_weken, verwachte_oogstdatum, notitie
             FROM teeltplanning
+            WHERE tuin_id = %s
             ORDER BY verwachte_startdatum, vaknummer
-        """)
+        """, (_tuin_of_standaard(tuin_id),))
         return cursor.fetchall()
 
 
-def get_planning_per_week():
+def get_planning_per_week(tuin_id=None):
     """
     Groepeert alle concept-planningen per plantweek (iso-jaar + weeknummer
     van verwachte_startdatum), met de vaknummers in oplopende volgorde per
@@ -2134,7 +2164,7 @@ def get_planning_per_week():
     (net als bij het maken van de planning), ook al staan ze allebei apart
     in de vakkenlijst.
     """
-    rijen = get_planning()
+    rijen = get_planning(tuin_id)
     groepen = {}
     for _planning_id, vaknummer, start, _duur, _eind, _notitie in rijen:
         sleutel = get_isojaar_week(start)
@@ -2167,14 +2197,20 @@ def bevestig_planning(planning_id, aantal_planten=None, gebruiker=None):
     """
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT vaknummer, verwachte_startdatum FROM teeltplanning WHERE id = %s", (planning_id,))
+        cursor.execute(
+            "SELECT vaknummer, verwachte_startdatum, tuin_id FROM teeltplanning WHERE id = %s",
+            (planning_id,),
+        )
         rij = cursor.fetchone()
 
     if not rij:
         return None
 
-    vaknummer, verwachte_startdatum = rij
-    teelt_id, code = start_nieuwe_teelt(vaknummer, verwachte_startdatum, aantal_planten, gebruiker=gebruiker)
+    # De tuin komt uit de planningsregel zelf, niet uit de actieve tuin: zo komt
+    # de teelt altijd in de tuin waarvoor het concept gemaakt is.
+    vaknummer, verwachte_startdatum, planning_tuin = rij
+    teelt_id, code = start_nieuwe_teelt(vaknummer, verwachte_startdatum, aantal_planten,
+                                        gebruiker=gebruiker, tuin_id=planning_tuin)
     verwijder_planning(planning_id, gebruiker=gebruiker)
     return teelt_id, code
 
@@ -2209,10 +2245,17 @@ def plan_x_weken_vooruit(aantal_weken, gebruiker=None, verwijder_bestaande=False
       die niet in de gevraagde week zelf gepland konden worden;
       week_gepland is None als het zelfs niet binnen de horizon paste.
     """
+    # Deze planner rekent met de vakindeling van tuin 3 (de cyclus 2 t/m 39, met
+    # 19+20 als één eenheid en vak 1 op een eigen ritme). Voor een andere tuin
+    # klopt die volgorde niet, dus daar plan je voorlopig met de hand.
+    if get_actieve_tuin() != get_tuin_id(STANDAARD_TUIN):
+        raise ValueError(f"Automatisch plannen kan alleen voor tuin {STANDAARD_TUIN}.")
+
     if verwijder_bestaande:
         with get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("DELETE FROM teeltplanning")
+            cursor.execute("DELETE FROM teeltplanning WHERE tuin_id = %s",
+                           (get_tuin_id(STANDAARD_TUIN),))
             conn.commit()
         log_wijziging(
             gebruiker, "verwijderd", "planning", None,
@@ -2397,7 +2440,8 @@ def _naverwerk_planning(earliest=None):
     earliest = earliest or {}
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT id, vaknummer, verwachte_startdatum FROM teeltplanning ORDER BY id")
+        cursor.execute("SELECT id, vaknummer, verwachte_startdatum FROM teeltplanning "
+                       "WHERE tuin_id = %s ORDER BY id", (get_tuin_id(STANDAARD_TUIN),))
         rijen = cursor.fetchall()
 
     per_week = {}
@@ -2490,7 +2534,8 @@ def _planresultaat(weekdoelen, geen_geschiedenis, vak1_waarschuwingen=None):
     """
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT vaknummer, verwachte_startdatum FROM teeltplanning")
+        cursor.execute("SELECT vaknummer, verwachte_startdatum FROM teeltplanning WHERE tuin_id = %s",
+                       (get_tuin_id(STANDAARD_TUIN),))
         rijen = cursor.fetchall()
 
     eerste_start = {}
