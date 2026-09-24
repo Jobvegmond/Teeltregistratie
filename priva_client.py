@@ -27,8 +27,9 @@ BASE_URL = "https://horti-api.priva.com"
 API_VERSION = "2.0"
 SCOPES = "priva.hortiapi-data-access priva.data-services priva.metadatastore"
 
-# Standaard: tuin 3 (Alb. vt Hartweg 20). Tuin 1 is nog niet gedeeld in Priva
-# Access Control; zodra dat wel zo is kan die site-id via PRIVA_SITE_ID erbij.
+# Standaard: tuin 3 (Alb. vt Hartweg 20). Tuin 1 (Alb. vt Hartweg 25-29) heeft
+# een eigen site en apparaat; die staan bij de tuin in de database en komen via
+# site_id/device_id mee. Los daarvan kan PRIVA_SITE_ID nog overschrijven.
 STANDAARD_SITE_ID = "eb6c5c08-00e1-4fb2-9b3e-2f755a69405d"
 STANDAARD_DEVICE_ID = "VP9508"
 
@@ -95,11 +96,14 @@ class PrivaConfiguratieFout(RuntimeError):
 
 
 class PrivaHortiClient:
-    def __init__(self, client_id=None, client_secret=None, site_id=None, device_id=None):
+    def __init__(self, client_id=None, client_secret=None, site_id=None, device_id=None,
+                 vakken=None):
         self.client_id = client_id or os.environ.get("PRIVA_CLIENT_ID")
         self.client_secret = client_secret or os.environ.get("PRIVA_CLIENT_SECRET")
         self.site_id = site_id or os.environ.get("PRIVA_SITE_ID") or STANDAARD_SITE_ID
         self.device_id = device_id or os.environ.get("PRIVA_DEVICE_ID") or STANDAARD_DEVICE_ID
+        # De vakken van deze tuin; tuin 3 heeft er 39, tuin 1 heeft er 27.
+        self.vakken = tuple(vakken) if vakken else VAKKEN
         if not self.client_id or not self.client_secret:
             raise PrivaConfiguratieFout(
                 "PRIVA_CLIENT_ID en PRIVA_CLIENT_SECRET ontbreken in de omgeving."
@@ -263,7 +267,7 @@ class PrivaHortiClient:
 
     def haal_watergift_dagwaarden(self, dagen_terug=MAX_DAGEN_TERUG):
         """
-        Haalt in één API-call de daggift (liter/m²) per vak (1-39) op voor de
+        Haalt in één API-call de daggift (liter/m²) per vak van deze tuin op voor de
         laatste afgeronde dagen, uit de oplopende meterstand KRAAN.VERBRUIKM2.
 
         Geeft een lijst dicts terug, gesorteerd op (datum, vaknummer):
@@ -277,7 +281,7 @@ class PrivaHortiClient:
         datapoints = [
             {"deviceGroupId": "none", "deviceId": self.device_id,
              "variableId": f"000001c2-{vak:04x}-0000-0000-{STAART_WATER_METERSTAND}"}
-            for vak in VAKKEN
+            for vak in self.vakken
         ]
         payload = self._data_call(begin, eind, datapoints, "watergift")
 

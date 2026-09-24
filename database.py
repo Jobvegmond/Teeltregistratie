@@ -1280,6 +1280,7 @@ def verwerk_klimaat_csv(bestand, gebruiker=None, tuin_id=None):
             gem_temperatuur_nacht=_eerste_waarde(groep, KLIMAAT_TEMP_NACHT_LABEL),
             gem_rv_dag=_eerste_waarde(groep, KLIMAAT_RV_DAG_LABEL),
             gem_rv_nacht=_eerste_waarde(groep, KLIMAAT_RV_NACHT_LABEL),
+            tuin_id=tuin_id,
         )
         verwerkt += 1
 
@@ -1289,6 +1290,24 @@ def verwerk_klimaat_csv(bestand, gebruiker=None, tuin_id=None):
     )
 
     return verwerkt, overgeslagen
+
+
+def priva_client_voor_tuin(tuin_id=None):
+    """
+    Priva-verbinding voor een tuin: site en apparaat komen uit de tabel tuinen,
+    de vakken uit de teeltvakken van die tuin. Staat er niets bij de tuin, dan
+    valt de client terug op zijn eigen standaard (tuin 3).
+    """
+    from priva_client import PrivaHortiClient
+
+    tuin_id = _tuin_of_standaard(tuin_id)
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT priva_site_id, priva_device_id FROM tuinen WHERE id = %s", (tuin_id,))
+        rij = cursor.fetchone()
+    site_id, device_id = rij if rij else (None, None)
+    return PrivaHortiClient(site_id=site_id, device_id=device_id,
+                            vakken=get_vaknummers(tuin_id) or None)
 
 
 def importeer_klimaat_uit_priva(dagen_terug=4, gebruiker=None, tuin_id=None):
@@ -1303,9 +1322,7 @@ def importeer_klimaat_uit_priva(dagen_terug=4, gebruiker=None, tuin_id=None):
     Geeft (aantal geschreven afdeling-dagen, aantal overgeslagen) terug.
     Overgeslagen = dagen die nog niet compleet in het verleden liggen.
     """
-    from priva_client import PrivaHortiClient
-
-    rijen = PrivaHortiClient().haal_etmaal_dagwaarden(dagen_terug)
+    rijen = priva_client_voor_tuin(tuin_id).haal_etmaal_dagwaarden(dagen_terug)
 
     verwerkt = 0
     overgeslagen = 0
@@ -1320,6 +1337,7 @@ def importeer_klimaat_uit_priva(dagen_terug=4, gebruiker=None, tuin_id=None):
             gem_temperatuur_nacht=rij.get("gem_temperatuur_nacht"),
             gem_rv_dag=rij.get("gem_rv_dag"),
             gem_rv_nacht=rij.get("gem_rv_nacht"),
+            tuin_id=tuin_id,
         )
         verwerkt += 1
 
@@ -1369,9 +1387,7 @@ def importeer_watergift_uit_priva(dagen_terug=4, gebruiker=None, tuin_id=None):
 
     Geeft (aantal geschreven vak-dagen, aantal overgeslagen) terug.
     """
-    from priva_client import PrivaHortiClient
-
-    rijen = PrivaHortiClient().haal_watergift_dagwaarden(dagen_terug)
+    rijen = priva_client_voor_tuin(tuin_id).haal_watergift_dagwaarden(dagen_terug)
 
     verwerkt = 0
     overgeslagen = 0
@@ -1379,7 +1395,7 @@ def importeer_watergift_uit_priva(dagen_terug=4, gebruiker=None, tuin_id=None):
         if rij["datum"] >= date.today():
             overgeslagen += 1
             continue
-        upsert_watergift_dag(rij["vaknummer"], rij["datum"], rij["liter_per_m2"])
+        upsert_watergift_dag(rij["vaknummer"], rij["datum"], rij["liter_per_m2"], tuin_id=tuin_id)
         verwerkt += 1
 
     if rijen:
@@ -1583,11 +1599,13 @@ def verwerk_energie_csv(bestand, gebruiker=None, tuin_id=None):
 
     df_warmte = df[is_pulsteller & (df["idx_1"] == PULSTELLER_IDX_WARMTE)].copy()
     verwerkt, overgeslagen = _verwerk_bron(
-        df_warmte, lambda d, v: upsert_energiedata_dag(d, v * ENERGIE_EENHEID_NAAR_MJ)
+        df_warmte,
+        lambda d, v: upsert_energiedata_dag(d, v * ENERGIE_EENHEID_NAAR_MJ, tuin_id=tuin_id),
     )
 
     df_gas = df[is_pulsteller & (df["idx_1"] == PULSTELLER_IDX_GAS)].copy()
-    verwerkt_gas, _overgeslagen_gas = _verwerk_bron(df_gas, upsert_gasdata_dag)
+    verwerkt_gas, _overgeslagen_gas = _verwerk_bron(
+        df_gas, lambda d, v: upsert_gasdata_dag(d, v, tuin_id=tuin_id))
 
     log_wijziging(
         gebruiker, "geupload", "energiedata_csv", None,
@@ -1883,7 +1901,7 @@ def bereken_verwachte_oogstdatum(datum_start):
     return round(duur_weken, 2), oogst
 
 
-def _harde_bodem_vak(vaknummer):
+def _harde_bodem_vak(vaknummer, tuin_id=None):
     """
     Geeft de harde ondergrens voor een vak terug: de oogstdatum van de meest
     recente teelt (werkelijk als al afgerond, anders de via de teeltduur-tabel
@@ -1899,7 +1917,7 @@ def _harde_bodem_vak(vaknummer):
             JOIN teeltvakken v ON t.teeltvak_id = v.id
             WHERE v.vaknummer = %s AND v.tuin_id = %s
             ORDER BY t.datum_teelt_start DESC LIMIT 1
-        """, (vaknummer, get_tuin_id(STANDAARD_TUIN)))
+        """, (vaknummer, _tuin_of_standaard(tuin_id)))
         rij = cursor.fetchone()
 
     if not rij:
@@ -1912,21 +1930,21 @@ def _harde_bodem_vak(vaknummer):
     return verwacht
 
 
-def _laatste_concept_oogst(vaknummer):
+def _laatste_concept_oogst(vaknummer, tuin_id=None):
     """Verwachte oogstdatum van de laatste concept-planning van dit vak, of None."""
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
             SELECT MAX(verwachte_oogstdatum) FROM teeltplanning
             WHERE vaknummer = %s AND tuin_id = %s AND verwachte_oogstdatum IS NOT NULL
-        """, (vaknummer, get_tuin_id(STANDAARD_TUIN)))
+        """, (vaknummer, _tuin_of_standaard(tuin_id)))
         rij = cursor.fetchone()
     if rij and rij[0]:
         return datetime.strptime(rij[0], "%Y-%m-%d").date()
     return None
 
 
-def _bodem_incl_concept(vaknummer):
+def _bodem_incl_concept(vaknummer, tuin_id=None):
     """
     Harde ondergrens voor de volgende teeltronde van een vak: de laatste van
     (a) de oogst van de laatste echte teelt en (b) de verwachte oogst van de
@@ -1934,7 +1952,7 @@ def _bodem_incl_concept(vaknummer):
     elke ronde schuift de bodem op naar de oogst van de zojuist geplande ronde.
     """
     echt = _harde_bodem_vak(vaknummer)
-    concept = _laatste_concept_oogst(vaknummer)
+    concept = _laatste_concept_oogst(vaknummer, tuin_id)
     if echt is None:
         return concept
     if concept is None:
@@ -2234,7 +2252,30 @@ def bevestig_planning(planning_id, aantal_planten=None, gebruiker=None):
     return teelt_id, code
 
 
-def plan_x_weken_vooruit(aantal_weken, gebruiker=None, verwijder_bestaande=False):
+def planner_eenheden(tuin_id=None):
+    """
+    De poot-eenheden van een tuin in cyclusvolgorde, plus het vak dat buiten de
+    cyclus op een eigen ritme loopt (of None).
+
+    Tuin 3: vak 2 t/m 39, waarbij 19 en 20 samen één eenheid zijn omdat ze
+    altijd tegelijk gepoot worden; vak 1 loopt daar los van. Tuin 1 heeft die
+    uitzonderingen niet: vak 1 t/m 27, elk een eigen eenheid, op volgorde.
+    """
+    tuin_id = _tuin_of_standaard(tuin_id)
+    vakken = get_vaknummers(tuin_id)
+    if _tuinnummer(tuin_id) != STANDAARD_TUIN:
+        return [(v, [v]) for v in vakken], None
+
+    laag, hoog = VAK_GECOMBINEERD
+    eenheden = []
+    for v in vakken:
+        if v == VAK_VOLGORDE_UITZONDERING or v == hoog:
+            continue
+        eenheden.append((laag, [laag, hoog]) if v == laag else (v, [v]))
+    return eenheden, VAK_VOLGORDE_UITZONDERING
+
+
+def plan_x_weken_vooruit(aantal_weken, gebruiker=None, verwijder_bestaande=False, tuin_id=None):
     """
     Plant vakken tot `aantal_weken` weken vooruit als één doorlopende cyclus
     2, 3, ..., 39, 2, ... (met 19+20 als één eenheid), strikt in die volgorde.
@@ -2264,23 +2305,18 @@ def plan_x_weken_vooruit(aantal_weken, gebruiker=None, verwijder_bestaande=False
       die niet in de gevraagde week zelf gepland konden worden;
       week_gepland is None als het zelfs niet binnen de horizon paste.
     """
-    # Deze planner rekent met de vakindeling van tuin 3 (de cyclus 2 t/m 39, met
-    # 19+20 als één eenheid en vak 1 op een eigen ritme). Voor een andere tuin
-    # klopt die volgorde niet, dus daar plan je voorlopig met de hand.
-    if get_actieve_tuin() != get_tuin_id(STANDAARD_TUIN):
-        raise ValueError(f"Automatisch plannen kan alleen voor tuin {STANDAARD_TUIN}.")
+    tuin_id = _tuin_of_standaard(tuin_id)
 
     if verwijder_bestaande:
         with get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("DELETE FROM teeltplanning WHERE tuin_id = %s",
-                           (get_tuin_id(STANDAARD_TUIN),))
+            cursor.execute("DELETE FROM teeltplanning WHERE tuin_id = %s", (tuin_id,))
             conn.commit()
         log_wijziging(
             gebruiker, "verwijderd", "planning", None,
             "Concept-planningen gewist om opnieuw te plannen")
 
-    ruwe_weekdoelen = get_planning_weekdoelen()
+    ruwe_weekdoelen = get_planning_weekdoelen(tuin_id)
     weekdoelen = {
         w: min(MAX_VAKKEN_PER_WEEK, d["aantal_vakken"])
         for w, d in ruwe_weekdoelen.items() if d["aantal_vakken"] is not None
@@ -2288,30 +2324,22 @@ def plan_x_weken_vooruit(aantal_weken, gebruiker=None, verwijder_bestaande=False
     vak1_weken = {w for w, d in ruwe_weekdoelen.items() if d["vak1_planten"]}
     vandaag = date.today()
     horizon_eind = vandaag + timedelta(weeks=aantal_weken)
-    gecombineerd_laag, gecombineerd_hoog = VAK_GECOMBINEERD
     geen_geschiedenis = set()
 
-    # Cyclus-eenheden vak 2..39 (19+20 samen). Vak 1 apart, zie onder.
-    eenheden = []  # (representatief_vaknummer, [vakken])
-    for v in range(2, 40):
-        if v == gecombineerd_hoog:
-            continue
-        if v == gecombineerd_laag:
-            eenheden.append((gecombineerd_laag, [gecombineerd_laag, gecombineerd_hoog]))
-        else:
-            eenheden.append((v, [v]))
+    # (representatief_vaknummer, [vakken]) en het vak dat buiten de cyclus loopt.
+    eenheden, uitzonderingsvak = planner_eenheden(tuin_id)
 
     # Oogstfront per eenheid = oogst laatste echte teelt of laatste concept.
     front = {}
     for rep, vakken in eenheden:
-        obs = [_bodem_incl_concept(v) for v in vakken]
+        obs = [_bodem_incl_concept(v, tuin_id) for v in vakken]
         if any(o is None for o in obs):
             geen_geschiedenis.update(vakken)
         else:
             front[rep] = max(obs)
     bruikbaar = [e for e in eenheden if e[0] in front]
     if not bruikbaar:
-        return _planresultaat(weekdoelen, geen_geschiedenis, [])
+        return _planresultaat(weekdoelen, geen_geschiedenis, [], tuin_id)
     reps = [e[0] for e in bruikbaar]
 
     # Cyclus-startpunt: het vak met het vroegste oogstfront.
@@ -2371,14 +2399,15 @@ def plan_x_weken_vooruit(aantal_weken, gebruiker=None, verwijder_bestaande=False
         week_teller_totaal[week] = week_teller_totaal.get(week, 0) + 1
         return week
 
-    vak1_front = _bodem_incl_concept(VAK_VOLGORDE_UITZONDERING)
-    if vak1_front is None:
-        geen_geschiedenis.add(VAK_VOLGORDE_UITZONDERING)
+    # Alleen tuin 3 heeft een vak buiten de cyclus.
+    vak1_front = _bodem_incl_concept(uitzonderingsvak, tuin_id) if uitzonderingsvak else None
+    if uitzonderingsvak and vak1_front is None:
+        geen_geschiedenis.add(uitzonderingsvak)
 
     # Vak 1 wordt alleen gepland in de weken die daarvoor zijn aangevinkt
     # (vak1_weken), op volgorde — letterlijk, ook als dat een nieuwe ronde
     # vóór de oogst van de vorige oplevert (overlap toegestaan).
-    vak1_wachtrij = sorted(w for w in vak1_weken if w <= horizon_eind)
+    vak1_wachtrij = sorted(w for w in vak1_weken if w <= horizon_eind) if uitzonderingsvak else []
     vak1_idx = 0
     vak1_waarschuwingen = []
 
@@ -2394,7 +2423,7 @@ def plan_x_weken_vooruit(aantal_weken, gebruiker=None, verwijder_bestaande=False
         if d1 > horizon_eind:
             vak1_waarschuwingen.append((week_gevraagd, None))
             return None
-        pid = voeg_planning_toe(VAK_VOLGORDE_UITZONDERING, d1, gebruiker=gebruiker)
+        pid = voeg_planning_toe(uitzonderingsvak, d1, gebruiker=gebruiker, tuin_id=tuin_id)
         earliest[pid] = vroegst1
         if d1 != week_gevraagd:
             vak1_waarschuwingen.append((week_gevraagd, d1))
@@ -2417,7 +2446,7 @@ def plan_x_weken_vooruit(aantal_weken, gebruiker=None, verwijder_bestaande=False
         if datum > horizon_eind:
             break
         for v in vakken:
-            pid = voeg_planning_toe(v, datum, gebruiker=gebruiker)
+            pid = voeg_planning_toe(v, datum, gebruiker=gebruiker, tuin_id=tuin_id)
             earliest[pid] = vroegst
         vorige_datum = datum
 
@@ -2435,11 +2464,11 @@ def plan_x_weken_vooruit(aantal_weken, gebruiker=None, verwijder_bestaande=False
         _verwerk_vak1(vak1_wachtrij[vak1_idx])
         vak1_idx += 1
 
-    _naverwerk_planning(earliest)
-    return _planresultaat(weekdoelen, geen_geschiedenis, vak1_waarschuwingen)
+    _naverwerk_planning(earliest, tuin_id)
+    return _planresultaat(weekdoelen, geen_geschiedenis, vak1_waarschuwingen, tuin_id)
 
 
-def _naverwerk_planning(earliest=None):
+def _naverwerk_planning(earliest=None, tuin_id=None):
     """
     Naverwerking van de hele concept-planning, per maandag-week in
     cyclusvolgorde (= id-volgorde van de sweep):
@@ -2460,7 +2489,7 @@ def _naverwerk_planning(earliest=None):
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT id, vaknummer, verwachte_startdatum FROM teeltplanning "
-                       "WHERE tuin_id = %s ORDER BY id", (get_tuin_id(STANDAARD_TUIN),))
+                       "WHERE tuin_id = %s ORDER BY id", (_tuin_of_standaard(tuin_id),))
         rijen = cursor.fetchall()
 
     per_week = {}
@@ -2546,7 +2575,7 @@ def _naverwerk_planning(earliest=None):
         conn.commit()
 
 
-def _planresultaat(weekdoelen, geen_geschiedenis, vak1_waarschuwingen=None):
+def _planresultaat(weekdoelen, geen_geschiedenis, vak1_waarschuwingen=None, tuin_id=None):
     """
     Bouwt (resultaten, weekdoel_waarschuwingen, vak1_waarschuwingen) op uit
     de uiteindelijke concept-planning in de database.
@@ -2554,7 +2583,7 @@ def _planresultaat(weekdoelen, geen_geschiedenis, vak1_waarschuwingen=None):
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT vaknummer, verwachte_startdatum FROM teeltplanning WHERE tuin_id = %s",
-                       (get_tuin_id(STANDAARD_TUIN),))
+                       (_tuin_of_standaard(tuin_id),))
         rijen = cursor.fetchall()
 
     eerste_start = {}
@@ -2566,7 +2595,7 @@ def _planresultaat(weekdoelen, geen_geschiedenis, vak1_waarschuwingen=None):
         per_week.setdefault(_maandag(datum), []).append(vak)
 
     resultaten = []
-    for vaknummer in range(1, 40):
+    for vaknummer in get_vaknummers(tuin_id):
         if vaknummer in eerste_start:
             resultaten.append((vaknummer, "gepland", eerste_start[vaknummer]))
         elif vaknummer in geen_geschiedenis:
@@ -2574,12 +2603,13 @@ def _planresultaat(weekdoelen, geen_geschiedenis, vak1_waarschuwingen=None):
         else:
             resultaten.append((vaknummer, "buiten_horizon", None))
 
+    _eenheden, uitzonderingsvak = planner_eenheden(tuin_id)
     gecombineerd_laag, gecombineerd_hoog = VAK_GECOMBINEERD
     weekdoel_waarschuwingen = []
     for week, doel in sorted(weekdoelen.items()):
-        vakken = [v for v in per_week.get(week, []) if v != VAK_VOLGORDE_UITZONDERING]
+        vakken = [v for v in per_week.get(week, []) if v != uitzonderingsvak]
         aantal = len(vakken)
-        if gecombineerd_laag in vakken and gecombineerd_hoog in vakken:
+        if uitzonderingsvak and gecombineerd_laag in vakken and gecombineerd_hoog in vakken:
             aantal -= 1  # 19+20 samen = 1 poot-eenheid
         if aantal < doel:
             weekdoel_waarschuwingen.append((week, doel, aantal))

@@ -6,12 +6,16 @@ Handig voor een inhaalslag: in de app upload je ze één voor één, hier gaat e
 hele map in één keer. Een dag die al in de database staat wordt overschreven,
 dus een half geïmporteerde week opnieuw aanbieden mag.
 
-Gebruik:
-    python importeer_priva_map.py Teelt                      # proefdraai
-    python importeer_priva_map.py Teelt --uitvoeren          # importeren
-    python importeer_priva_map.py "Klimaat 2026" "Energie 2026" --uitvoeren
+De data gaat naar de tuin die je met --tuin meegeeft (standaard tuin 3). Een
+map hoort bij één tuin: de exports van tuin 1 komen uit een andere
+klimaatcomputer en hebben dezelfde afdelingsnummers.
 
-Zonder mapnaam pakt hij Teelt, Klimaat 2026 en Energie 2026.
+Gebruik:
+    python importeer_priva_map.py "Klimaat 2026 tuin 1" --tuin 1
+    python importeer_priva_map.py "Klimaat 2026 tuin 1" --tuin 1 --uitvoeren
+    python importeer_priva_map.py "Klimaat 2026 tuin 3" "Energie 2026 tuin 3" --uitvoeren
+
+Zonder mapnaam pakt hij de mappen van tuin 3.
 Weigert naar Supabase te schrijven tenzij --productie erbij staat.
 """
 import argparse
@@ -23,7 +27,7 @@ import pandas as pd
 import database
 
 HIER = os.path.dirname(os.path.abspath(__file__))
-STANDAARD_MAPPEN = ["Teelt", "Klimaat 2026", "Energie 2026"]
+STANDAARD_MAPPEN = ["Teelt", "Klimaat 2026 tuin 3", "Energie 2026 tuin 3"]
 GEBRUIKER = "csv-import"
 
 
@@ -51,12 +55,19 @@ def periode_van_bestand(pad):
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("mappen", nargs="*", default=STANDAARD_MAPPEN)
+    parser.add_argument("--tuin", type=int, default=database.STANDAARD_TUIN,
+                        help="tuinnummer waar deze exports bij horen (1 of 3)")
     parser.add_argument("--uitvoeren", action="store_true", help="echt importeren (anders proefdraai)")
     parser.add_argument("--productie", action="store_true", help="toestaan dat er naar Supabase geschreven wordt")
     args = parser.parse_args()
 
     if args.uitvoeren and "supabase" in os.environ.get("DATABASE_URL", "") and not args.productie:
         sys.exit("GESTOPT: .env wijst naar Supabase (productie). Voeg --productie toe als dat de bedoeling is.")
+
+    tuin_id = database.get_tuin_id(args.tuin)
+    if tuin_id is None:
+        sys.exit(f"GESTOPT: tuin {args.tuin} bestaat niet in de database.")
+    print(f"Doel: tuin {args.tuin}")
 
     bestanden = []
     for map_naam in (args.mappen or STANDAARD_MAPPEN):
@@ -88,10 +99,12 @@ def main():
         try:
             with open(pad, "rb") as bestand:
                 if soort == "klimaat":
-                    verwerkt, _overgeslagen = database.verwerk_klimaat_csv(bestand, gebruiker=GEBRUIKER)
+                    verwerkt, _overgeslagen = database.verwerk_klimaat_csv(
+                        bestand, gebruiker=GEBRUIKER, tuin_id=tuin_id)
                     totaal_klimaat += verwerkt
                 else:
-                    warmte, _overgeslagen, gas = database.verwerk_energie_csv(bestand, gebruiker=GEBRUIKER)
+                    warmte, _overgeslagen, gas = database.verwerk_energie_csv(
+                        bestand, gebruiker=GEBRUIKER, tuin_id=tuin_id)
                     totaal_energie += warmte
                     totaal_gas += gas
         except Exception as fout:

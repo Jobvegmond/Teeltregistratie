@@ -63,6 +63,8 @@ from database import (
     verwijder_planning,
     bevestig_planning,
     plan_x_weken_vooruit,
+    planner_eenheden,
+    MAX_VAKKEN_PER_WEEK,
     get_planning_weekoverzicht,
     set_planning_weekdoel,
     set_planning_weekdoel_vak1,
@@ -1952,41 +1954,52 @@ with tab_planning:
                     "worden (vorige ronde nog niet klaar, of die week al vol)."
                 )
 
-    # De automatische planner kent alleen het ritme van tuin 3 (de cyclus
-    # 2 t/m 39, 19+20 samen, vak 1 apart). Op een andere tuin plan je met de
-    # hand, zodat daar niet per ongeluk een tuin 3-ritme wordt neergezet.
-    AUTOMATISCH_PLANNEN = TUIN_NUMMER == STANDAARD_TUIN
+    # Tuin 3 plant vak 2 t/m 39 als cyclus met 19+20 samen en vak 1 op een eigen
+    # ritme; tuin 1 plant gewoon vak 1 t/m 27 op volgorde. De kolomnamen en de
+    # uitleg volgen die vorm, de planner zelf werkt voor allebei hetzelfde.
+    _eenheden_tuin, _los_vak = planner_eenheden(TUIN_ID)
+    _cyclusvakken = [v for _rep, _vakken in _eenheden_tuin for v in _vakken] or [1]
+    CYCLUS = f"{min(_cyclusvakken)}-{max(_cyclusvakken)}"
+    KOLOM_VAKKEN = f"Vakken ({CYCLUS})"
 
-    if AUTOMATISCH_PLANNEN:
+    if True:
         st.markdown("---")
         st.write("**Jaarplanning: vakken per week**")
-        st.caption(
-            "Vul zelf per week in hoeveel poot-eenheden je wilt voor de vak 2-39-cyclus (19+20 = 1, "
-            "max 5) en of vak 1 die week gepoot moet worden (los van de cyclus, hooguit 1x). Een lege "
-            "cel bij 'Vakken (2-39)' betekent: die week wordt niets gepland voor die cyclus. De planner "
-            "bepaalt zelf niets meer bij — hij plant precies wat hier staat, mits er op dat moment ook "
-            "echt vakken/vak 1 klaar zijn."
-        )
+        if _los_vak:
+            st.caption(
+                f"Vul per week in hoeveel vakken je wilt poten uit de cyclus {CYCLUS} "
+                f"(19+20 = 1, max {MAX_VAKKEN_PER_WEEK}) en of vak {_los_vak} die week mee moet. "
+                "Een lege cel betekent: die week niets plannen. De planner vult zelf niets aan."
+            )
+        else:
+            st.caption(
+                f"Vul per week in hoeveel vakken je wilt poten (max {MAX_VAKKEN_PER_WEEK}). "
+                f"De planner gaat op volgorde verder vanaf het vak waar {TUIN_NAAM} gebleven is. "
+                "Een lege cel betekent: die week niets plannen."
+            )
         weekoverzicht = get_planning_weekoverzicht(int(aantal_weken_vooruit))
         df_weekdoel = pd.DataFrame([
             {
                 "Week": f"Week {r['week']} - {r['jaar']}",
                 "Nu gepland": r["concepten"],
-                "Vakken (2-39)": r["weekdoel"],
+                KOLOM_VAKKEN: r["weekdoel"],
                 "Vak 1": r["vak1_planten"],
             }
             for r in weekoverzicht
         ])
+        if not _los_vak:
+            df_weekdoel = df_weekdoel.drop(columns=["Vak 1"])
         bewerkt_weekdoel = st.data_editor(
             df_weekdoel,
             hide_index=True, key="weekdoel_editor",
             column_config={
                 "Week": st.column_config.TextColumn(disabled=True),
                 "Nu gepland": st.column_config.NumberColumn(
-                    disabled=True, help="Aantal poot-eenheden (2-39-cyclus) dat nu voor die week gepland staat"
+                    disabled=True, help="Aantal vakken dat nu voor die week gepland staat"
                 ),
-                "Vakken (2-39)": st.column_config.NumberColumn(
-                    min_value=0, max_value=5, step=1, help="Leeg = die week niets plannen voor deze cyclus"
+                KOLOM_VAKKEN: st.column_config.NumberColumn(
+                    min_value=0, max_value=MAX_VAKKEN_PER_WEEK, step=1,
+                    help="Leeg = die week niets plannen"
                 ),
                 "Vak 1": st.column_config.CheckboxColumn(help="Vak 1 in deze week poten"),
             },
@@ -1994,12 +2007,12 @@ with tab_planning:
         col_herplan, col_wis = st.columns([2, 1])
         if col_herplan.button("🔄 Plan opnieuw met deze aantallen", key="plan_herplan"):
             for r, (_, rij) in zip(weekoverzicht, bewerkt_weekdoel.iterrows()):
-                waarde = rij["Vakken (2-39)"]
+                waarde = rij[KOLOM_VAKKEN]
                 nieuw = None if pd.isna(waarde) else int(waarde)
                 if nieuw != r["weekdoel"]:
                     set_planning_weekdoel(r["week_start"], nieuw, gebruiker=huidige_gebruiker())
-                nieuw_vak1 = bool(rij["Vak 1"])
-                if nieuw_vak1 != r["vak1_planten"]:
+                nieuw_vak1 = bool(rij["Vak 1"]) if _los_vak else False
+                if _los_vak and nieuw_vak1 != r["vak1_planten"]:
                     set_planning_weekdoel_vak1(r["week_start"], nieuw_vak1, gebruiker=huidige_gebruiker())
             resultaten, weekdoel_waarschuwingen, vak1_waarschuwingen = plan_x_weken_vooruit(
                 int(aantal_weken_vooruit), gebruiker=huidige_gebruiker(), verwijder_bestaande=True
@@ -2009,13 +2022,6 @@ with tab_planning:
         if col_wis.button("↩︎ Wis mijn jaarplanning", key="plan_wis_weekdoelen"):
             wis_planning_weekdoelen(gebruiker=huidige_gebruiker())
             st.rerun()
-    else:
-        st.markdown("---")
-        st.info(
-            f"Automatisch plannen kent voorlopig alleen het ritme van tuin {STANDAARD_TUIN}. "
-            f"Plan {TUIN_NAAM} hieronder per vak; de concepten en de strokenplanning zijn "
-            "verder hetzelfde."
-        )
 
     st.markdown("---")
     st.write("**Overzicht per plantweek**")
@@ -2408,7 +2414,8 @@ with tab_klimaat:
             )
             if klimaat_csv is not None:
                 try:
-                    aantal_verwerkt, aantal_overgeslagen = verwerk_klimaat_csv(klimaat_csv, gebruiker=huidige_gebruiker())
+                    aantal_verwerkt, aantal_overgeslagen = verwerk_klimaat_csv(
+                        klimaat_csv, gebruiker=huidige_gebruiker(), tuin_id=TUIN_ID)
                     melding = f"✅ {aantal_verwerkt} afdeling-dagen verwerkt."
                     if aantal_overgeslagen:
                         melding += f" {aantal_overgeslagen} overgeslagen (nog niet afgerond)."
@@ -2427,7 +2434,7 @@ with tab_klimaat:
             if energie_csv is not None:
                 try:
                     aantal_verwerkt_e, aantal_overgeslagen_e, aantal_gas_e = verwerk_energie_csv(
-                        energie_csv, gebruiker=huidige_gebruiker()
+                        energie_csv, gebruiker=huidige_gebruiker(), tuin_id=TUIN_ID
                     )
                     melding_e = f"✅ {aantal_verwerkt_e} dagen warmteverbruik verwerkt."
                     if aantal_gas_e:
@@ -2441,13 +2448,15 @@ with tab_klimaat:
         with col_imp_priva:
             if os.environ.get("PRIVA_CLIENT_ID"):
                 st.caption(
-                    "Of haal de laatste afgeronde dagen rechtstreeks uit Priva (tuin 3): klimaat, "
-                    "watergift. Historische CSV-data blijft staan."
+                    f"Of haal de laatste afgeronde dagen rechtstreeks uit Priva voor {TUIN_NAAM}: "
+                    "klimaat en watergift. Historische CSV-data blijft staan."
                 )
                 if st.button("📡 Haal laatste dagen op uit Priva"):
                     try:
-                        aantal_k, _ = importeer_klimaat_uit_priva(gebruiker=huidige_gebruiker())
-                        aantal_w, _ = importeer_watergift_uit_priva(gebruiker=huidige_gebruiker())
+                        aantal_k, _ = importeer_klimaat_uit_priva(
+                            gebruiker=huidige_gebruiker(), tuin_id=TUIN_ID)
+                        aantal_w, _ = importeer_watergift_uit_priva(
+                            gebruiker=huidige_gebruiker(), tuin_id=TUIN_ID)
                         st.success(f"✅ {aantal_k} afdeling-dagen klimaat, {aantal_w} vak-dagen watergift opgehaald.")
                     except Exception as e:
                         st.error(f"❌ Kon niet uit Priva ophalen: {e}")

@@ -19,5 +19,6 @@ priva_horti.py
 Teelt/
 
 # Priva-weekexports (bron voor importeer_priva_map.py), bedrijfsgegevens
-Klimaat 2026/
-Energie 2026/
+Klimaat 2026*/
+Energie 2026*/
+Priva One/
