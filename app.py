@@ -25,6 +25,7 @@ from database import (
     delete_teelt,
     voeg_oogstregistratie_toe,
     get_oogstregistraties_voor_teelt,
+    get_totaal_emmers_per_teelt,
     wijzig_oogstregistratie,
     verwijder_oogstregistratie,
     markeer_teelt_afgerond,
@@ -47,7 +48,7 @@ from database import (
     get_gasdata_dagen_voor_periode,
     get_warmte_voor_periode,
     GAS_CALORISCHE_WAARDE_MJ_PER_M3,
-    TUIN3_OPPERVLAKTE_M2,
+    oppervlakte_van_tuin,
     ideale_etmaaltemperatuur,
     LICHT_TEMP_FACTOR,
     LICHT_TEMP_BASIS,
@@ -87,7 +88,6 @@ from database import (
     zet_actieve_tuin,
     stelen_bij_60_van_vak,
     STANDAARD_RAS,
-    STANDAARD_TUIN,
     get_stek_voor_week,
     sla_stekbeoordeling_op,
     stek_uitval_pct,
@@ -349,6 +349,7 @@ def jaargemiddelden_oogst(jaar):
     groep in Teelt-detail. Waarden zijn None als er geen data is.
     """
     alle = get_alle_teelten_detail()
+    emmers_per_teelt = get_totaal_emmers_per_teelt()
     lengtes, gewichten, factoren, gewicht_10cm, uitval = [], [], [], [], []
     for t in alle:
         if not t["datum_oogst"] or not t["datum_oogst"].startswith(str(jaar)):
@@ -363,7 +364,7 @@ def jaargemiddelden_oogst(jaar):
             gewicht_10cm.append(t["oogstgewicht"] / t["lengte_eind"] * 10)
         # Zonder emmers én zonder vastgelegd percentage is de uitval onbekend,
         # niet 100% (bijv. als de emmers nog niet zijn ingevoerd).
-        uitval_t = uitval_van_teelt(t)
+        uitval_t = uitval_van_teelt(t, emmers_per_teelt)
         if uitval_t is not None:
             uitval.append(uitval_t)
 
@@ -693,17 +694,19 @@ def standaard_dichtheid_voor_plantweek(week):
     return 60
 
 
-def uitval_van_teelt(teelt):
+def uitval_van_teelt(teelt, emmers_per_teelt):
     """
     Uitval van een teelt in procenten: uit de getelde emmers als die er zijn
     (100 stelen per emmer), anders het percentage dat bij de teelt zelf staat.
     Geeft None als geen van beide bekend is; dan is de uitval onbekend, niet 0.
+
+    `emmers_per_teelt` is het totaal per teelt uit get_totaal_emmers_per_teelt();
+    dat wordt één keer per scherm opgehaald in plaats van per teelt.
     """
     planten = teelt.get("aantal_planten")
-    registraties = get_oogstregistraties_voor_teelt(teelt["id"]) if planten else []
-    if registraties:
-        stelen = sum(r[2] for r in registraties) * 100
-        return (planten - stelen) / planten * 100
+    emmers = emmers_per_teelt.get(teelt["id"]) if planten else None
+    if emmers:
+        return (planten - emmers * 100) / planten * 100
     return teelt.get("uitval_pct")
 
 
@@ -1331,10 +1334,11 @@ with tab_week:
     )
     uitval_rijen_week = []
     uitval_pct_week = []
+    emmers_per_teelt = get_totaal_emmers_per_teelt()
     for t in afgerond_week:
-        registraties_t = get_oogstregistraties_voor_teelt(t["id"])
-        totaal_stelen_t = sum(r[2] for r in registraties_t) * 100 if registraties_t else 0
-        uitval_pct_t = uitval_van_teelt(t)
+        emmers_t = emmers_per_teelt.get(t["id"])
+        totaal_stelen_t = emmers_t * 100 if emmers_t else 0
+        uitval_pct_t = uitval_van_teelt(t, emmers_per_teelt)
         if uitval_pct_t is not None:
             uitval_pct_week.append(uitval_pct_t)
         uitval_rijen_week.append({
@@ -1342,7 +1346,7 @@ with tab_week:
             "Code": t["code"] or "-",
             "Oogstdatum": format_datum(t["datum_oogst"]),
             "Planten": t["aantal_planten"] if t["aantal_planten"] is not None else "-",
-            "Geoogste stelen": totaal_stelen_t if registraties_t else "-",
+            "Geoogste stelen": totaal_stelen_t if emmers_t else "-",
             "Uitval (%)": round(uitval_pct_t, 1) if uitval_pct_t is not None else "-",
             "Lengte (cm)": t["lengte_eind"] if t["lengte_eind"] is not None else "-",
             "Gewicht (g)": t["oogstgewicht"] if t["oogstgewicht"] is not None else "-",
@@ -1679,8 +1683,9 @@ with tab_detail:
         uitval_lijst = []
         factor_lijst = []
         gewicht_per_10cm_lijst = []
+        emmers_per_teelt = get_totaal_emmers_per_teelt()
         for t in afgeronde_groep:
-            uitval_t = uitval_van_teelt(t)
+            uitval_t = uitval_van_teelt(t, emmers_per_teelt)
             if uitval_t is not None:
                 uitval_lijst.append(uitval_t)
             if t["lengte_half"] and t["lengte_eind"]:
@@ -2578,7 +2583,8 @@ with tab_klimaat:
             st.warning("'Van' ligt na 'Tot en met'.")
         st.caption(
             f"Warmteverbruik geregistreerd van {format_datum(e_eerste)} t/m {format_datum(e_laatste)} "
-            f"({e_aantal} dagen, {e_ontbrekend} ontbrekend). Kasoppervlak tuin 3: {TUIN3_OPPERVLAKTE_M2:,.0f} m²."
+            f"({e_aantal} dagen, {e_ontbrekend} ontbrekend). Kasoppervlak {TUIN_NAAM}: "
+            f"{oppervlakte_van_tuin(TUIN_ID) or 0:,.0f} m²."
             .replace(",", ".")
         )
         gas_dekking = get_gasdata_dekking()
@@ -2726,29 +2732,24 @@ with tab_stats:
             "(gewicht, lengte, rijpheid, teeltduur) en zoekt naar de sterkste samenhang."
         )
 
+        # Uit dezelfde bron als het teeltoverzicht: dat is een query voor alle
+        # teelten samen, in plaats van per teelt klimaat en water opvragen.
         analyse_rijen = []
-        for t in get_alle_teelten_detail():
-            if not t["datum_oogst"]:
+        for k in get_teeltkengetallen():
+            if not k["datum_oogst"]:
                 continue
-            afdeling_a = afdeling_van_vak(t["vaknummer"])
-            klimaat_a = (
-                get_klimaat_voor_periode(afdeling_a, t["datum_teelt_start"], t["datum_oogst"])
-                if afdeling_a else None
+            laag, hoog = rijpheid_tekst_naar_bereik(k["rijpheid"]) if k["rijpheid"] else (None, None)
+            lichtsom_per_dag = (
+                k["lichtsom"] / k["klimaatdagen"] if k["lichtsom"] and k["klimaatdagen"] else None
             )
-            water_a = (
-                get_watergift_voor_periode(t["vaknummer"], t["datum_teelt_start"], t["datum_oogst"])
-                if t["vaknummer"] else None
-            )
-            laag, hoog = rijpheid_tekst_naar_bereik(t["rijpheid"]) if t["rijpheid"] else (None, None)
-
             analyse_rijen.append({
-                "Teeltduur (dagen)": get_teeltduur(t["datum_teelt_start"], t["datum_oogst"]),
-                "Gewicht (g)": t["oogstgewicht"],
-                "Lengte (cm)": t["lengte_eind"],
+                "Teeltduur (dagen)": k["teeltduur"],
+                "Gewicht (g)": k["oogstgewicht"],
+                "Lengte (cm)": k["lengte_eind"],
                 "Rijpheid": (laag + hoog) / 2 if laag is not None else None,
-                "Lichtsom (per dag)": klimaat_a["gem_stralingssom_dag"] if klimaat_a else None,
-                "Temperatuur (°C)": klimaat_a["gem_temperatuur"] if klimaat_a else None,
-                "Water (l/m²)": water_a["totaal_liter_per_m2"] if water_a else None,
+                "Lichtsom (per dag)": lichtsom_per_dag,
+                "Temperatuur (°C)": k["gem_temperatuur"],
+                "Water (l/m²)": k["liters"],
             })
 
         df_analyse = pd.DataFrame(analyse_rijen).apply(pd.to_numeric, errors="coerce")

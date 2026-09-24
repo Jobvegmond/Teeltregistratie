@@ -170,6 +170,25 @@ def get_connection():
         pool.putconn(conn)
 
 
+def _standaard_oppervlakte(vaknummer, tuinnummer):
+    """
+    Vaste maat (m2) van een vak, op tuinnummer in plaats van tuin-id: de
+    migratie in init_db heeft de tuin-tabel dan nog niet nodig.
+    """
+    if vaknummer is None:
+        return None
+    vaknummer = int(vaknummer)
+    if tuinnummer == 1:
+        if vaknummer in TUIN1_OPPERVLAKTE_BIJZONDER:
+            return TUIN1_OPPERVLAKTE_BIJZONDER[vaknummer]
+        return TUIN1_OPPERVLAKTE_STANDAARD if 1 <= vaknummer <= 27 else None
+    if vaknummer in VAKKEN_SMAL:
+        return VAK_OPPERVLAKTE_SMAL
+    if 1 <= vaknummer <= 39:
+        return VAK_OPPERVLAKTE_STANDAARD
+    return None
+
+
 def init_db():
     """Maakt de tabellen aan als ze nog niet bestaan."""
     with get_connection() as conn:
@@ -468,6 +487,19 @@ def init_db():
 
         # Migratie: voeg het vaknummer toe aan teeltvakken.
         cursor.execute("ALTER TABLE teeltvakken ADD COLUMN IF NOT EXISTS vaknummer INTEGER")
+        # Kasoppervlak per vak. Tuin 3 en tuin 1 hebben verschillende maten,
+        # en de warmte per teelt wordt daarmee omgerekend van MJ/m2 naar MJ.
+        cursor.execute("ALTER TABLE teeltvakken ADD COLUMN IF NOT EXISTS oppervlakte_m2 REAL")
+        cursor.execute("""
+            SELECT v.id, v.vaknummer, t.nummer
+            FROM teeltvakken v JOIN tuinen t ON t.id = v.tuin_id
+            WHERE v.oppervlakte_m2 IS NULL AND v.vaknummer IS NOT NULL
+        """)
+        for vak_id, vaknummer, tuinnummer in cursor.fetchall():
+            maat = _standaard_oppervlakte(vaknummer, tuinnummer)
+            if maat:
+                cursor.execute("UPDATE teeltvakken SET oppervlakte_m2 = %s WHERE id = %s",
+                               (maat, vak_id))
         # Best-effort: bestaande vakken die al puur numeriek genoemd zijn
         # (bijv. naam "19") krijgen dat getal meteen als vaknummer.
         cursor.execute("SELECT id, naam FROM teeltvakken WHERE vaknummer IS NULL")
@@ -1504,16 +1536,34 @@ VAK_OPPERVLAKTE_SMAL = 275
 VAKKEN_SMAL = {19, 20}
 
 
-def oppervlakte_van_vaknummer(vaknummer):
-    """Geeft de kasoppervlakte (m2) van een vaknummer (1-39) terug."""
+def oppervlakte_van_vaknummer(vaknummer, tuin_id=None):
+    """
+    Kasoppervlak (m2) van een vak binnen een tuin. Komt uit de tabel; staat het
+    daar nog niet, dan uit de vaste maten van die tuin. Op tuin 3 is een vak
+    550 m2 (vak 19 en 20 de helft), op tuin 1 883,2 m2 (vak 1 de helft).
+    """
     if vaknummer is None:
         return None
     vaknummer = int(vaknummer)
-    if vaknummer in VAKKEN_SMAL:
-        return VAK_OPPERVLAKTE_SMAL
-    if 1 <= vaknummer <= 39:
-        return VAK_OPPERVLAKTE_STANDAARD
-    return None
+    tuin_id = _tuin_of_standaard(tuin_id)
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT oppervlakte_m2 FROM teeltvakken WHERE tuin_id = %s AND vaknummer = %s",
+            (tuin_id, vaknummer),
+        )
+        rij = cursor.fetchone()
+    if rij and rij[0]:
+        return float(rij[0])
+    return standaard_oppervlakte_van_vak(vaknummer, tuin_id)
+
+
+def standaard_oppervlakte_van_vak(vaknummer, tuin_id=None):
+    """De vaste maat van een vak volgens de indeling van die tuin."""
+    if vaknummer is None:
+        return None
+    vaknummer = int(vaknummer)
+    return _standaard_oppervlakte(vaknummer, _tuinnummer(tuin_id))
 
 
 TUIN3_OPPERVLAKTE_M2 = (39 - len(VAKKEN_SMAL)) * VAK_OPPERVLAKTE_STANDAARD + len(VAKKEN_SMAL) * VAK_OPPERVLAKTE_SMAL
@@ -1679,7 +1729,7 @@ def get_warmte_voor_periode(vaknummer, datum_start, datum_eind, tuin_id=None):
     opgeteld — berekend als de kaswaarde per m2 per dag keer de oppervlakte
     van dat vak. Geeft None als er geen data of geen bekende oppervlakte is.
     """
-    oppervlakte = oppervlakte_van_vaknummer(vaknummer)
+    oppervlakte = oppervlakte_van_vaknummer(vaknummer, tuin_id)
     if not oppervlakte:
         return None
     with get_connection() as conn:
@@ -1775,39 +1825,78 @@ def get_klimaatdata_dekking(tuin_id=None):
 
 def get_klimaat_overzicht_dataframe(tuin_id=None):
     """
-    Koppelt de opgeslagen klimaatdata aan elke teelt (via vaknummer ->
-    afdeling en de teeltperiode) en geeft kolommen + rijen terug voor
-    weergave in het dashboard. Teelten zonder overlappende klimaatdata worden
-    overgeslagen.
+    Koppelt de opgeslagen klimaatdata aan elke teelt (via het vak -> de afdeling
+    en de teeltperiode) en geeft kolommen + rijen terug voor weergave in het
+    dashboard. Teelten zonder overlappende klimaatdata worden overgeslagen.
+
+    Alles in één query: per teelt losse vragen stellen kostte bij ruim 200
+    teelten meer dan twintig seconden, en dat bij elke schermvernieuwing.
     """
+    tuin_id = _tuin_of_standaard(tuin_id)
+    vandaag = str(date.today())
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT t.id, t.code, v.naam, v.vaknummer, t.datum_teelt_start, t.datum_oogst
-            FROM teelten t
-            JOIN teeltvakken v ON t.teeltvak_id = v.id
-            WHERE v.tuin_id = %s
-            ORDER BY (t.code IS NULL), t.code
-        """, (_tuin_of_standaard(tuin_id),))
+            WITH basis AS (
+                SELECT t.id, t.code, v.naam, v.vaknummer, v.afdeling, v.tuin_id,
+                       v.oppervlakte_m2,
+                       t.datum_teelt_start AS start, t.datum_oogst,
+                       COALESCE(t.datum_oogst, %s) AS eind
+                FROM teelten t
+                JOIN teeltvakken v ON v.id = t.teeltvak_id
+                WHERE v.tuin_id = %s AND v.afdeling IS NOT NULL
+            )
+            SELECT b.code, b.naam, b.afdeling, b.start, b.datum_oogst, b.id,
+                   b.vaknummer, b.oppervlakte_m2,
+                   k.gem_temperatuur, k.gem_rv, k.gem_straling,
+                   w.liters, e.mj_per_m2
+            FROM basis b
+            LEFT JOIN LATERAL (
+                SELECT AVG(gem_temperatuur) AS gem_temperatuur, AVG(gem_rv) AS gem_rv,
+                       AVG(stralingssom_dag) AS gem_straling, COUNT(*) AS dagen
+                FROM klimaatdata_dag k
+                WHERE k.tuin_id = b.tuin_id AND k.afdeling = b.afdeling
+                  AND k.datum BETWEEN b.start AND b.eind
+            ) k ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT SUM(liter_per_m2) AS liters
+                FROM watergift_dag w
+                WHERE w.tuin_id = b.tuin_id AND w.vaknummer = b.vaknummer
+                  AND w.datum BETWEEN b.start AND b.eind
+            ) w ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT SUM(mj) AS mj_per_m2
+                FROM (
+                    SELECT datum, SUM(mj_per_m2) AS mj
+                    FROM (
+                        SELECT datum, warmte_mj_per_m2 AS mj_per_m2 FROM energiedata_dag
+                        WHERE tuin_id = b.tuin_id AND datum BETWEEN b.start AND b.eind
+                        UNION ALL
+                        SELECT datum, gas_mj_per_m2 AS mj_per_m2 FROM gasdata_dag
+                        WHERE tuin_id = b.tuin_id AND datum BETWEEN b.start AND b.eind
+                    ) bronnen
+                    GROUP BY datum
+                ) per_dag
+            ) e ON TRUE
+            WHERE k.dagen > 0
+            ORDER BY (b.code IS NULL), b.code
+        """, (vandaag, tuin_id))
         teelt_rijen = cursor.fetchall()
 
     rijen = []
-    for teelt_id, code, naam, vaknummer, start, oogst in teelt_rijen:
-        afdeling = afdeling_van_vak(vaknummer, tuin_id)
-        if not afdeling:
-            continue
+    standaard_maat = {}
+    for (code, naam, afdeling, start, oogst, teelt_id, vaknummer, oppervlakte,
+         gem_temperatuur, gem_rv, gem_straling, liters, mj_per_m2) in teelt_rijen:
+        if not oppervlakte:
+            if vaknummer not in standaard_maat:
+                standaard_maat[vaknummer] = standaard_oppervlakte_van_vak(vaknummer, tuin_id)
+            oppervlakte = standaard_maat[vaknummer]
+        gem_temperatuur = float(gem_temperatuur) if gem_temperatuur is not None else None
+        gem_straling = float(gem_straling) if gem_straling is not None else None
 
-        eind = oogst or str(date.today())
-        klimaat = get_klimaat_voor_periode(afdeling, start, eind, tuin_id=tuin_id)
-        if not klimaat:
-            continue
-
-        water = get_watergift_voor_periode(vaknummer, start, eind, tuin_id=tuin_id) if vaknummer else None
-        warmte = get_warmte_voor_periode(vaknummer, start, eind) if vaknummer else None
-
-        ideaal = ideale_etmaaltemperatuur(klimaat["gem_stralingssom_dag"])
-        if ideaal is not None and klimaat["gem_temperatuur"] is not None:
-            verschil = klimaat["gem_temperatuur"] - ideaal
+        ideaal = ideale_etmaaltemperatuur(gem_straling)
+        if ideaal is not None and gem_temperatuur is not None:
+            verschil = gem_temperatuur - ideaal
             if verschil > 0.3:
                 verschil_tekst = f"↑ +{verschil:.1f}"
             elif verschil < -0.3:
@@ -1817,19 +1906,23 @@ def get_klimaat_overzicht_dataframe(tuin_id=None):
         else:
             verschil_tekst = "-"
 
+        # De warmte wordt per m2 voor de hele kas gemeten; maal het oppervlak van
+        # dit vak geeft de GJ die in die periode naar deze teelt gingen.
+        warmte_gj = (float(mj_per_m2) * oppervlakte / 1000) if (mj_per_m2 and oppervlakte) else None
+
         rijen.append((
             code if code else f"ID{teelt_id}",
             naam,
             afdeling,
             format_datum(start),
             format_datum(oogst) if oogst else "lopend",
-            round(klimaat["gem_temperatuur"], 1) if klimaat["gem_temperatuur"] is not None else "-",
-            round(klimaat["gem_rv"], 1) if klimaat["gem_rv"] is not None else "-",
-            round(klimaat["gem_stralingssom_dag"]) if klimaat["gem_stralingssom_dag"] is not None else "-",
+            round(gem_temperatuur, 1) if gem_temperatuur is not None else "-",
+            round(float(gem_rv), 1) if gem_rv is not None else "-",
+            round(gem_straling) if gem_straling is not None else "-",
             round(ideaal, 1) if ideaal is not None else "-",
             verschil_tekst,
-            round(water["totaal_liter_per_m2"], 1) if water else "-",
-            round(warmte["totaal_mj"] / 1000, 2) if warmte else "-",
+            round(float(liters), 1) if liters is not None else "-",
+            round(warmte_gj, 2) if warmte_gj is not None else "-",
         ))
 
     kolommen = ["Code", "Teeltvak", "Afdeling", "Startdatum", "Oogstdatum",
@@ -2964,6 +3057,8 @@ def zet_ras(teelt_id, ras, gebruiker=None):
 STANDAARD_TUIN = 3
 TUIN1_AFDELINGEN = {1: range(1, 8), 2: range(8, 14), 3: range(14, 21), 4: range(21, 28)}
 TUIN1_STELEN_BIJ_60 = {1: 26532}   # vak 1 is een half vak
+TUIN1_OPPERVLAKTE_STANDAARD = 883.2
+TUIN1_OPPERVLAKTE_BIJZONDER = {1: 441.6}   # vak 1 is een half vak
 TUIN1_STELEN_STANDAARD = 53064     # vak 2 t/m 27
 
 
@@ -3067,8 +3162,7 @@ def oppervlakte_van_tuin(tuin_id=None):
     """
     Teeltoppervlak (m2) van een tuin, om verbruik per m2 uit te rekenen.
     Tuin 3 houdt zijn vaste 20.900 m2 aan, zodat eerder opgeslagen waarden
-    vergelijkbaar blijven; voor andere tuinen volgt het uit de vakken
-    (stelen bij 60 per m2, gedeeld door 60).
+    vergelijkbaar blijven; voor andere tuinen is het de som van de vakken.
     """
     tuin_id = _tuin_of_standaard(tuin_id)
     with get_connection() as conn:
@@ -3078,11 +3172,11 @@ def oppervlakte_van_tuin(tuin_id=None):
         if rij and rij[0] == STANDAARD_TUIN:
             return TUIN3_OPPERVLAKTE_M2
         cursor.execute(
-            "SELECT SUM(stelen_bij_60) FROM teeltvakken WHERE tuin_id = %s AND vaknummer IS NOT NULL",
+            "SELECT SUM(oppervlakte_m2) FROM teeltvakken WHERE tuin_id = %s AND vaknummer IS NOT NULL",
             (tuin_id,),
         )
-        totaal_stelen = cursor.fetchone()[0]
-    return (totaal_stelen / 60) if totaal_stelen else None
+        totaal = cursor.fetchone()[0]
+    return float(totaal) if totaal else None
 
 
 def _tuinnummer(tuin_id):
