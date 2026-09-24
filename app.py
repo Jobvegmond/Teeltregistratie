@@ -32,7 +32,7 @@ from database import (
     verwerk_klimaat_csv,
     importeer_klimaat_uit_priva,
     get_klimaat_overzicht_dataframe,
-    afdeling_van_vaknummer,
+    afdeling_van_vak,
     get_klimaatdata_dagen_voor_periode,
     get_klimaatdata_dekking,
     get_klimaat_voor_periode,
@@ -359,12 +359,11 @@ def jaargemiddelden_oogst(jaar):
             factoren.append(t["lengte_eind"] / t["lengte_half"])
         if t["oogstgewicht"] and t["lengte_eind"]:
             gewicht_10cm.append(t["oogstgewicht"] / t["lengte_eind"] * 10)
-        # Zonder emmerregistraties is de uitval onbekend, niet 100% (bijv.
-        # teelten uit de Excel-historie, of als de emmers nog niet zijn ingevoerd).
-        registraties_t = get_oogstregistraties_voor_teelt(t["id"]) if t["aantal_planten"] else []
-        if registraties_t:
-            totaal_stelen_t = sum(r[2] for r in registraties_t) * 100
-            uitval.append((t["aantal_planten"] - totaal_stelen_t) / t["aantal_planten"] * 100)
+        # Zonder emmers én zonder vastgelegd percentage is de uitval onbekend,
+        # niet 100% (bijv. als de emmers nog niet zijn ingevoerd).
+        uitval_t = uitval_van_teelt(t)
+        if uitval_t is not None:
+            uitval.append(uitval_t)
 
     def _gem(lijst):
         return sum(lijst) / len(lijst) if lijst else None
@@ -690,6 +689,20 @@ def standaard_dichtheid_voor_plantweek(week):
     if 48 <= week <= 53:
         return 50
     return 60
+
+
+def uitval_van_teelt(teelt):
+    """
+    Uitval van een teelt in procenten: uit de getelde emmers als die er zijn
+    (100 stelen per emmer), anders het percentage dat bij de teelt zelf staat.
+    Geeft None als geen van beide bekend is; dan is de uitval onbekend, niet 0.
+    """
+    planten = teelt.get("aantal_planten")
+    registraties = get_oogstregistraties_voor_teelt(teelt["id"]) if planten else []
+    if registraties:
+        stelen = sum(r[2] for r in registraties) * 100
+        return (planten - stelen) / planten * 100
+    return teelt.get("uitval_pct")
 
 
 def toon_oogstregistraties_beheer(teelt_id, teelt_info):
@@ -1319,11 +1332,9 @@ with tab_week:
     for t in afgerond_week:
         registraties_t = get_oogstregistraties_voor_teelt(t["id"])
         totaal_stelen_t = sum(r[2] for r in registraties_t) * 100 if registraties_t else 0
-        if t["aantal_planten"] and registraties_t:
-            uitval_pct_t = (t["aantal_planten"] - totaal_stelen_t) / t["aantal_planten"] * 100
+        uitval_pct_t = uitval_van_teelt(t)
+        if uitval_pct_t is not None:
             uitval_pct_week.append(uitval_pct_t)
-        else:
-            uitval_pct_t = None
         uitval_rijen_week.append({
             "Vak": t["vaknummer"],
             "Code": t["code"] or "-",
@@ -1577,7 +1588,7 @@ with tab_detail:
             if dagen_t is not None:
                 dagen_lijst.append(dagen_t)
 
-            afdeling_t = afdeling_van_vaknummer(t["vaknummer"])
+            afdeling_t = afdeling_van_vak(t["vaknummer"])
             if afdeling_t:
                 klimaat_t = get_klimaat_voor_periode(afdeling_t, t["datum_teelt_start"], eind_t)
                 if klimaat_t:
@@ -1667,10 +1678,9 @@ with tab_detail:
         factor_lijst = []
         gewicht_per_10cm_lijst = []
         for t in afgeronde_groep:
-            registraties_t = get_oogstregistraties_voor_teelt(t["id"]) if t["aantal_planten"] else []
-            if registraties_t:
-                totaal_stelen_t = sum(r[2] for r in registraties_t) * 100
-                uitval_lijst.append((t["aantal_planten"] - totaal_stelen_t) / t["aantal_planten"] * 100)
+            uitval_t = uitval_van_teelt(t)
+            if uitval_t is not None:
+                uitval_lijst.append(uitval_t)
             if t["lengte_half"] and t["lengte_eind"]:
                 factor_lijst.append(t["lengte_eind"] / t["lengte_half"])
             if t["oogstgewicht"] and t["lengte_eind"]:
@@ -1718,8 +1728,8 @@ with tab_detail:
 
         st.write("**Klimaat tijdens deze plantweek**")
         afdelingen_groep = sorted({
-            afdeling_van_vaknummer(t["vaknummer"]) for t in teelten_groep
-            if afdeling_van_vaknummer(t["vaknummer"])
+            afdeling_van_vak(t["vaknummer"]) for t in teelten_groep
+            if afdeling_van_vak(t["vaknummer"])
         })
         if afdelingen_groep:
             eind_groep = max(t["datum_oogst"] or vandaag_detail for t in teelten_groep)
@@ -2711,7 +2721,7 @@ with tab_stats:
         for t in get_alle_teelten_detail():
             if not t["datum_oogst"]:
                 continue
-            afdeling_a = afdeling_van_vaknummer(t["vaknummer"])
+            afdeling_a = afdeling_van_vak(t["vaknummer"])
             klimaat_a = (
                 get_klimaat_voor_periode(afdeling_a, t["datum_teelt_start"], t["datum_oogst"])
                 if afdeling_a else None

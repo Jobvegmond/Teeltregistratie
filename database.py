@@ -461,6 +461,9 @@ def init_db():
         # zo hoeven de honderden bestaande teelten niet bijgewerkt te worden.
         cursor.execute("ALTER TABLE teelten ADD COLUMN IF NOT EXISTS ras TEXT")
         cursor.execute("ALTER TABLE teelten ADD COLUMN IF NOT EXISTS aantal_planten INTEGER")
+        # Gemeten uitval in procenten. Normaal rekent de app die uit de emmers,
+        # maar in de oude registratie van tuin 1 staat alleen het percentage.
+        cursor.execute("ALTER TABLE teelten ADD COLUMN IF NOT EXISTS uitval_pct REAL")
         cursor.execute("ALTER TABLE teelten ADD COLUMN IF NOT EXISTS code TEXT")
 
         # Migratie: voeg het vaknummer toe aan teeltvakken.
@@ -744,7 +747,8 @@ def get_alle_teelten_detail(tuin_id=None):
         cursor = conn.cursor()
         cursor.execute("""
             SELECT t.id, t.code, v.vaknummer, t.datum_teelt_start, t.datum_half, t.lengte_half,
-                   t.datum_oogst, t.lengte_eind, t.oogstgewicht, t.rijpheid, t.aantal_planten
+                   t.datum_oogst, t.lengte_eind, t.oogstgewicht, t.rijpheid, t.aantal_planten,
+                   t.uitval_pct
             FROM teelten t
             JOIN teeltvakken v ON t.teeltvak_id = v.id
             WHERE v.tuin_id = %s
@@ -754,7 +758,8 @@ def get_alle_teelten_detail(tuin_id=None):
 
     resultaat = []
     for (teelt_id, code, vaknummer, start, half_datum, half_lengte,
-         oogst_datum, eind_lengte, gewicht, rijpheid, aantal_planten) in rijen:
+         oogst_datum, eind_lengte, gewicht, rijpheid, aantal_planten,
+         uitval_pct) in rijen:
         resultaat.append({
             "id": teelt_id,
             "code": code,
@@ -766,6 +771,7 @@ def get_alle_teelten_detail(tuin_id=None):
             "lengte_eind": eind_lengte,
             "oogstgewicht": gewicht,
             "rijpheid": rijpheid,
+            "uitval_pct": uitval_pct,
             "aantal_planten": aantal_planten,
         })
     return resultaat
@@ -927,19 +933,22 @@ def verwijder_oogstregistratie(registratie_id, gebruiker=None):
     log_wijziging(gebruiker, "verwijderd", "oogstregistratie", registratie_id, omschrijving)
 
 
-def get_totaal_emmers_per_teelt():
-    """Geeft een dict {teelt_id: totaal_aantal_emmers} terug voor alle teelten met registraties."""
+def get_totaal_emmers_per_teelt(tuin_id=None):
+    """Geeft een dict {teelt_id: totaal_aantal_emmers} terug voor de teelten van een tuin."""
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT teelt_id, SUM(aantal_emmers)
-            FROM oogstregistraties
-            GROUP BY teelt_id
-        """)
+            SELECT o.teelt_id, SUM(o.aantal_emmers)
+            FROM oogstregistraties o
+            JOIN teelten t ON t.id = o.teelt_id
+            JOIN teeltvakken v ON v.id = t.teeltvak_id
+            WHERE v.tuin_id = %s
+            GROUP BY o.teelt_id
+        """, (_tuin_of_standaard(tuin_id),))
         return {teelt_id: totaal for teelt_id, totaal in cursor.fetchall()}
 
 
-def get_oogstregistraties_voor_periode(datum_start, datum_eind):
+def get_oogstregistraties_voor_periode(datum_start, datum_eind, tuin_id=None):
     """
     Geeft alle oogstmomenten (emmers) binnen een periode terug, met vak en
     teeltcode erbij — voor het weekoverzicht. Lijst van dicts, gesorteerd op
@@ -952,9 +961,9 @@ def get_oogstregistraties_voor_periode(datum_start, datum_eind):
             FROM oogstregistraties o
             JOIN teelten t ON o.teelt_id = t.id
             JOIN teeltvakken v ON t.teeltvak_id = v.id
-            WHERE o.datum BETWEEN %s AND %s
+            WHERE v.tuin_id = %s AND o.datum BETWEEN %s AND %s
             ORDER BY v.vaknummer, o.datum
-        """, (str(datum_start), str(datum_eind)))
+        """, (_tuin_of_standaard(tuin_id), str(datum_start), str(datum_eind)))
         return [
             {"datum": datum, "vaknummer": vaknummer, "code": code, "aantal_emmers": emmers}
             for datum, vaknummer, code, emmers in cursor.fetchall()
@@ -1067,7 +1076,8 @@ def get_overzicht_dataframe(tuin_id=None):
                 t.datum_oogst,
                 t.lengte_eind,
                 t.oogstgewicht,
-                t.rijpheid
+                t.rijpheid,
+                t.uitval_pct
             FROM teelten t
             JOIN teeltvakken v ON t.teeltvak_id = v.id
             WHERE v.tuin_id = %s
@@ -1081,7 +1091,7 @@ def get_overzicht_dataframe(tuin_id=None):
     rijen_uitgebreid = []
     for row in teelt_rijen:
         (teelt_id, code, naam, aantal_planten, start, half_datum, half_lengte,
-         oogst_datum, eind_lengte, gewicht, rijpheid) = row
+         oogst_datum, eind_lengte, gewicht, rijpheid, uitval_gemeten) = row
 
         start_week = get_weeknummer(start) if start else "-"
         teeltduur = get_teeltduur(start, oogst_datum) if (start and oogst_datum) else "-"
@@ -1089,8 +1099,12 @@ def get_overzicht_dataframe(tuin_id=None):
         totaal_emmers = totaal_emmers_per_teelt.get(teelt_id)
         totaal_stelen = totaal_emmers * 100 if totaal_emmers else "-"
 
+        # Zijn er emmers geteld, dan is dat de bron; anders het percentage dat
+        # bij de teelt zelf is vastgelegd (zoals bij de oude registratie van tuin 1).
         if aantal_planten and totaal_emmers:
             uitval_pct = f"{(aantal_planten - totaal_emmers * 100) / aantal_planten * 100:.2f}"
+        elif uitval_gemeten is not None:
+            uitval_pct = f"{uitval_gemeten:.2f}"
         else:
             uitval_pct = "-"
 
@@ -1741,7 +1755,7 @@ def get_klimaatdata_dekking(tuin_id=None):
     return resultaat
 
 
-def get_klimaat_overzicht_dataframe():
+def get_klimaat_overzicht_dataframe(tuin_id=None):
     """
     Koppelt de opgeslagen klimaatdata aan elke teelt (via vaknummer ->
     afdeling en de teeltperiode) en geeft kolommen + rijen terug voor
@@ -1754,22 +1768,23 @@ def get_klimaat_overzicht_dataframe():
             SELECT t.id, t.code, v.naam, v.vaknummer, t.datum_teelt_start, t.datum_oogst
             FROM teelten t
             JOIN teeltvakken v ON t.teeltvak_id = v.id
+            WHERE v.tuin_id = %s
             ORDER BY (t.code IS NULL), t.code
-        """)
+        """, (_tuin_of_standaard(tuin_id),))
         teelt_rijen = cursor.fetchall()
 
     rijen = []
     for teelt_id, code, naam, vaknummer, start, oogst in teelt_rijen:
-        afdeling = afdeling_van_vaknummer(vaknummer)
+        afdeling = afdeling_van_vak(vaknummer, tuin_id)
         if not afdeling:
             continue
 
         eind = oogst or str(date.today())
-        klimaat = get_klimaat_voor_periode(afdeling, start, eind)
+        klimaat = get_klimaat_voor_periode(afdeling, start, eind, tuin_id=tuin_id)
         if not klimaat:
             continue
 
-        water = get_watergift_voor_periode(vaknummer, start, eind) if vaknummer else None
+        water = get_watergift_voor_periode(vaknummer, start, eind, tuin_id=tuin_id) if vaknummer else None
         warmte = get_warmte_voor_periode(vaknummer, start, eind) if vaknummer else None
 
         ideaal = ideale_etmaaltemperatuur(klimaat["gem_stralingssom_dag"])

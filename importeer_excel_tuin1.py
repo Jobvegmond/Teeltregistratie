@@ -124,7 +124,7 @@ def lees_oogstdag(waarde, jaar, plantweek):
 
 
 def lees_aantekeningen(wb):
-    """(jaar, plantweek) -> vakken, eerste en laatste oogstdag, lengte."""
+    """(jaar, plantweek) -> vakken, Florgib, oogstdagen, lengte en uitval."""
     per_planting = {}
     rijen = wb["Aantekeningen"].iter_rows(values_only=True)
     next(rijen)
@@ -137,11 +137,17 @@ def lees_aantekeningen(wb):
         if (jaar, week) < VANAF:
             continue
         vakken = [int(v) for v in re.findall(r"\d+", str(tralie or ""))]
+        # De uitval staat als deel van 1 (0,0316 = 3,16%).
+        uitval = rij[12] if isinstance(rij[12], (int, float)) else None
         per_planting[(jaar, week)] = {
             "vakken": vakken,
+            # Kolom Florgib is de dag van toedienen, kolom Lengte de lengte op dat moment.
+            "florgib": lees_oogstdag(rij[4], jaar, week),
+            "florgib_lengte": float(rij[6]) if isinstance(rij[6], (int, float)) else None,
             "eerste_oogst": lees_oogstdag(rij[9], jaar, week),
             "laatste_oogst": lees_oogstdag(rij[10], jaar, week),
             "lengte": float(rij[11]) if isinstance(rij[11], (int, float)) else None,
+            "uitval_pct": round(uitval * 100, 2) if uitval is not None else None,
         }
     return per_planting
 
@@ -247,8 +253,15 @@ def bouw_teelten(stek, aantekeningen, teeltweken):
                   f"(Aantekeningen: {planting['vakken']})")
         teelten.append({
             "vak": vak, "start": gegevens["plantdatum"], "oogst": oogst,
-            "planten": gegevens["planten"], "ras": gegevens["ras"],
+            # Het aantal planten komt uit het vak zelf (het aantal bij 60 stelen
+            # per m2), niet uit het afgeronde getal in Excel: op tuin 1 wordt
+            # altijd op 60 geplant, dus 53064 in een heel vak en 26532 in vak 1.
+            "planten": database.stelen_bij_60_van_vak(vak) or gegevens["planten"],
+            "ras": gegevens["ras"],
             "lengte": planting.get("lengte"),
+            "florgib": planting.get("florgib"),
+            "florgib_lengte": planting.get("florgib_lengte"),
+            "uitval_pct": planting.get("uitval_pct"),
         })
     return teelten, geschat, zonder_oogst, oogstduur
 
@@ -306,6 +319,49 @@ def stek_bij_teelten(stek, tuin_id):
     return koppel, geen_teelt, al_ingevuld
 
 
+def werk_bij(teelten, tuin_id):
+    """
+    Vult bij teelten die al in de database staan de velden aan die Excel wél
+    heeft: het plantaantal van het vak, de Florgib-meting, de uitval, de
+    oogstdatum en de oogstlengte. Wat al ingevuld is blijft staan (behalve het
+    plantaantal, dat hoort per vak vast te liggen), zodat werk in de app niet
+    overschreven wordt. Geeft het aantal bijgewerkte teelten terug.
+    """
+    velden = [
+        ("datum_half", lambda t: str(t["florgib"]) if t["florgib"] else None),
+        ("lengte_half", lambda t: t["florgib_lengte"]),
+        ("uitval_pct", lambda t: t["uitval_pct"]),
+        ("datum_oogst", lambda t: str(t["oogst"]) if t["oogst"] else None),
+        ("lengte_eind", lambda t: t["lengte"]),
+    ]
+    bijgewerkt = 0
+    with database.get_connection() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT t.id, v.vaknummer, t.datum_teelt_start
+            FROM teelten t JOIN teeltvakken v ON v.id = t.teeltvak_id
+            WHERE v.tuin_id = %s
+        """, (tuin_id,))
+        per_vakweek = {(vak, date.fromisoformat(start[:10]).isocalendar()[:2]): tid
+                       for tid, vak, start in cur.fetchall()}
+        for t in teelten:
+            teelt_id = per_vakweek.get((t["vak"], t["start"].isocalendar()[:2]))
+            if teelt_id is None:
+                continue
+            zetters = ["aantal_planten = %s"]
+            waarden = [t["planten"]]
+            for kolom, haal_op in velden:
+                waarde = haal_op(t)
+                if waarde is not None:
+                    zetters.append(f"{kolom} = COALESCE({kolom}, %s)")
+                    waarden.append(waarde)
+            cur.execute(f"UPDATE teelten SET {', '.join(zetters)} WHERE id = %s",
+                        waarden + [teelt_id])
+            bijgewerkt += cur.rowcount
+        conn.commit()
+    return bijgewerkt
+
+
 def schrijf(teelten, tuin_id):
     with database.get_connection() as conn:
         cur = conn.cursor()
@@ -313,13 +369,16 @@ def schrijf(teelten, tuin_id):
             ras = t["ras"] if t["ras"] and t["ras"] != database.STANDAARD_RAS else None
             cur.execute("""
                 INSERT INTO teelten (teeltvak_id, datum_teelt_start, datum_oogst,
-                                     aantal_planten, code, ras, lengte_eind)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                                     aantal_planten, code, ras, lengte_eind,
+                                     datum_half, lengte_half, uitval_pct)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
                 database.get_of_maak_teeltvak(t["vak"], tuin_id=tuin_id),
                 str(t["start"]), str(t["oogst"]) if t["oogst"] else None,
                 t["planten"], database.genereer_teelt_code(t["start"], t["vak"]),
                 ras, t["lengte"],
+                str(t["florgib"]) if t["florgib"] else None, t["florgib_lengte"],
+                t["uitval_pct"],
             ))
         conn.commit()
 
@@ -361,6 +420,9 @@ def main():
           f"(waarvan {geschat} geschat uit de eerste oogstdag of de oogstweek), "
           f"{zonder_oogst} nog lopend")
     print("Rassen: " + ", ".join(f"{r} {a}x" for r, a in Counter(t["ras"] for t in teelten).items()))
+    print(f"Florgib: {sum(1 for t in teelten if t['florgib'])} met datum, "
+          f"{sum(1 for t in teelten if t['florgib_lengte'])} met lengte | "
+          f"uitval bekend bij {sum(1 for t in teelten if t['uitval_pct'] is not None)} teelten")
     if nieuw:
         duren = [(t["oogst"] - t["start"]).days for t in nieuw if t["oogst"]]
         print(f"Periode: gestart {min(t['start'] for t in nieuw):%d-%m-%y} t/m "
@@ -385,6 +447,18 @@ def main():
             f"{max(t['start'] for t in nieuw):%d-%m-%y})"
         )
         print(f"\n{len(nieuw)} teelten geïmporteerd.")
+
+    if args.uitvoeren:
+        # Teelten die er al stonden krijgen alsnog de velden die Excel wél heeft.
+        bijgewerkt = werk_bij(teelten, tuin_id)
+        if bijgewerkt:
+            database.log_wijziging(
+                GEBRUIKER, "gewijzigd", "teelt", None,
+                f"{bijgewerkt} teelten van tuin 1 aangevuld uit Excel "
+                "(plantaantal, Florgib, uitval, oogst)"
+            )
+            print(f"{bijgewerkt} bestaande teelten aangevuld "
+                  "(plantaantal, Florgib, uitval, oogst).")
 
     # Pas na de teelten: een beoordeling hangt aan een teelt die nu pas bestaat.
     koppel, geen_teelt, al_ingevuld = stek_bij_teelten(stek, tuin_id)
