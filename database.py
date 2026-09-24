@@ -751,7 +751,7 @@ def get_teelt_by_id(teelt_id):
         cursor.execute("""
             SELECT t.id, v.naam, v.vaknummer, t.datum_teelt_start, t.datum_half, t.lengte_half,
                    t.datum_oogst, t.lengte_eind, t.oogstgewicht, t.rijpheid,
-                   t.aantal_planten, t.code
+                   t.aantal_planten, t.code, t.ras
             FROM teelten t
             JOIN teeltvakken v ON t.teeltvak_id = v.id
             WHERE t.id = %s
@@ -774,6 +774,7 @@ def get_teelt_by_id(teelt_id):
         "rijpheid": rij[9],
         "aantal_planten": rij[10],
         "code": rij[11],
+        "ras": rij[12],
     }
 
 

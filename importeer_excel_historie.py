@@ -170,13 +170,19 @@ def bouw_teelten(stek, teeltweken):
 
 
 def bestaande_teelten():
+    """
+    De teelten die al in de database staan, als (vak, plantweek). Excel en de
+    app wijken soms een dag af in de plantdatum; een vak heeft nooit twee
+    teelten in één week, dus op vak + week herken je ze toch als dezelfde.
+    """
     with database.get_connection() as conn:
         cur = conn.cursor()
         cur.execute("""
             SELECT v.vaknummer, t.datum_teelt_start
             FROM teelten t JOIN teeltvakken v ON v.id = t.teeltvak_id
         """)
-        return {(vak, start[:10]) for vak, start in cur.fetchall()}
+        return {(vak, date.fromisoformat(start[:10]).isocalendar()[:2])
+                for vak, start in cur.fetchall()}
 
 
 def stek_bij_teelten(stek):
@@ -244,7 +250,8 @@ def main():
     teelten, overgeslagen, laatste_bijgehouden = bouw_teelten(stek, lees_teeltweken(wb))
 
     bestaand = bestaande_teelten()
-    nieuw = [t for t in teelten if (t["vak"], str(t["start"])) not in bestaand]
+    nieuw = [t for t in teelten
+             if (t["vak"], t["start"].isocalendar()[:2]) not in bestaand]
     if len(nieuw) < len(teelten):
         overgeslagen["staat al in de database"] += len(teelten) - len(nieuw)
 

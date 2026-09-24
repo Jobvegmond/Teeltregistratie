@@ -17,3 +17,7 @@ priva_horti.py
 
 # Oude Excel-registratie (bron voor importeer_excel_historie.py), niet in git
 Teelt/
+
+# Priva-weekexports (bron voor importeer_priva_map.py), bedrijfsgegevens
+Klimaat 2026/
+Energie 2026/
