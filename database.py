@@ -1809,6 +1809,22 @@ def get_klimaatdata_dagen_voor_periode(afdeling, datum_start, datum_eind, tuin_i
         return cursor.fetchall()
 
 
+def laatste_priva_ophaling():
+    """
+    Wanneer de automatische Priva-taak voor het laatst iets heeft weggeschreven,
+    als datetime, of None. Staat die datum ver terug, dan is de taak stil komen
+    te liggen — dat is eerder gebeurd zonder dat iemand het merkte.
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT MAX(tijdstip) FROM wijzigingenlog
+            WHERE gebruiker LIKE 'priva-%' AND entiteit LIKE '%_priva'
+        """)
+        rij = cursor.fetchone()
+    return rij[0] if rij else None
+
+
 def get_klimaatdata_dekking(tuin_id=None):
     """
     Geeft per afdeling terug tot welke dag er klimaatdata is geimporteerd:

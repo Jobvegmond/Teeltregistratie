@@ -38,6 +38,7 @@ from database import (
     afdeling_van_vak,
     get_klimaatdata_dagen_voor_periode,
     get_klimaatdata_dekking,
+    laatste_priva_ophaling,
     get_klimaat_voor_periode,
     importeer_watergift_uit_priva,
     get_watergift_dekking,
@@ -2561,6 +2562,25 @@ with tab_klimaat:
                 if water_dekking:
                     laatste_water = max(r[2] for r in water_dekking)
                     st.caption(f"Watergift: {len(water_dekking)} vakken, tot {format_datum(laatste_water)}.")
+
+                # De automatische taak kan stilvallen zonder dat iemand het ziet;
+                # Priva bewaart maar vijf dagen, dus dat moet snel opvallen.
+                laatste_priva = laatste_priva_ophaling()
+                if laatste_priva is None:
+                    st.warning("De automatische Priva-taak heeft nog nooit gedraaid.")
+                else:
+                    uren_geleden = (
+                        datetime.now(laatste_priva.tzinfo) - laatste_priva
+                    ).total_seconds() / 3600
+                    wanneer = f"{format_datum(laatste_priva.date())} om {laatste_priva:%H:%M}"
+                    if uren_geleden > 36:
+                        st.warning(
+                            f"⚠️ Laatste automatische ophaling: {wanneer}, "
+                            f"{uren_geleden / 24:.0f} dagen geleden. Priva bewaart 5 dagen, "
+                            "dus controleer de taak voordat er een gat ontstaat."
+                        )
+                    else:
+                        st.caption(f"Laatste automatische ophaling: {wanneer}.")
             else:
                 st.caption("Priva-koppeling niet geconfigureerd (PRIVA_CLIENT_ID ontbreekt).")
 

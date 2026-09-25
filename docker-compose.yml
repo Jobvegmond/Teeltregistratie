@@ -39,6 +39,10 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgresql://vem:${DB_WACHTWOORD}@db:5432/vem_teelt
+      # Zolang de app die iedereen gebruikt nog op Render draait, haalt de
+      # Priva-taak op de NAS de data op voor die database. Staat in .env, zodat
+      # er geen wachtwoord in de taakregel van de Taakplanner hoeft.
+      DATABASE_URL_PRODUCTIE: ${DATABASE_URL_PRODUCTIE:-}
       AUTH_COOKIE_KEY: ${AUTH_COOKIE_KEY:?zet AUTH_COOKIE_KEY in .env}
       PRIVA_CLIENT_ID: ${PRIVA_CLIENT_ID}
       PRIVA_CLIENT_SECRET: ${PRIVA_CLIENT_SECRET}
