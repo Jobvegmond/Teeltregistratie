@@ -1254,8 +1254,8 @@ with tab_meer:
 with tab_beide:
     st.subheader("🌍 Beide tuinen")
     st.caption(
-        "De stand van tuin 1 en tuin 3 samen: hoe ze er nu voor staan, hoe ze tegen elkaar "
-        "afsteken, waar en wanneer er geoogst wordt, en wat de komende weken te verwachten is."
+        "Het bedrijf als geheel: kengetallen van beide tuinen samen en per tuin, het verloop "
+        "per periode, en wat de komende weken te verwachten is."
     )
     _bt_laatste_priva = laatste_priva_ophaling()
     if _bt_laatste_priva:
@@ -1285,35 +1285,158 @@ with tab_beide:
                 _bt_k["geoogste_stelen"] / _bt_opp
                 if _bt_k["geoogste_stelen"] and _bt_opp else None
             )
-
-    # --- Hoe staan we ervoor: kengetallen naast elkaar, per tuin ---
-    _bt_kol_a, _bt_kol_b = st.columns(2)
-    for _bt_kolom, _bt_tuin in zip((_bt_kol_a, _bt_kol_b), _bt_tuinen):
-        with _bt_kolom:
-            _bt_ov_kol, _bt_ov_rijen = get_overzicht_dataframe(_bt_tuin["id"])
-            _bt_ov_df = pd.DataFrame(_bt_ov_rijen, columns=_bt_ov_kol)
-            _bt_duren = pd.to_numeric(
-                _bt_ov_df.loc[_bt_ov_df["Teeltduur (dagen)"] != "-", "Teeltduur (dagen)"], errors="coerce"
+            _bt_k["gewicht_per_10cm"] = (
+                _bt_k["oogstgewicht"] / _bt_k["lengte_eind"] * 10
+                if _bt_k["oogstgewicht"] and _bt_k["lengte_eind"] else None
             )
-            _bt_actief = len(_bt_ov_df[_bt_ov_df["Status"] == "Lopend"])
-            _bt_totaal_vakken = len(get_vaknummers(_bt_tuin["id"])) or 1
-            toon_kengetallen([
-                {"label": "Gem. duur", "waarde": f"{_bt_duren.mean():.0f} dgn" if len(_bt_duren) else "-",
-                 "help": "Over alle afgeronde teelten sinds de start van deze tuin."},
-                {"label": "Bezetting", "waarde": f"{_bt_actief / _bt_totaal_vakken * 100:.0f}%",
-                 "help": f"{_bt_actief} van de {_bt_totaal_vakken} vakken heeft nu een lopende teelt."},
-            ], titel=f"🏡 {_bt_tuin['naam']}")
+            _bt_k["lengtefactor"] = (
+                _bt_k["lengte_eind"] / _bt_k["lengte_half"]
+                if _bt_k["lengte_eind"] and _bt_k["lengte_half"] else None
+            )
+            # Water en warmte zijn sommen over de teelt: alleen meetellen als
+            # (vrijwel) de hele teelt gemeten is, anders lijkt een half gevulde
+            # teelt zuinig.
+            _bt_volledig = 0.9 * _bt_k["looptijd_dagen"]
+            _bt_k["water_per_teelt"] = (
+                _bt_k["liters"] if _bt_k["liters"] and _bt_k["waterdagen"] >= _bt_volledig else None
+            )
+            _bt_k["warmte_per_teelt"] = (
+                _bt_k["warmte_mj_per_m2"]
+                if _bt_k["warmte_mj_per_m2"] and _bt_k["energiedagen"] >= _bt_volledig else None
+            )
+
+    # --- Kengetallen: afgelopen 12 maanden, bedrijf samen en per tuin ---
+    #
+    # Elke groep wordt vergeleken met zichzelf een jaar eerder (de kleine regel
+    # onder de waarde), niet met de andere tuin. Tuin 1 bestaat pas sinds
+    # december 2025 en heeft dus nog geen vorig jaar.
+    _bt_jaar_van = _bt_vandaag - timedelta(days=365)
+    _bt_vorig_van = _bt_jaar_van - timedelta(days=365)
+
+    def _bt_geoogst_tussen(teelten, van, tot):
+        """Afgeronde teelten met een oogstdatum in (van, tot]."""
+        return [
+            k for k in teelten
+            if k["datum_oogst"] and van < datetime.strptime(k["datum_oogst"], "%Y-%m-%d").date() <= tot
+        ]
+
+    def _bt_gem(teelten, veld):
+        waarden = [k[veld] for k in teelten if k[veld] is not None]
+        return sum(waarden) / len(waarden) if waarden else None
+
+    def _bt_samenvatting(teelten, oppervlakte):
+        geoogst = sum(k["geoogste_stelen"] or 0 for k in teelten)
+        return {
+            "teelten": len(teelten) or None,
+            "stelen": geoogst or None,
+            "stelen_m2_jaar": geoogst / oppervlakte if geoogst and oppervlakte else None,
+            "stelen_m2": _bt_gem(teelten, "geoogste_stelen_per_m2"),
+            "uitval": _bt_gem(teelten, "uitval_pct"),
+            "gewicht": _bt_gem(teelten, "oogstgewicht"),
+            "lengte": _bt_gem(teelten, "lengte_eind"),
+            "gewicht_10cm": _bt_gem(teelten, "gewicht_per_10cm"),
+            "lengtefactor": _bt_gem(teelten, "lengtefactor"),
+            "teeltduur": _bt_gem(teelten, "teeltduur"),
+            "temperatuur": _bt_gem(teelten, "gem_temperatuur"),
+            "lichtsom": _bt_gem(teelten, "lichtsom_per_dag"),
+            "water": _bt_gem(teelten, "water_per_teelt"),
+            "warmte": _bt_gem(teelten, "warmte_per_teelt"),
+        }
+
+    def _bt_getal(waarde, decimalen=0):
+        return f"{waarde:,.{decimalen}f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+    # (sleutel, label, eenheid, decimalen, uitleg)
+    _bt_tegel_defs = [
+        ("teelten", "Afgeronde teelten", "", 0, "Teelten met een oogstdatum in de afgelopen 12 maanden."),
+        ("stelen", "Geoogste stelen", "", 0,
+         "Geplant minus bekende uitval (uit emmers, of het vastgelegde percentage)."),
+        ("stelen_m2_jaar", "Stelen per m² per jaar", "", 0,
+         "Geoogste stelen in 12 maanden gedeeld door de totale teeltoppervlakte: "
+         "de productiviteit van de kas als geheel."),
+        ("stelen_m2", "Stelen per m² per teelt", "", 1, "Gemiddelde geoogste dichtheid per vak."),
+        ("uitval", "Uitval", "%", 1, "Gemiddelde uitval per teelt."),
+        ("gewicht", "Takgewicht", "g", 0, "Gemiddeld oogstgewicht per tak (voor zover gewogen)."),
+        ("lengte", "Taklengte", "cm", 1, "Gemiddelde lengte bij de oogst."),
+        ("gewicht_10cm", "Gewicht per 10 cm", "g", 1, "Takgewicht gedeeld door taklengte, maal 10."),
+        ("lengtefactor", "Lengtefactor", "", 2, "Lengte bij de oogst gedeeld door de lengte halverwege."),
+        ("teeltduur", "Teeltduur", "dgn", 0, "Van planten tot oogst."),
+        ("temperatuur", "Etmaaltemperatuur", "°C", 1, "Gemiddeld over de teelt, in de eigen afdeling."),
+        ("lichtsom", "Lichtsom per dag", "J/cm²", 0, "Gemiddelde dagelijkse straling tijdens de teelt."),
+        ("water", "Water per teelt", "l/m²", 0, "Alleen teelten waarvan de watergift (vrijwel) compleet is."),
+        ("warmte", "Warmte per teelt", "MJ/m²", 0, "Alleen teelten waarvan het energieverbruik compleet is."),
+    ]
+
+    def _bt_heeft_teelt_voor(tuin, grens):
+        return any(
+            datetime.strptime(k["datum_teelt_start"], "%Y-%m-%d").date() <= grens for k in _bt_kg[tuin["id"]]
+        )
+
+    def _bt_toon_tegels(tuinen, titel):
+        teelten = [k for t in tuinen for k in _bt_kg[t["id"]]]
+        oppervlakte = _bt_oppervlakte(tuinen)
+        nu = _bt_samenvatting(_bt_geoogst_tussen(teelten, _bt_jaar_van, _bt_vandaag), oppervlakte)
+        # Alleen een jaar-op-jaarverschil als elke tuin in de groep toen ook al
+        # teelde; anders vergelijk je tuin 3 alleen met tuin 1 + 3 samen.
+        vol_jaar = all(_bt_heeft_teelt_voor(t, _bt_jaar_van) for t in tuinen)
+        vorig = (
+            _bt_samenvatting(_bt_geoogst_tussen(teelten, _bt_vorig_van, _bt_jaar_van), oppervlakte)
+            if all(_bt_heeft_teelt_voor(t, _bt_vorig_van) for t in tuinen) else {}
+        )
+        tegels = _bt_bezetting(tuinen)
+        for sleutel, label, eenheid, decimalen, uitleg in _bt_tegel_defs:
+            waarde = nu[sleutel]
+            tegel = {"label": label, "help": uitleg,
+                     "waarde": f"{_bt_getal(waarde, decimalen)} {eenheid}".strip() if waarde is not None else "-"}
+            if waarde is not None and not vol_jaar and sleutel in ("teelten", "stelen", "stelen_m2_jaar"):
+                tegel["delta"] = "nog geen volledig jaar"
+            elif waarde is not None and vorig.get(sleutel) is not None:
+                verschil = waarde - vorig[sleutel]
+                teken = "" if round(verschil, decimalen) == 0 else "+" if verschil > 0 else "−"
+                tegel["delta"] = " ".join(
+                    d for d in (f"{teken}{_bt_getal(abs(verschil), decimalen)}", eenheid, "t.o.v. jaar ervoor") if d
+                )
+            tegels.append(tegel)
+        toon_kengetallen(tegels, titel=titel)
+
+    def _bt_bezetting(tuinen):
+        lopend = len({
+            (t["id"], k["vaknummer"]) for t in tuinen for k in _bt_kg[t["id"]]
+            if not k["datum_oogst"] and k["datum_teelt_start"] <= str(_bt_vandaag)
+        })
+        vakken = sum(len(get_vaknummers(t["id"])) for t in tuinen) or 1
+        return [
+            {"label": "Bezetting nu", "waarde": f"{lopend / vakken * 100:.0f}%",
+             "help": f"{lopend} van de {vakken} vakken heeft nu een lopende teelt."},
+            {"label": "Teeltoppervlakte", "waarde": f"{_bt_getal(_bt_oppervlakte(tuinen))} m²",
+             "help": "Som van de oppervlakte van alle vakken."},
+        ]
+
+    def _bt_oppervlakte(tuinen):
+        return sum(
+            v["oppervlakte_m2"] or 0 for t in tuinen for v in _bt_vakgegevens[t["id"]].values()
+        )
+
+    st.write("**Afgelopen 12 maanden**")
+    st.caption(
+        f"Teelten geoogst van {format_datum(_bt_jaar_van + timedelta(days=1))} t/m "
+        f"{format_datum(_bt_vandaag)}. De kleine regel onder een getal is het verschil met "
+        "dezelfde groep in de 12 maanden daarvoor."
+    )
+    _bt_toon_tegels(_bt_tuinen, "🌍 Bedrijf (beide tuinen)")
+    for _bt_tuin in _bt_tuinen:
+        _bt_toon_tegels([_bt_tuin], f"🏡 {_bt_tuin['naam']}")
 
     st.markdown("---")
 
-    # --- Meer inzichten: hoeveel oogsten we, en waar verschillen de tuinen ---
+    # --- Verloop per periode ---
     #
     # Eén cijfer over de hele geschiedenis bleek niet eerlijk te vergelijken:
     # tuin 1 bestaat nog maar sinds december en zijn afgeronde teelten liggen
     # daardoor vooral in het lichtere voorjaar/zomer, terwijl tuin 3 een heel
     # jaar meeneemt (incl. de donkere maanden). Alles hieronder gaat daarom
     # per periode, op de oogstdatum, met één periode-kiezer voor alles samen.
-    st.write("**Meer inzichten**")
+    st.write("**Verloop per periode**")
     _bt_periode_naam = st.radio(
         "Periode", ["Week", "Maand", "Kwartaal", "Jaar"], index=1, horizontal=True, key="bt_periode",
     )
@@ -1361,31 +1484,8 @@ with tab_beide:
                 })
         return pd.DataFrame(_bt_rijen)
 
-    # --- Opvallend: de grootste, betrouwbare kloof op geoogste dichtheid ---
-    _bt_stelen_reeks = _bt_reeks("geoogste_stelen_per_m2")
-    _bt_vergelijk_periode = None
-    for _bt_sleutel in reversed(_bt_sleutels):
-        _bt_entry = _bt_stelen_reeks[_bt_sleutel]
-        if all(len(_bt_entry.get(t["nummer"], [])) >= 2 for t in _bt_tuinen):
-            _bt_vergelijk_periode = _bt_sleutel
-            break
-    if _bt_vergelijk_periode:
-        _bt_entry = _bt_stelen_reeks[_bt_vergelijk_periode]
-        _bt_gems = {
-            t["naam"]: sum(_bt_entry[t["nummer"]]) / len(_bt_entry[t["nummer"]]) for t in _bt_tuinen
-        }
-        _bt_hoog_naam = max(_bt_gems, key=_bt_gems.get)
-        _bt_laag_naam = min(_bt_gems, key=_bt_gems.get)
-        if _bt_gems[_bt_laag_naam] > 0 and _bt_hoog_naam != _bt_laag_naam:
-            _bt_verschil_pct = (_bt_gems[_bt_hoog_naam] / _bt_gems[_bt_laag_naam] - 1) * 100
-            st.info(
-                f"💡 {_bt_alle_sleutels[_bt_vergelijk_periode]}: **{_bt_hoog_naam}** oogstte gemiddeld "
-                f"**{_bt_verschil_pct:.0f}% meer stelen per m²** dan {_bt_laag_naam} "
-                f"({_bt_gems[_bt_hoog_naam]:.1f} tegen {_bt_gems[_bt_laag_naam]:.1f} stelen/m²)."
-            )
-
     # --- Hoeveel oogsten we ---
-    st.write("Hoeveel oogsten we")
+    st.write("Geoogste stelen")
     _bt_stelen_eenheid = st.radio(
         "Eenheid", ["Totaal", "Per m²"], horizontal=True, key="bt_stelen_eenheid",
     )
@@ -1395,38 +1495,39 @@ with tab_beide:
         st.info("Nog geen afgeronde teelten met een bekend plantaantal.")
     else:
         _bt_titel_stelen = "Geoogste stelen" if _bt_stelen_eenheid == "Totaal" else "Geoogste stelen per m²"
-        _bt_bar = (
-            alt.Chart(_bt_df_stelen)
-            .mark_bar()
-            .encode(
-                x=alt.X("Periode:O", sort=_bt_volgorde, title=None,
-                        axis=alt.Axis(labelAngle=-40 if _bt_periode_naam == "Week" else 0)),
-                y=alt.Y("Waarde:Q", title=_bt_titel_stelen),
-                xOffset=alt.XOffset("Tuin:N"),
-                color=alt.Color("Tuin:N", title=None, legend=alt.Legend(orient="top")),
-                tooltip=["Periode", "Tuin", alt.Tooltip("Waarde:Q", format=",.0f"), "n"],
-            )
-            .properties(height=260)
+        # Totaal gestapeld: de hoogte van de staaf is de oogst van het bedrijf,
+        # de kleuren laten zien uit welke tuin die komt. Per m² is een
+        # gemiddelde en valt niet op te tellen, dus die staan naast elkaar.
+        _bt_bar_x = alt.X("Periode:O", sort=_bt_volgorde, title=None,
+                          axis=alt.Axis(labelAngle=-40 if _bt_periode_naam == "Week" else 0))
+        _bt_bar_encode = dict(
+            x=_bt_bar_x,
+            y=alt.Y("Waarde:Q", title=_bt_titel_stelen),
+            color=alt.Color("Tuin:N", title=None, legend=alt.Legend(orient="top")),
+            tooltip=["Periode", "Tuin", alt.Tooltip("Waarde:Q", format=",.0f"), "n"],
         )
+        if _bt_stelen_eenheid != "Totaal":
+            _bt_bar_encode["xOffset"] = alt.XOffset("Tuin:N")
+        _bt_bar = alt.Chart(_bt_df_stelen).mark_bar().encode(**_bt_bar_encode).properties(height=260)
         st.altair_chart(_bt_bar, use_container_width=True)
         st.caption(
             "Geoogst = geplant minus bekende uitval (uit emmers, of het vastgelegde percentage). "
-            + ("Som per periode." if _bt_stelen_eenheid == "Totaal"
-               else "Gemiddelde per vak per periode — zo komt tuin 1 niet vanzelf hoger uit "
-                    "puur omdat de vakken daar groter zijn.")
+            + ("Som per periode, beide tuinen opgeteld." if _bt_stelen_eenheid == "Totaal"
+               else "Gemiddelde per vak per periode, zodat verschillende vakmaten niet meetellen.")
         )
 
     st.markdown("---")
 
-    # --- Verschillen tussen de tuinen ---
-    st.write("Verschillen tussen de tuinen")
+    # --- Kengetallen per periode ---
+    st.write("Kengetallen per periode")
     _bt_dashboard_metrics = [
-        ("Oogstgewicht", "oogstgewicht", "g", ".0f"),
-        ("Oogstlengte", "lengte_eind", "cm", ".1f"),
+        ("Takgewicht", "oogstgewicht", "g", ".0f"),
+        ("Taklengte", "lengte_eind", "cm", ".1f"),
+        ("Gewicht per 10 cm", "gewicht_per_10cm", "g", ".1f"),
         ("Uitval", "uitval_pct", "%", ".1f"),
         ("Etmaaltemperatuur", "gem_temperatuur", "°C", ".1f"),
-        ("Water per teelt", "liters", "l/m²", ".0f"),
         ("Lichtsom per dag", "lichtsom_per_dag", "J/cm²", ".0f"),
+        ("Water per teelt", "water_per_teelt", "l/m²", ".0f"),
         ("Teeltduur", "teeltduur", "dgn", ".0f"),
     ]
     _bt_mini_kolommen = st.columns(2)
