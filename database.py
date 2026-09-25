@@ -1210,7 +1210,12 @@ KLIMAAT_TEMP_NACHT_LABEL = "Ave_Night_CompTemp"
 KLIMAAT_RV_LABEL = "Ave_24h_CompRV"
 KLIMAAT_RV_DAG_LABEL = "Ave_Day_CompRV"
 KLIMAAT_RV_NACHT_LABEL = "Ave_Night_CompRV"
-KLIMAAT_STRALING_LABELS = ["Sum_Day_CalculatedRadiation", "Sum_Night_CalculatedRadiation"]
+# Eén label voor de hele dag, in plaats van Dag + Nacht optellen: bij tuin 1
+# staat er in de export per ongeluk exact dezelfde waarde onder de nacht- als
+# onder de dagkolom (elke dag, elke afdeling), waardoor de lichtsom daar
+# verdubbelde. Sum_24h_CalculatedRadiation geeft direct het juiste etmaaltotaal
+# en is voor tuin 3 identiek aan de oude dag+nacht-som (nacht is daar ~0).
+KLIMAAT_STRALING_LABELS = ["Sum_24h_CalculatedRadiation"]
 KLIMAAT_GELDIGE_AFDELINGEN = {1, 2, 3, 4}
 
 # Vuistregel licht/temperatuur (Job): bij een hogere lichtsom hoort een
@@ -1581,6 +1586,30 @@ def standaard_oppervlakte_van_vak(vaknummer, tuin_id=None):
 
 
 TUIN3_OPPERVLAKTE_M2 = (39 - len(VAKKEN_SMAL)) * VAK_OPPERVLAKTE_STANDAARD + len(VAKKEN_SMAL) * VAK_OPPERVLAKTE_SMAL
+
+
+def get_vakgegevens(tuin_id=None):
+    """
+    {vaknummer: {"oppervlakte_m2": ..., "stelen_bij_60": ...}} van alle vakken
+    van een tuin, in één keer. Voor omrekeningen van "aantal vakken" naar m²
+    of aantal stelen: tuin 1 en tuin 3 hebben andere vakmaten, dus een aantal
+    vakken zegt niets over hoeveel oppervlak of planten het voorstelt.
+    """
+    tuin_id = _tuin_of_standaard(tuin_id)
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT vaknummer, oppervlakte_m2, stelen_bij_60
+            FROM teeltvakken WHERE tuin_id = %s AND vaknummer IS NOT NULL
+        """, (tuin_id,))
+        rijen = cursor.fetchall()
+    return {
+        vaknummer: {
+            "oppervlakte_m2": float(opp) if opp else standaard_oppervlakte_van_vak(vaknummer, tuin_id),
+            "stelen_bij_60": stelen if stelen is not None else stelen_bij_60_van_vak(vaknummer, tuin_id),
+        }
+        for vaknummer, opp, stelen in rijen
+    }
 
 
 def upsert_energiedata_dag(datum, warmte_mj_totaal, tuin_id=None):
