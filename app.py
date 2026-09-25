@@ -164,6 +164,26 @@ def periode_sleutel(d, periode_naam):
     return (d.year,), str(d.year)
 
 
+def periode_grenzen(sleutel, periode_naam):
+    """Eerste en laatste dag (beide inclusief) van een periode uit periode_sleutel."""
+    if periode_naam == "Week":
+        jaar, week = sleutel
+        # Week 53 bestaat niet elk jaar; dan de laatste week van dat jaar.
+        week = min(week, date(jaar, 12, 28).isocalendar()[1])
+        van = date.fromisocalendar(jaar, week, 1)
+        return van, van + timedelta(days=6)
+    if periode_naam == "Maand":
+        jaar, maand = sleutel
+        volgende = date(jaar + 1, 1, 1) if maand == 12 else date(jaar, maand + 1, 1)
+        return date(jaar, maand, 1), volgende - timedelta(days=1)
+    if periode_naam == "Kwartaal":
+        jaar, kwartaal = sleutel
+        van = date(jaar, 3 * kwartaal - 2, 1)
+        volgende = date(jaar + 1, 1, 1) if kwartaal == 4 else date(jaar, 3 * kwartaal + 1, 1)
+        return van, volgende - timedelta(days=1)
+    return date(sleutel[0], 1, 1), date(sleutel[0], 12, 31)
+
+
 # --- GRAFIEKEN: gedeelde instellingen (één plek, zodat alle grafieken gelijk ogen) ---
 
 # Datumas als dd-mm: nooit Engelse maandnamen ("Oct", "Nov") op de as.
@@ -1293,31 +1313,55 @@ with tab_beide:
                 _bt_k["lengte_eind"] / _bt_k["lengte_half"]
                 if _bt_k["lengte_eind"] and _bt_k["lengte_half"] else None
             )
-            # Water en warmte zijn sommen over de teelt: alleen meetellen als
-            # (vrijwel) de hele teelt gemeten is, anders lijkt een half gevulde
-            # teelt zuinig.
-            _bt_volledig = 0.9 * _bt_k["looptijd_dagen"]
-            _bt_k["water_per_teelt"] = (
-                _bt_k["liters"] if _bt_k["liters"] and _bt_k["waterdagen"] >= _bt_volledig else None
-            )
+            # Warmte is een som over de teelt: alleen meetellen als (vrijwel)
+            # elke dag gemeten is, anders lijkt een half gevulde teelt zuinig.
+            # Voor water kan dat niet zo: watergift staat alleen op de dagen
+            # dat er water gegeven is.
             _bt_k["warmte_per_teelt"] = (
                 _bt_k["warmte_mj_per_m2"]
-                if _bt_k["warmte_mj_per_m2"] and _bt_k["energiedagen"] >= _bt_volledig else None
+                if _bt_k["warmte_mj_per_m2"] and _bt_k["energiedagen"] >= 0.9 * _bt_k["looptijd_dagen"]
+                else None
             )
 
-    # --- Kengetallen: afgelopen 12 maanden, bedrijf samen en per tuin ---
+    # --- Eén periode-kiezer voor het hele tabblad ---
     #
-    # Elke groep wordt vergeleken met zichzelf een jaar eerder (de kleine regel
-    # onder de waarde), niet met de andere tuin. Tuin 1 bestaat pas sinds
-    # december 2025 en heeft dus nog geen vorig jaar.
-    _bt_jaar_van = _bt_vandaag - timedelta(days=365)
-    _bt_vorig_van = _bt_jaar_van - timedelta(days=365)
+    # Eén cijfer over de hele geschiedenis bleek niet eerlijk te vergelijken:
+    # tuin 1 bestaat nog maar sinds december en zijn afgeronde teelten liggen
+    # daardoor vooral in het lichtere voorjaar/zomer, terwijl tuin 3 een heel
+    # jaar meeneemt (incl. de donkere maanden). Alles gaat daarom per periode,
+    # op de oogstdatum.
+    _bt_periode_naam = st.radio(
+        "Periode", ["Week", "Maand", "Kwartaal", "Jaar"], index=1, horizontal=True, key="bt_periode",
+    )
+    _bt_aantal_perioden = {"Week": 16, "Maand": 12, "Kwartaal": 8, "Jaar": 6}[_bt_periode_naam]
+
+    # Eén gedeelde tijdlijn (op de oogstdatum, ongeacht welk kengetal), zodat
+    # tegels en grafieken dezelfde perioden kennen.
+    _bt_alle_sleutels = {}
+    for _bt_tuin in _bt_tuinen:
+        for _bt_k in _bt_kg[_bt_tuin["id"]]:
+            if not _bt_k["datum_oogst"]:
+                continue
+            _bt_d = datetime.strptime(_bt_k["datum_oogst"], "%Y-%m-%d").date()
+            _bt_sleutel, _bt_label = periode_sleutel(_bt_d, _bt_periode_naam)
+            _bt_alle_sleutels[_bt_sleutel] = _bt_label
+    _bt_sleutels = sorted(_bt_alle_sleutels.keys())[-_bt_aantal_perioden:]
+    _bt_volgorde = [_bt_alle_sleutels[s] for s in _bt_sleutels]
+
+    # --- Kengetallen van één periode, bedrijf samen en per tuin ---
+    #
+    # Elke groep wordt vergeleken met zichzelf in dezelfde periode een jaar
+    # eerder (de kleine regel onder de waarde), niet met de andere tuin. Dat
+    # houdt ook het seizoen gelijk. Loopt de periode nog, dan telt het jaar
+    # ervoor tot dezelfde dag mee, anders vergelijk je een halve maand met
+    # een hele.
+    _bt_tegel_sleutels = sorted(_bt_alle_sleutels.keys(), reverse=True)
 
     def _bt_geoogst_tussen(teelten, van, tot):
-        """Afgeronde teelten met een oogstdatum in (van, tot]."""
+        """Afgeronde teelten met een oogstdatum in [van, tot]."""
         return [
             k for k in teelten
-            if k["datum_oogst"] and van < datetime.strptime(k["datum_oogst"], "%Y-%m-%d").date() <= tot
+            if k["datum_oogst"] and van <= datetime.strptime(k["datum_oogst"], "%Y-%m-%d").date() <= tot
         ]
 
     def _bt_gem(teelten, veld):
@@ -1339,7 +1383,7 @@ with tab_beide:
             "teeltduur": _bt_gem(teelten, "teeltduur"),
             "temperatuur": _bt_gem(teelten, "gem_temperatuur"),
             "lichtsom": _bt_gem(teelten, "lichtsom_per_dag"),
-            "water": _bt_gem(teelten, "water_per_teelt"),
+            "water": _bt_gem(teelten, "liters"),
             "warmte": _bt_gem(teelten, "warmte_per_teelt"),
         }
 
@@ -1348,53 +1392,56 @@ with tab_beide:
 
     # (sleutel, label, eenheid, decimalen, uitleg)
     _bt_tegel_defs = [
-        ("teelten", "Afgeronde teelten", "", 0, "Teelten met een oogstdatum in de afgelopen 12 maanden."),
+        ("teelten", "Afgeronde teelten", "", 0, "Teelten met een oogstdatum in deze periode."),
         ("stelen", "Geoogste stelen", "", 0,
          "Geplant minus bekende uitval (uit emmers, of het vastgelegde percentage)."),
-        ("stelen_m2_jaar", "Stelen per m² per jaar", "", 0,
-         "Geoogste stelen in 12 maanden gedeeld door de totale teeltoppervlakte: "
+        ("stelen_m2_jaar", "Stelen per m² kas", "", 1,
+         "Geoogste stelen in deze periode gedeeld door de totale teeltoppervlakte: "
          "de productiviteit van de kas als geheel."),
         ("stelen_m2", "Stelen per m² per teelt", "", 1, "Gemiddelde geoogste dichtheid per vak."),
         ("uitval", "Uitval", "%", 1, "Gemiddelde uitval per teelt."),
-        ("gewicht", "Takgewicht", "g", 0, "Gemiddeld oogstgewicht per tak (voor zover gewogen)."),
-        ("lengte", "Taklengte", "cm", 1, "Gemiddelde lengte bij de oogst."),
-        ("gewicht_10cm", "Gewicht per 10 cm", "g", 1, "Takgewicht gedeeld door taklengte, maal 10."),
+        ("gewicht", "Oogstgewicht", "g", 0, "Gemiddeld vastgelegd oogstgewicht (voor zover gewogen)."),
+        ("lengte", "Oogstlengte", "cm", 1, "Gemiddelde lengte bij de oogst."),
+        ("gewicht_10cm", "Gewicht per 10 cm", "g", 1, "Oogstgewicht gedeeld door oogstlengte, maal 10."),
         ("lengtefactor", "Lengtefactor", "", 2, "Lengte bij de oogst gedeeld door de lengte halverwege."),
         ("teeltduur", "Teeltduur", "dgn", 0, "Van planten tot oogst."),
         ("temperatuur", "Etmaaltemperatuur", "°C", 1, "Gemiddeld over de teelt, in de eigen afdeling."),
         ("lichtsom", "Lichtsom per dag", "J/cm²", 0, "Gemiddelde dagelijkse straling tijdens de teelt."),
-        ("water", "Water per teelt", "l/m²", 0, "Alleen teelten waarvan de watergift (vrijwel) compleet is."),
+        ("water", "Water per teelt", "l/m²", 0, "Totale watergift van planten tot oogst."),
         ("warmte", "Warmte per teelt", "MJ/m²", 0, "Alleen teelten waarvan het energieverbruik compleet is."),
     ]
 
-    def _bt_heeft_teelt_voor(tuin, grens):
-        return any(
-            datetime.strptime(k["datum_teelt_start"], "%Y-%m-%d").date() <= grens for k in _bt_kg[tuin["id"]]
-        )
+    _bt_tellingen = ("teelten", "stelen", "stelen_m2_jaar")
 
-    def _bt_toon_tegels(tuinen, titel):
+    def _bt_toon_tegels(tuinen, titel, venster, vorig_venster, vorig_label):
         teelten = [k for t in tuinen for k in _bt_kg[t["id"]]]
         oppervlakte = _bt_oppervlakte(tuinen)
-        nu = _bt_samenvatting(_bt_geoogst_tussen(teelten, _bt_jaar_van, _bt_vandaag), oppervlakte)
-        # Alleen een jaar-op-jaarverschil als elke tuin in de groep toen ook al
-        # teelde; anders vergelijk je tuin 3 alleen met tuin 1 + 3 samen.
-        vol_jaar = all(_bt_heeft_teelt_voor(t, _bt_jaar_van) for t in tuinen)
-        vorig = (
-            _bt_samenvatting(_bt_geoogst_tussen(teelten, _bt_vorig_van, _bt_jaar_van), oppervlakte)
-            if all(_bt_heeft_teelt_voor(t, _bt_vorig_van) for t in tuinen) else {}
+        nu = _bt_samenvatting(_bt_geoogst_tussen(teelten, *venster), oppervlakte)
+        # Alleen een verschil als elke tuin in de groep toen ook oogstte;
+        # anders vergelijk je tuin 3 alleen met tuin 1 + 3 samen.
+        vorig = {}
+        if all(_bt_geoogst_tussen(_bt_kg[t["id"]], *vorig_venster) for t in tuinen):
+            vorig = _bt_samenvatting(_bt_geoogst_tussen(teelten, *vorig_venster), oppervlakte)
+        # Tellingen (teelten, stelen) zijn alleen te vergelijken als de
+        # registratie toen de hele periode liep, dus als elke tuin al vóór
+        # het begin ervan oogstte. Anders lijkt een half ingevoerd jaar een
+        # slecht jaar. Gemiddelden hebben daar geen last van.
+        vorig_compleet = all(
+            _bt_geoogst_tussen(_bt_kg[t["id"]], date.min, vorig_venster[0] - timedelta(days=1)) for t in tuinen
         )
         tegels = _bt_bezetting(tuinen)
         for sleutel, label, eenheid, decimalen, uitleg in _bt_tegel_defs:
             waarde = nu[sleutel]
             tegel = {"label": label, "help": uitleg,
                      "waarde": f"{_bt_getal(waarde, decimalen)} {eenheid}".strip() if waarde is not None else "-"}
-            if waarde is not None and not vol_jaar and sleutel in ("teelten", "stelen", "stelen_m2_jaar"):
-                tegel["delta"] = "nog geen volledig jaar"
+            if waarde is not None and vorig and not vorig_compleet and sleutel in _bt_tellingen:
+                tegel["delta"] = f"{vorig_label} niet volledig geregistreerd"
             elif waarde is not None and vorig.get(sleutel) is not None:
                 verschil = waarde - vorig[sleutel]
                 teken = "" if round(verschil, decimalen) == 0 else "+" if verschil > 0 else "−"
                 tegel["delta"] = " ".join(
-                    d for d in (f"{teken}{_bt_getal(abs(verschil), decimalen)}", eenheid, "t.o.v. jaar ervoor") if d
+                    d for d in (f"{teken}{_bt_getal(abs(verschil), decimalen)}", eenheid, f"t.o.v. {vorig_label}")
+                    if d
                 )
             tegels.append(tegel)
         toon_kengetallen(tegels, titel=titel)
@@ -1417,43 +1464,41 @@ with tab_beide:
             v["oppervlakte_m2"] or 0 for t in tuinen for v in _bt_vakgegevens[t["id"]].values()
         )
 
-    st.write("**Afgelopen 12 maanden**")
-    st.caption(
-        f"Teelten geoogst van {format_datum(_bt_jaar_van + timedelta(days=1))} t/m "
-        f"{format_datum(_bt_vandaag)}. De kleine regel onder een getal is het verschil met "
-        "dezelfde groep in de 12 maanden daarvoor."
-    )
-    _bt_toon_tegels(_bt_tuinen, "🌍 Bedrijf (beide tuinen)")
-    for _bt_tuin in _bt_tuinen:
-        _bt_toon_tegels([_bt_tuin], f"🏡 {_bt_tuin['naam']}")
+    if not _bt_tegel_sleutels:
+        st.info("Nog geen afgeronde teelten.")
+    else:
+        # Sleutel in plaats van label in de selectbox, zodat de keuze bij een
+        # andere periode-soort gewoon terugvalt op de nieuwste periode.
+        _bt_tegel_sleutel = st.selectbox(
+            "Kengetallen van", _bt_tegel_sleutels, format_func=lambda s: _bt_alle_sleutels[s],
+            key=f"bt_tegel_periode_{_bt_periode_naam}",
+        )
+        _bt_van, _bt_tot = periode_grenzen(_bt_tegel_sleutel, _bt_periode_naam)
+        _bt_lopend = _bt_tot > _bt_vandaag
+        _bt_tot = min(_bt_tot, _bt_vandaag)
+        # Dezelfde periode een jaar eerder, bij een lopende periode tot
+        # dezelfde dag.
+        _bt_vorig_sleutel = (_bt_tegel_sleutel[0] - 1,) + tuple(_bt_tegel_sleutel[1:])
+        _bt_vorig_van, _bt_vorig_eind = periode_grenzen(_bt_vorig_sleutel, _bt_periode_naam)
+        _bt_vorig_tot = min(_bt_vorig_eind, _bt_vorig_van + (_bt_tot - _bt_van))
+        _bt_vorig_label = periode_sleutel(_bt_vorig_van, _bt_periode_naam)[1]
+        st.caption(
+            f"Teelten geoogst van {format_datum(_bt_van)} t/m {format_datum(_bt_tot)}"
+            + (" (loopt nog)" if _bt_lopend else "")
+            + f". De kleine regel onder een getal is het verschil met {_bt_vorig_label}"
+            + (f" t/m {format_datum(_bt_vorig_tot)}" if _bt_lopend else "")
+            + ", alleen als elke tuin in de groep toen ook oogstte."
+        )
+        for _bt_groep, _bt_titel in [(_bt_tuinen, "🌍 Bedrijf (beide tuinen)")] + [
+            ([t], f"🏡 {t['naam']}") for t in _bt_tuinen
+        ]:
+            _bt_toon_tegels(_bt_groep, _bt_titel, (_bt_van, _bt_tot),
+                            (_bt_vorig_van, _bt_vorig_tot), _bt_vorig_label)
 
     st.markdown("---")
 
     # --- Verloop per periode ---
-    #
-    # Eén cijfer over de hele geschiedenis bleek niet eerlijk te vergelijken:
-    # tuin 1 bestaat nog maar sinds december en zijn afgeronde teelten liggen
-    # daardoor vooral in het lichtere voorjaar/zomer, terwijl tuin 3 een heel
-    # jaar meeneemt (incl. de donkere maanden). Alles hieronder gaat daarom
-    # per periode, op de oogstdatum, met één periode-kiezer voor alles samen.
     st.write("**Verloop per periode**")
-    _bt_periode_naam = st.radio(
-        "Periode", ["Week", "Maand", "Kwartaal", "Jaar"], index=1, horizontal=True, key="bt_periode",
-    )
-    _bt_aantal_perioden = {"Week": 16, "Maand": 12, "Kwartaal": 8, "Jaar": 6}[_bt_periode_naam]
-
-    # Eén gedeelde tijdlijn (op de oogstdatum, ongeacht welk kengetal), zodat
-    # alle grafieken hieronder dezelfde perioden op de x-as hebben.
-    _bt_alle_sleutels = {}
-    for _bt_tuin in _bt_tuinen:
-        for _bt_k in _bt_kg[_bt_tuin["id"]]:
-            if not _bt_k["datum_oogst"]:
-                continue
-            _bt_d = datetime.strptime(_bt_k["datum_oogst"], "%Y-%m-%d").date()
-            _bt_sleutel, _bt_label = periode_sleutel(_bt_d, _bt_periode_naam)
-            _bt_alle_sleutels[_bt_sleutel] = _bt_label
-    _bt_sleutels = sorted(_bt_alle_sleutels.keys())[-_bt_aantal_perioden:]
-    _bt_volgorde = [_bt_alle_sleutels[s] for s in _bt_sleutels]
 
     def _bt_reeks(veld):
         """{sleutel: {tuin_nummer: [waarden]}} van een kengetal, op de oogstdatum."""
@@ -1521,13 +1566,13 @@ with tab_beide:
     # --- Kengetallen per periode ---
     st.write("Kengetallen per periode")
     _bt_dashboard_metrics = [
-        ("Takgewicht", "oogstgewicht", "g", ".0f"),
-        ("Taklengte", "lengte_eind", "cm", ".1f"),
+        ("Oogstgewicht", "oogstgewicht", "g", ".0f"),
+        ("Oogstlengte", "lengte_eind", "cm", ".1f"),
         ("Gewicht per 10 cm", "gewicht_per_10cm", "g", ".1f"),
         ("Uitval", "uitval_pct", "%", ".1f"),
         ("Etmaaltemperatuur", "gem_temperatuur", "°C", ".1f"),
         ("Lichtsom per dag", "lichtsom_per_dag", "J/cm²", ".0f"),
-        ("Water per teelt", "water_per_teelt", "l/m²", ".0f"),
+        ("Water per teelt", "liters", "l/m²", ".0f"),
         ("Teeltduur", "teeltduur", "dgn", ".0f"),
     ]
     _bt_mini_kolommen = st.columns(2)
@@ -1544,7 +1589,8 @@ with tab_beide:
                     x=alt.X("Periode:O", sort=_bt_volgorde, title=None,
                             axis=alt.Axis(labelAngle=-40 if _bt_periode_naam == "Week" else 0,
                                           labelFontSize=9)),
-                    y=alt.Y("Waarde:Q", title=f"{_bt_titel} ({_bt_eenheid})", scale=alt.Scale(zero=False)),
+                    y=alt.Y("Waarde:Q", title=f"{_bt_titel} ({_bt_eenheid})", scale=alt.Scale(zero=False),
+                            axis=alt.Axis(format=_bt_fmt)),
                     color=alt.Color("Tuin:N", title=None,
                                      legend=alt.Legend(orient="top") if _bt_i == 0 else None),
                     tooltip=["Periode", "Tuin", alt.Tooltip("Waarde:Q", format=_bt_fmt), "n"],
