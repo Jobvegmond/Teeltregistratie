@@ -363,6 +363,105 @@ def toon_tabel(df, kolommen, verberg_leeg=False, pin_eerste=False):
     st.dataframe(df[volgorde], hide_index=True, column_config=config)
 
 
+def toon_strokenplanning(stroken, vaknummers, hoogte=640, legenda=True):
+    """
+    Tekent de strokenplanning (Gantt) van `stroken` (uit get_strokenplanning):
+    per vak een balk van start tot (verwachte) oogst, grijs voor afgerond,
+    groen voor lopend, blauw voor concept. Rode stippellijn = vandaag; een
+    rode stippelrand om (een deel van) een balk = die dagen overlappen met de
+    vorige ronde in dat vak. Gedeeld door de Planning-tab en het gecombineerde
+    overzicht, met een eigen hoogte en al dan niet een legenda.
+    """
+    if not stroken:
+        st.caption("Geen teelten of concepten in deze periode.")
+        return
+    df_stroken = pd.DataFrame(stroken)
+    df_stroken["start"] = pd.to_datetime(df_stroken["start"])
+    df_stroken["eind"] = pd.to_datetime(df_stroken["eind"])
+    _dagen_nl = ["ma", "di", "wo", "do", "vr", "za", "zo"]
+
+    def _week_dag(ts):
+        return f"wk {ts.isocalendar().week} {_dagen_nl[ts.weekday()]}"
+
+    df_stroken["start_tekst"] = df_stroken["start"].apply(_week_dag)
+    df_stroken["eind_tekst"] = df_stroken["eind"].apply(_week_dag)
+    df_stroken["duur_tekst"] = df_stroken["teeltduur_weken"].apply(
+        lambda x: f"{x:.1f} wk" if pd.notna(x) else "–"
+    )
+
+    # Overlap: per vak, het stuk van een balk dat vóór de oogst van een
+    # eerder gestarte balk in datzelfde vak valt (nu toegestaan door de
+    # planner, zie planningsmodule). Alleen dát dagbereik krijgt een rode
+    # stippelrand, niet de hele balk — via een losse laag die alleen over
+    # het overlappende deel getekend wordt.
+    overlap_segmenten = []
+    for _vak, groep in df_stroken.groupby("vaknummer"):
+        eerdere_einden = []
+        for _idx, rij in groep.sort_values("start").iterrows():
+            overlappend = [eind_e for eind_e in eerdere_einden if rij["start"] < eind_e]
+            if overlappend:
+                overlap_segmenten.append({
+                    "vaknummer": rij["vaknummer"],
+                    "start": rij["start"],
+                    "eind": min(rij["eind"], max(overlappend)),
+                })
+            eerdere_einden.append(rij["eind"])
+    df_overlap = pd.DataFrame(overlap_segmenten)
+
+    kleur = alt.Color(
+        "status:N",
+        scale=alt.Scale(
+            domain=["afgerond", "lopend", "concept"],
+            range=["#b8b8b3", "#1baf7a", "#2a78d6"],
+        ),
+        legend=alt.Legend(title=None, orient="top") if legenda else None,
+    )
+    vak_y = alt.Y(
+        "vaknummer:O", title="Vak", sort="ascending",
+        scale=alt.Scale(domain=vaknummers or list(range(1, 40))),
+    )
+    balken = (
+        alt.Chart(df_stroken)
+        .mark_bar(height=13, cornerRadius=3, stroke="white", strokeWidth=1)
+        .encode(
+            y=vak_y,
+            x=alt.X(
+                "start:T", title="Week",
+                axis=alt.Axis(format="%V", tickCount={"interval": "week", "step": 2}, grid=True),
+            ),
+            x2="eind:T",
+            color=kleur,
+            tooltip=[
+                alt.Tooltip("vaknummer:O", title="Vak"),
+                alt.Tooltip("label:N", title="Teelt"),
+                alt.Tooltip("status:N", title="Status"),
+                alt.Tooltip("start_tekst:N", title="Start"),
+                alt.Tooltip("eind_tekst:N", title="Oogst"),
+                alt.Tooltip("duur_tekst:N", title="Teeltduur"),
+            ],
+        )
+    )
+    lagen = [balken]
+    if not df_overlap.empty:
+        overlap_balken = (
+            alt.Chart(df_overlap)
+            .mark_bar(height=13, cornerRadius=3, filled=False, stroke="#e34948",
+                      strokeWidth=2, strokeDash=[4, 2])
+            .encode(y=vak_y, x="start:T", x2="eind:T")
+        )
+        lagen.append(overlap_balken)
+    vandaag_lijn = (
+        alt.Chart(pd.DataFrame({"d": [pd.Timestamp(date.today())]}))
+        .mark_rule(color="#e34948", strokeDash=[4, 3])
+        .encode(x="d:T")
+    )
+    lagen.append(vandaag_lijn)
+    st.altair_chart(
+        alt.layer(*lagen).properties(height=hoogte).configure_view(strokeOpacity=0),
+        use_container_width=True,
+    )
+
+
 def toon_kengetallen(items, titel=None):
     """
     Toont kengetallen (lijst dicts met label, waarde en optioneel delta en
@@ -1119,13 +1218,207 @@ with _paneel[actie].container():
             st.info("Nog geen registraties.")
 
 # --- HOOFDSCHERM: TABBLADEN ---
-tab_overzicht, tab_week, tab_detail, tab_planning, tab_stek, tab_klimaat, tab_stats, tab_meer = st.tabs([
-    "📊 Teeltoverzicht", "📆 Weekoverzicht", "🔍 Teelt-detail", "🗓️ Planning", "🌱 Stek", "🌡️ Klimaatdata",
-    "📈 Statistieken", "ℹ️ Meer",
+tab_beide, tab_overzicht, tab_week, tab_detail, tab_planning, tab_stek, tab_klimaat, tab_stats, tab_meer = st.tabs([
+    "🌍 Beide tuinen", "📊 Teeltoverzicht", "📆 Weekoverzicht", "🔍 Teelt-detail", "🗓️ Planning", "🌱 Stek",
+    "🌡️ Klimaatdata", "📈 Statistieken", "ℹ️ Meer",
 ])
 # Weinig gebruikt: logboek en uitleg als subtabbladen onder "Meer".
 with tab_meer:
     tab_log, tab_help = st.tabs(["🧾 Logboek", "ℹ️ Hoe dit werkt"])
+
+# --- BEIDE TUINEN: het gecombineerde overzicht ---
+#
+# Alles hier gaat over allebei de tuinen tegelijk, dus met een expliciete
+# tuin_id per aanroep — niet over de tuin die bovenin is gekozen (die stuurt
+# de rest van de app). Eén keer per tuin opgehaald en hierna hergebruikt,
+# zodat dit tabblad niet meer database-vragen doet dan nodig.
+with tab_beide:
+    st.subheader("🌍 Beide tuinen")
+    st.caption(
+        "De stand van tuin 1 en tuin 3 samen: hoe ze er nu voor staan, hoe ze tegen elkaar "
+        "afsteken, waar en wanneer er geoogst wordt, en wat de komende weken te verwachten is."
+    )
+    _bt_laatste_priva = laatste_priva_ophaling()
+    if _bt_laatste_priva:
+        st.caption(f"Klimaat en watergift bijgewerkt tot {format_datum(_bt_laatste_priva.date())} "
+                   f"{_bt_laatste_priva:%H:%M}.")
+
+    _bt_vandaag = date.today()
+    _bt_tuinen = sorted(TUINEN, key=lambda t: t["nummer"])
+    # Kengetallen van elke tuin één keer ophalen; de rest van dit tabblad
+    # leest alleen nog uit deze twee lijsten.
+    _bt_kg = {t["id"]: get_teeltkengetallen(t["id"]) for t in _bt_tuinen}
+    for _bt_lijst in _bt_kg.values():
+        for _bt_k in _bt_lijst:
+            _bt_k["lichtsom_per_dag"] = (
+                _bt_k["lichtsom"] / _bt_k["klimaatdagen"]
+                if _bt_k["lichtsom"] and _bt_k["klimaatdagen"] else None
+            )
+
+    # --- Hoe staan we ervoor: kengetallen naast elkaar, per tuin ---
+    _bt_kol_a, _bt_kol_b = st.columns(2)
+    for _bt_kolom, _bt_tuin in zip((_bt_kol_a, _bt_kol_b), _bt_tuinen):
+        with _bt_kolom:
+            _bt_ov_kol, _bt_ov_rijen = get_overzicht_dataframe(_bt_tuin["id"])
+            _bt_ov_df = pd.DataFrame(_bt_ov_rijen, columns=_bt_ov_kol)
+            _bt_duren = pd.to_numeric(
+                _bt_ov_df.loc[_bt_ov_df["Teeltduur (dagen)"] != "-", "Teeltduur (dagen)"], errors="coerce"
+            )
+            _bt_actief = len(_bt_ov_df[_bt_ov_df["Status"] == "Lopend"])
+            _bt_totaal_vakken = len(get_vaknummers(_bt_tuin["id"])) or 1
+            toon_kengetallen([
+                {"label": "Actief", "waarde": _bt_actief},
+                {"label": "Nog te starten", "waarde": len(_bt_ov_df[_bt_ov_df["Status"] == "Nog te starten"])},
+                {"label": "Afgerond", "waarde": len(_bt_ov_df[_bt_ov_df["Status"] == "Afgerond"])},
+                {"label": "Gem. duur", "waarde": f"{_bt_duren.mean():.0f} dgn" if len(_bt_duren) else "-"},
+                {"label": "Bezetting", "waarde": f"{_bt_actief / _bt_totaal_vakken * 100:.0f}%",
+                 "help": f"{_bt_actief} van de {_bt_totaal_vakken} vakken heeft nu een lopende teelt."},
+            ], titel=f"🏡 {_bt_tuin['naam']}")
+
+    st.markdown("---")
+
+    # --- Hoe presteren de tuinen tegenover elkaar ---
+    st.write("**Tuin 1 vs Tuin 3 — prestaties**")
+    st.caption("Gemiddelde over alle afgeronde teelten sinds de start van elke tuin.")
+    _bt_vergelijk_velden = [
+        ("Teeltduur", "teeltduur", lambda w: f"{w:.0f} dgn"),
+        ("Lichtsom per dag", "lichtsom_per_dag", lambda w: f"{w:.0f} J/cm²"),
+        ("Etmaaltemperatuur", "gem_temperatuur", lambda w: f"{w:.1f} °C"),
+        ("Water per teelt", "liters", lambda w: f"{w:.0f} l/m²"),
+        ("Warmte per teelt", "warmte_mj_per_m2", lambda w: f"{w:.1f} MJ/m²"),
+        ("Uitval", "uitval_pct", lambda w: f"{w:.1f}%"),
+        ("Florgib-lengte", "lengte_half", lambda w: f"{w:.1f} cm"),
+        ("Oogstlengte", "lengte_eind", lambda w: f"{w:.1f} cm"),
+        ("Oogstgewicht", "oogstgewicht", lambda w: f"{w:.0f} g"),
+    ]
+    _bt_vergelijk_rijen = []
+    for _bt_label, _bt_veld, _bt_fmt in _bt_vergelijk_velden:
+        _bt_rij = {"Kengetal": _bt_label}
+        for _bt_tuin in _bt_tuinen:
+            _bt_reeks = [k[_bt_veld] for k in _bt_kg[_bt_tuin["id"]] if k[_bt_veld] is not None]
+            _bt_rij[_bt_tuin["naam"]] = _bt_fmt(sum(_bt_reeks) / len(_bt_reeks)) if _bt_reeks else "-"
+        _bt_vergelijk_rijen.append(_bt_rij)
+    toon_tabel(
+        pd.DataFrame(_bt_vergelijk_rijen),
+        [("Kengetal", "Kengetal", "tekst", None, "large")]
+        + [(t["naam"], t["naam"], "tekst", None, "small") for t in _bt_tuinen],
+    )
+    st.caption(
+        "Oogstgewicht en warmte staan op tuin 1 nog op '-': dat wordt vanaf nu opgebouwd, "
+        "resp. wacht op de energiekoppeling van die tuin."
+    )
+
+    st.markdown("---")
+
+    # --- Waar wordt geoogst: strokenplanning van beide tuinen onder elkaar ---
+    st.write("**Waar wordt geoogst**")
+    st.caption(
+        "Grijs = afgerond, groen = lopend, blauw = concept-planning. Rode stippellijn = vandaag."
+    )
+    for _bt_tuin in _bt_tuinen:
+        _bt_vakken = get_vaknummers(_bt_tuin["id"])
+        st.write(f"🏡 {_bt_tuin['naam']}")
+        toon_strokenplanning(
+            get_strokenplanning(weken_terug=2, tuin_id=_bt_tuin["id"]),
+            _bt_vakken,
+            hoogte=max(220, len(_bt_vakken) * 15 + 60),
+            legenda=(_bt_tuin is _bt_tuinen[0]),
+        )
+
+    st.markdown("---")
+
+    # --- Resultaten: de laatste afgeronde teelten per tuin ---
+    st.write("**Recente oogstresultaten**")
+    _bt_resultaten_rijen = []
+    for _bt_tuin in _bt_tuinen:
+        _bt_afgerond = sorted(
+            (k for k in _bt_kg[_bt_tuin["id"]] if k["datum_oogst"]),
+            key=lambda k: k["datum_oogst"], reverse=True,
+        )
+        for _bt_k in _bt_afgerond[:6]:
+            _bt_resultaten_rijen.append({
+                "Tuin": _bt_tuin["naam"],
+                "Vak": _bt_k["vaknummer"],
+                "Code": _bt_k["code"] or "-",
+                "Oogstdatum": _bt_k["datum_oogst"],
+                "Duur (dgn)": _bt_k["teeltduur"],
+                "Lengte (cm)": _bt_k["lengte_eind"],
+                "Gewicht (g)": _bt_k["oogstgewicht"],
+                "Uitval (%)": round(_bt_k["uitval_pct"], 1) if _bt_k["uitval_pct"] is not None else None,
+            })
+    if _bt_resultaten_rijen:
+        _bt_df_resultaten = pd.DataFrame(_bt_resultaten_rijen).sort_values(
+            ["Tuin", "Oogstdatum"], ascending=[True, False]
+        )
+        toon_tabel(_bt_df_resultaten, [
+            ("Tuin", "Tuin", "tekst", None, "small"),
+            ("Vak", "Vak", "getal", "%d", "small"),
+            ("Code", "Code", "tekst", None, "small"),
+            ("Oogstdatum", "Oogst", "datum", None, "small"),
+            ("Duur (dgn)", "Duur (dgn)", "getal", "%d", "small"),
+            ("Lengte (cm)", "Lengte (cm)", "getal", "%.1f", "small"),
+            ("Gewicht (g)", "Gewicht (g)", "getal", "%d", "small"),
+            ("Uitval (%)", "Uitval (%)", "getal", "%.1f", "small"),
+        ], verberg_leeg=True)
+    else:
+        st.info("Nog geen afgeronde teelten.")
+
+    st.markdown("---")
+
+    # --- Vooruitblik: wat er de komende weken te plannen en te oogsten staat ---
+    st.write("**Vooruitblik komende 6 weken**")
+    _bt_n_weken = 6
+    _bt_maandag_nu = _bt_vandaag - timedelta(days=_bt_vandaag.weekday())
+    _bt_weken = [_bt_maandag_nu + timedelta(weeks=i) for i in range(_bt_n_weken)]
+
+    def _bt_oogst_per_week(_bt_tuin_id):
+        """Aantal vakken met een verwachte of nog te plannen oogst, per week."""
+        _bt_tellers = {w: 0 for w in _bt_weken}
+        for _bt_k in _bt_kg[_bt_tuin_id]:
+            if _bt_k["datum_oogst"]:
+                continue  # al geoogst
+            _bt_duur, _bt_verwacht = bereken_verwachte_oogstdatum(_bt_k["datum_teelt_start"])
+            if not _bt_verwacht:
+                continue
+            _bt_w = _bt_verwacht - timedelta(days=_bt_verwacht.weekday())
+            if _bt_w < _bt_weken[0]:
+                _bt_w = _bt_weken[0]  # oogst is al verwacht: telt bij deze week
+            if _bt_w in _bt_tellers:
+                _bt_tellers[_bt_w] += 1
+        for _pid, _vak, _start, _duur, _eind, _notitie in get_planning(_bt_tuin_id):
+            if not _eind:
+                continue
+            _bt_eind_d = datetime.strptime(_eind, "%Y-%m-%d").date()
+            _bt_w = _bt_eind_d - timedelta(days=_bt_eind_d.weekday())
+            if _bt_w < _bt_weken[0]:
+                _bt_w = _bt_weken[0]
+            if _bt_w in _bt_tellers:
+                _bt_tellers[_bt_w] += 1
+        return _bt_tellers
+
+    _bt_planten_per_tuin = {
+        t["nummer"]: {r["week_start"]: r["concepten"] for r in get_planning_weekoverzicht(_bt_n_weken, t["id"])}
+        for t in _bt_tuinen
+    }
+    _bt_oogst_per_tuin = {t["nummer"]: _bt_oogst_per_week(t["id"]) for t in _bt_tuinen}
+    _bt_vooruitblik_rijen = []
+    for _bt_i, _bt_w in enumerate(_bt_weken):
+        _bt_jaar, _bt_week, _ = _bt_w.isocalendar()
+        _bt_rij = {"Week": f"Week {_bt_week} - {_bt_jaar}" + (" (deze week)" if _bt_i == 0 else "")}
+        for _bt_tuin in _bt_tuinen:
+            _bt_rij[f"{_bt_tuin['naam']} plant"] = _bt_planten_per_tuin[_bt_tuin["nummer"]].get(_bt_w, 0)
+            _bt_rij[f"{_bt_tuin['naam']} oogst"] = _bt_oogst_per_tuin[_bt_tuin["nummer"]].get(_bt_w, 0)
+        _bt_vooruitblik_rijen.append(_bt_rij)
+    _bt_kolommen_vooruitblik = [("Week", "Week", "tekst", None, "medium")]
+    for _bt_tuin in _bt_tuinen:
+        _bt_kolommen_vooruitblik.append((f"{_bt_tuin['naam']} plant", f"{_bt_tuin['naam']} plant", "getal", "%d", "small"))
+        _bt_kolommen_vooruitblik.append((f"{_bt_tuin['naam']} oogst", f"{_bt_tuin['naam']} oogst", "getal", "%d", "small"))
+    toon_tabel(pd.DataFrame(_bt_vooruitblik_rijen), _bt_kolommen_vooruitblik)
+    st.caption(
+        "Plant = concept-plantingen die week; oogst = lopende teelten en concepten waarvan de "
+        "(verwachte) oogst in die week valt. Een oogst die al verwacht werd vóór deze week telt "
+        "mee bij 'deze week', zodat die niet uit beeld verdwijnt."
+    )
 
 kolommen, rijen = get_overzicht_dataframe()
 
@@ -1891,92 +2184,7 @@ with tab_planning:
     # --- Strokenplanning (Gantt): vakken verticaal, weken horizontaal ---
     stroken = get_strokenplanning(weken_terug=8)
     if stroken:
-        df_stroken = pd.DataFrame(stroken)
-        df_stroken["start"] = pd.to_datetime(df_stroken["start"])
-        df_stroken["eind"] = pd.to_datetime(df_stroken["eind"])
-        _dagen_nl = ["ma", "di", "wo", "do", "vr", "za", "zo"]
-
-        def _week_dag(ts):
-            return f"wk {ts.isocalendar().week} {_dagen_nl[ts.weekday()]}"
-
-        df_stroken["start_tekst"] = df_stroken["start"].apply(_week_dag)
-        df_stroken["eind_tekst"] = df_stroken["eind"].apply(_week_dag)
-        df_stroken["duur_tekst"] = df_stroken["teeltduur_weken"].apply(
-            lambda x: f"{x:.1f} wk" if pd.notna(x) else "–"
-        )
-
-        # Overlap: per vak, het stuk van een balk dat vóór de oogst van een
-        # eerder gestarte balk in datzelfde vak valt (nu toegestaan door de
-        # planner, zie planningsmodule). Alleen dát dagbereik krijgt een rode
-        # stippelrand, niet de hele balk — via een losse laag die alleen over
-        # het overlappende deel getekend wordt.
-        overlap_segmenten = []
-        for _vak, groep in df_stroken.groupby("vaknummer"):
-            eerdere_einden = []
-            for _idx, rij in groep.sort_values("start").iterrows():
-                overlappend = [eind_e for eind_e in eerdere_einden if rij["start"] < eind_e]
-                if overlappend:
-                    overlap_segmenten.append({
-                        "vaknummer": rij["vaknummer"],
-                        "start": rij["start"],
-                        "eind": min(rij["eind"], max(overlappend)),
-                    })
-                eerdere_einden.append(rij["eind"])
-        df_overlap = pd.DataFrame(overlap_segmenten)
-
-        kleur = alt.Color(
-            "status:N",
-            scale=alt.Scale(
-                domain=["afgerond", "lopend", "concept"],
-                range=["#b8b8b3", "#1baf7a", "#2a78d6"],
-            ),
-            legend=alt.Legend(title=None, orient="top"),
-        )
-        vak_y = alt.Y(
-            "vaknummer:O", title="Vak", sort="ascending",
-            # De vakken van deze tuin, zodat tuin 1 geen lege rijen 28-39 krijgt.
-            scale=alt.Scale(domain=get_vaknummers() or list(range(1, 40))),
-        )
-        balken = (
-            alt.Chart(df_stroken)
-            .mark_bar(height=13, cornerRadius=3, stroke="white", strokeWidth=1)
-            .encode(
-                y=vak_y,
-                x=alt.X(
-                    "start:T", title="Week",
-                    axis=alt.Axis(format="%V", tickCount={"interval": "week", "step": 2}, grid=True),
-                ),
-                x2="eind:T",
-                color=kleur,
-                tooltip=[
-                    alt.Tooltip("vaknummer:O", title="Vak"),
-                    alt.Tooltip("label:N", title="Teelt"),
-                    alt.Tooltip("status:N", title="Status"),
-                    alt.Tooltip("start_tekst:N", title="Start"),
-                    alt.Tooltip("eind_tekst:N", title="Oogst"),
-                    alt.Tooltip("duur_tekst:N", title="Teeltduur"),
-                ],
-            )
-        )
-        lagen = [balken]
-        if not df_overlap.empty:
-            overlap_balken = (
-                alt.Chart(df_overlap)
-                .mark_bar(height=13, cornerRadius=3, filled=False, stroke="#e34948",
-                          strokeWidth=2, strokeDash=[4, 2])
-                .encode(y=vak_y, x="start:T", x2="eind:T")
-            )
-            lagen.append(overlap_balken)
-        vandaag_lijn = (
-            alt.Chart(pd.DataFrame({"d": [pd.Timestamp(date.today())]}))
-            .mark_rule(color="#e34948", strokeDash=[4, 3])
-            .encode(x="d:T")
-        )
-        lagen.append(vandaag_lijn)
-        st.altair_chart(
-            alt.layer(*lagen).properties(height=640).configure_view(strokeOpacity=0),
-            use_container_width=True,
-        )
+        toon_strokenplanning(stroken, get_vaknummers())
         st.markdown("---")
 
     # Horizon voor de jaarplanning-tabel en het (her)plannen: een vol jaar vooruit.

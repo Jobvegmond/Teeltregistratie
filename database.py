@@ -2778,7 +2778,7 @@ def get_lege_vakken_per_week(aantal_weken=12):
     return resultaat
 
 
-def get_strokenplanning(weken_terug=8):
+def get_strokenplanning(weken_terug=8, tuin_id=None):
     """
     Bouwt de gegevens voor een strokenplanning (Gantt): per vak elke teelt
     en elke concept-planning als balk van startdatum tot (verwachte) oogst.
@@ -2795,7 +2795,7 @@ def get_strokenplanning(weken_terug=8):
     def _duur_weken(start, eind):
         return round((eind - start).days / 7, 1)
 
-    for t in get_alle_teelten_detail():
+    for t in get_alle_teelten_detail(tuin_id):
         start = datetime.strptime(t["datum_teelt_start"], "%Y-%m-%d").date()
         if t["datum_oogst"]:
             eind = datetime.strptime(t["datum_oogst"], "%Y-%m-%d").date()
@@ -2816,7 +2816,7 @@ def get_strokenplanning(weken_terug=8):
             "teeltduur_weken": _duur_weken(start, eind),
         })
 
-    for _pid, vaknummer, start, duur, eind, _notitie in get_planning():
+    for _pid, vaknummer, start, duur, eind, _notitie in get_planning(tuin_id):
         start_d = datetime.strptime(start, "%Y-%m-%d").date()
         eind_d = (
             datetime.strptime(eind, "%Y-%m-%d").date() if eind
@@ -2974,7 +2974,7 @@ def get_teeltkengetallen(tuin_id=None):
                        t.datum_oogst,
                        COALESCE(t.datum_oogst, %s) AS eind,
                        t.aantal_planten, t.lengte_half, t.lengte_eind, t.oogstgewicht, t.rijpheid,
-                       COALESCE(NULLIF(t.ras, ''), %s) AS ras,
+                       COALESCE(NULLIF(t.ras, ''), %s) AS ras, t.uitval_pct AS uitval_pct_gemeten,
                        v.tuin_id, v.afdeling
                 FROM teelten t
                 JOIN teeltvakken v ON v.id = t.teeltvak_id
@@ -2982,6 +2982,7 @@ def get_teeltkengetallen(tuin_id=None):
             )
             SELECT b.id, b.code, b.vaknummer, b.afdeling, b.start, b.datum_oogst, b.eind,
                    b.aantal_planten, b.lengte_half, b.lengte_eind, b.oogstgewicht, b.rijpheid, b.ras,
+                   b.uitval_pct_gemeten,
                    k.lichtsom, k.gem_temperatuur, k.dagen,
                    w.liters, w.dagen, w.excel_dagen,
                    e.mj_per_m2, e.dagen,
@@ -3025,12 +3026,19 @@ def get_teeltkengetallen(tuin_id=None):
 
     kengetallen = []
     for (teelt_id, code, vaknummer, afdeling, start, datum_oogst, eind, aantal_planten,
-         lengte_half, lengte_eind, oogstgewicht, rijpheid, ras, lichtsom, gem_temperatuur,
-         klimaatdagen, liters, waterdagen, water_excel_dagen, mj_per_m2, energiedagen,
-         emmers) in rijen:
+         lengte_half, lengte_eind, oogstgewicht, rijpheid, ras, uitval_pct_gemeten,
+         lichtsom, gem_temperatuur, klimaatdagen, liters, waterdagen, water_excel_dagen,
+         mj_per_m2, energiedagen, emmers) in rijen:
         looptijd = (datetime.strptime(eind, "%Y-%m-%d").date()
                     - datetime.strptime(start, "%Y-%m-%d").date()).days + 1
         isojaar, week = get_isojaar_week(start)
+        stelen = (emmers or 0) * 100 if emmers else None
+        # Uit de emmers als die er zijn (100 stelen per emmer), anders het
+        # percentage dat bij de teelt zelf is vastgelegd (oude tuin 1-historie).
+        if aantal_planten and stelen:
+            uitval_pct = (aantal_planten - stelen) / aantal_planten * 100
+        else:
+            uitval_pct = float(uitval_pct_gemeten) if uitval_pct_gemeten is not None else None
         kengetallen.append({
             "id": teelt_id, "code": code, "vaknummer": vaknummer, "afdeling": afdeling,
             "datum_teelt_start": start, "datum_oogst": datum_oogst,
@@ -3039,8 +3047,8 @@ def get_teeltkengetallen(tuin_id=None):
                           - datetime.strptime(start, "%Y-%m-%d").date()).days if datum_oogst else None,
             "aantal_planten": aantal_planten, "lengte_half": lengte_half,
             "lengte_eind": lengte_eind, "oogstgewicht": oogstgewicht, "rijpheid": rijpheid,
-            "ras": ras,
-            "stelen": (emmers or 0) * 100 if emmers else None,
+            "ras": ras, "uitval_pct": uitval_pct,
+            "stelen": stelen,
             "lichtsom": lichtsom, "gem_temperatuur": gem_temperatuur,
             "klimaatdagen": klimaatdagen or 0,
             "liters": liters, "waterdagen": waterdagen or 0,
