@@ -1,5 +1,6 @@
 import html
 import io
+import json
 import math
 import os
 import re
@@ -7,6 +8,7 @@ import secrets
 import urllib.parse
 
 import streamlit as st
+import streamlit.components.v1 as components
 import streamlit_authenticator as stauth
 import pandas as pd
 import altair as alt
@@ -243,6 +245,58 @@ def lijngrafiek_per_afdeling(lang, y_titel, toon_dagnacht=True, formaat=".1f",
 
 
 # --- TABELLEN: gedeelde weergave ---
+
+def kopieerknop(inhoud_html, label, hoogte=44):
+    """
+    Knop die opgemaakte HTML op het klembord zet, zodat je het mét tabel in een
+    mail kunt plakken. Een gewone downloadknop of tekstveld levert platte tekst
+    op; dit houdt de opmaak heel.
+
+    De moderne clipboard-API werkt niet in elke browser binnen een ingesloten
+    kader, dus als die faalt valt hij terug op het ouderwetse selecteren en
+    kopiëren — dat werkt overal en behoudt de opmaak net zo goed.
+    """
+    inhoud = json.dumps(inhoud_html)
+    components.html(
+        f"""
+        <div id="bron" style="position:absolute;left:-9999px;top:0;"></div>
+        <button id="knop" style="font:inherit;padding:0.35rem 0.75rem;border-radius:0.5rem;
+                border:1px solid rgba(49,51,63,0.2);background:#fff;cursor:pointer;">{label}</button>
+        <script>
+        const inhoud = {inhoud};
+        const bron = document.getElementById("bron");
+        const knop = document.getElementById("knop");
+        bron.innerHTML = inhoud;
+        function gelukt() {{
+            const oud = knop.textContent;
+            knop.textContent = "✅ Gekopieerd";
+            setTimeout(() => knop.textContent = oud, 2000);
+        }}
+        function ouderwets() {{
+            const bereik = document.createRange();
+            bereik.selectNodeContents(bron);
+            const selectie = window.getSelection();
+            selectie.removeAllRanges();
+            selectie.addRange(bereik);
+            document.execCommand("copy");
+            selectie.removeAllRanges();
+            gelukt();
+        }}
+        knop.onclick = () => {{
+            if (navigator.clipboard && window.ClipboardItem) {{
+                navigator.clipboard.write([new ClipboardItem({{
+                    "text/html": new Blob([inhoud], {{type: "text/html"}}),
+                    "text/plain": new Blob([bron.innerText], {{type: "text/plain"}}),
+                }})]).then(gelukt).catch(ouderwets);
+            }} else {{
+                ouderwets();
+            }}
+        }};
+        </script>
+        """,
+        height=hoogte,
+    )
+
 
 def toon_tabel(df, kolommen, verberg_leeg=False, pin_eerste=False):
     """
@@ -2136,10 +2190,16 @@ with tab_planning:
 # --- STEK ---
 # Kolommen van het weekrapport, zoals de stekleverancier ze uit het oude
 # Excel-blad "Weekrapport" gewend is.
+# De kolommen van het weekrapport, in de volgorde die de stekleverancier gewend
+# is uit het oude Excel-blad. "Cel dagen" houden we aan als lege kolom: die
+# wordt niet in de app bijgehouden, maar hoort wel in hun overzicht.
 STEK_RAPPORT_KOLOMMEN = [
-    "Datum", "Vak", "Plant", "Te poten", "Bakjes gepoot", "Uitval (%)",
-    "Wortel", "Plantmaat", "Uniformiteit", "Beoordeling", "Opmerkingen",
+    "Week", "Dag", "Vak", "Ras", "Te poten", "Bakjes Gepoot", "Uitval",
+    "Cel dagen", "Wortel", "Plantmaat", "Uniformiteit", "Totaal beoordeling",
+    "Opmerkingen",
 ]
+# Rechts uitlijnen wat een getal is, de rest links.
+STEK_RECHTS = {"Vak", "Te poten", "Bakjes Gepoot", "Uitval", "Cel dagen", "Totaal beoordeling"}
 _DAGEN_STEK = ["ma", "di", "wo", "do", "vr", "za", "zo"]
 NIET_WIJZIGEN = "— niet wijzigen —"
 
@@ -2153,39 +2213,45 @@ def _leeg_naar_none(waarde):
     return waarde.strip() if isinstance(waarde, str) else waarde
 
 
-def _getal_nl(waarde, decimalen=1):
-    """Getal met komma, zoals in een Nederlandse mail."""
-    return f"{waarde:.{decimalen}f}".replace(".", ",")
+def _stek_afkorting(ras):
+    """De afkorting die de leverancier gebruikt: Cameron -> Cam."""
+    ras = (ras or "").strip()
+    return ras[:3] if ras else ""
 
 
-def _stek_mailtekst(rapport, week, jaar, afzender):
+def _stek_getal(waarde, decimalen=0):
+    """Nederlands getal: punt als duizendtal, komma als decimaal."""
+    if waarde is None or (not isinstance(waarde, str) and pd.isna(waarde)):
+        return ""
+    tekst = f"{float(waarde):,.{decimalen}f}"
+    return tekst.replace(",", "\x00").replace(".", ",").replace("\x00", ".")
+
+
+def _stek_mailhtml(rapport, totaal_geplant):
     """
-    Platte tekst voor de mail: één regel per vak. Geen uitgelijnde tabel,
-    want die valt in een mailprogramma met gewoon lettertype uit elkaar.
+    De mail als HTML: een groet, de tabel met randen en eronder het totaal.
+    Precies wat er in Outlook geplakt moet worden; de handtekening zit al in
+    de mail zelf.
     """
+    cel = "border:1px solid #000;padding:2px 6px;"
+    koppen = "".join(
+        f'<th style="{cel}text-align:{"right" if k in STEK_RECHTS else "left"};">{html.escape(k)}</th>'
+        for k in STEK_RAPPORT_KOLOMMEN
+    )
     regels = []
     for _, r in rapport.iterrows():
-        delen = [f"Vak {r['Vak']} ({r['Datum']})"]
-        if pd.notna(r["Te poten"]):
-            delen.append(f"{int(r['Te poten'])} gepoot")
-        if pd.notna(r["Bakjes gepoot"]):
-            delen.append(f"{_getal_nl(r['Bakjes gepoot']).removesuffix(',0')} bakjes")
-        if pd.notna(r["Uitval (%)"]):
-            delen.append(f"uitval {_getal_nl(r['Uitval (%)'])}%")
-        for kolom in ("Wortel", "Plantmaat", "Uniformiteit"):
-            if r[kolom]:
-                delen.append(f"{kolom.lower()} {r[kolom].lower()}")
-        if pd.notna(r["Beoordeling"]):
-            delen.append(f"cijfer {int(r['Beoordeling'])}")
-        regel = " · ".join(delen)
-        if r["Opmerkingen"]:
-            regel += f"\n    {r['Opmerkingen']}"
-        regels.append(regel)
+        cellen = "".join(
+            f'<td style="{cel}text-align:{"right" if k in STEK_RECHTS else "left"};">'
+            f'{html.escape(str(r[k]))}</td>'
+            for k in STEK_RAPPORT_KOLOMMEN
+        )
+        regels.append(f"<tr>{cellen}</tr>")
     return (
-        f"Beste,\n\nHierbij de stekresultaten van week {week} ({jaar}):\n\n"
-        + "\n".join(regels)
-        + "\n\nUitval = het deel van de geleverde stekken (bakjes x 600) dat niet gepoot is."
-        + f"\n\nMet vriendelijke groet,\n{afzender}\nVan Egmond Matricaria"
+        '<div style="font-family:Aptos,Calibri,sans-serif;font-size:11pt;">'
+        "<p>Goedemorgen,</p>"
+        '<table style="border-collapse:collapse;">'
+        f"<tr>{koppen}</tr>{''.join(regels)}</table>"
+        f"<p>Totaal geplant: {_stek_getal(totaal_geplant)}</p></div>"
     )
 
 
@@ -2349,68 +2415,82 @@ with tab_stek:
         # Het rapport volgt het invulblad direct, ook vóór het opslaan.
         st.markdown("---")
         st.write(f"**📧 Weekrapport voor de stekleverancier — week {stek_week}**")
+        # Alles als tekst, al in de Nederlandse schrijfwijze: deze tabel gaat
+        # één op één de mail in, dus wat hier staat is wat de leverancier ziet.
+        _uitval_stek = [
+            stek_uitval_pct(p, None if pd.isna(b) else b)
+            for p, b in zip(bewerkt_stek["Te poten"], bewerkt_stek["Bakjes"])
+        ]
         rapport_stek = pd.DataFrame({
-            "Datum": [format_datum(r["datum"]) for r in rijen_stek],
-            "Vak": bewerkt_stek["Vak"].to_list(),
-            "Plant": [(_leeg_naar_none(v) or "") for v in bewerkt_stek["Plant"]],
-            "Te poten": bewerkt_stek["Te poten"].to_list(),
-            "Bakjes gepoot": bewerkt_stek["Bakjes"].to_list(),
-            "Uitval (%)": [
-                round(u, 1) if (u := stek_uitval_pct(p, None if pd.isna(b) else b)) is not None else None
-                for p, b in zip(bewerkt_stek["Te poten"], bewerkt_stek["Bakjes"])
+            "Week": [str(get_weeknummer(r["datum"])) for r in rijen_stek],
+            "Dag": [
+                _DAGEN_STEK[date.fromisoformat(str(r["datum"])[:10]).weekday()].capitalize()
+                for r in rijen_stek
             ],
+            "Vak": [str(int(v)) for v in bewerkt_stek["Vak"]],
+            "Ras": [_stek_afkorting(_leeg_naar_none(v)) for v in bewerkt_stek["Plant"]],
+            "Te poten": [_stek_getal(v) for v in bewerkt_stek["Te poten"]],
+            "Bakjes Gepoot": [_stek_getal(v, 1).removesuffix(",0") for v in bewerkt_stek["Bakjes"]],
+            "Uitval": [_stek_getal(u, 1) for u in _uitval_stek],
+            "Cel dagen": ["" for _ in rijen_stek],
             "Wortel": [(_leeg_naar_none(v) or "") for v in bewerkt_stek["Wortel"]],
             "Plantmaat": [(_leeg_naar_none(v) or "") for v in bewerkt_stek["Plantmaat"]],
             "Uniformiteit": [(_leeg_naar_none(v) or "") for v in bewerkt_stek["Uniformiteit"]],
-            "Beoordeling": bewerkt_stek["Beoordeling"].to_list(),
+            "Totaal beoordeling": [_stek_getal(v) for v in bewerkt_stek["Beoordeling"]],
             "Opmerkingen": [(_leeg_naar_none(v) or "") for v in bewerkt_stek["Opmerking"]],
         }, columns=STEK_RAPPORT_KOLOMMEN)
         toon_tabel(rapport_stek, [
-            ("Datum", "Datum", "datum", None, "small"),
-            ("Vak", "Vak", "getal", "%d", "small"),
-            ("Plant", "Plant", "tekst", None, "small"),
-            ("Te poten", "Te poten", "getal", "%d", "small"),
-            ("Bakjes gepoot", "Bakjes gepoot", "getal", "%.1f", "small"),
-            ("Uitval (%)", "Uitval (%)", "getal", "%.1f", "small"),
-            ("Wortel", "Wortel", "tekst", None, "small"),
-            ("Plantmaat", "Plantmaat", "tekst", None, "small"),
-            ("Uniformiteit", "Uniformiteit", "tekst", None, "small"),
-            ("Beoordeling", "Beoordeling", "getal", "%d", "small"),
-            ("Opmerkingen", "Opmerkingen", "tekst", None, "large"),
+            (k, k, "tekst", None, "large" if k == "Opmerkingen" else "small")
+            for k in STEK_RAPPORT_KOLOMMEN
         ])
 
         excel_buffer = io.BytesIO()
         with pd.ExcelWriter(excel_buffer, engine="openpyxl") as schrijver:
             rapport_stek.to_excel(schrijver, index=False, sheet_name=f"Week {stek_week}")
         leverancier_email = get_instelling("stek_leverancier_email", "")
-        onderwerp_stek = f"Stekresultaten week {stek_week} - {stek_jaar} - Van Egmond Matricaria"
-        mailtekst_stek = _stek_mailtekst(
-            rapport_stek, stek_week, stek_jaar, st.session_state.get("name") or "",
-        )
+        leverancier_cc = get_instelling("stek_leverancier_cc", "")
+        # Onderwerp zoals de leverancier het gewend is: rasnaam + weeknummer.
+        _rassen_week = [r for r in dict.fromkeys(bewerkt_stek["Plant"]) if _leeg_naar_none(r)]
+        ras_onderwerp = _rassen_week[0] if _rassen_week else STEK_STANDAARD_RAS
+        onderwerp_stek = f"{ras_onderwerp} week {stek_week}"
+        totaal_geplant = sum(v for v in bewerkt_stek["Te poten"] if pd.notna(v))
+        mailhtml_stek = _stek_mailhtml(rapport_stek, totaal_geplant)
 
-        col_excel, col_mail = st.columns(2)
+        col_kopie, col_mail, col_excel = st.columns([2, 2, 2])
+        with col_kopie:
+            kopieerknop(mailhtml_stek, "📋 Kopieer de tabel")
+        col_mail.link_button(
+            "✉️ Mail opstellen",
+            f"mailto:{urllib.parse.quote(leverancier_email)}"
+            f"?cc={urllib.parse.quote(leverancier_cc)}"
+            f"&subject={urllib.parse.quote(onderwerp_stek)}",
+        )
         col_excel.download_button(
-            "⬇️ Download als Excel", excel_buffer.getvalue(),
+            "⬇️ Excel", excel_buffer.getvalue(),
             file_name=f"Stekresultaten week {stek_week:02d}-{stek_jaar}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             key="stek_download",
         )
-        col_mail.link_button(
-            "✉️ Mail opstellen",
-            f"mailto:{leverancier_email}?subject={urllib.parse.quote(onderwerp_stek)}"
-            f"&body={urllib.parse.quote(mailtekst_stek)}",
+        st.caption(
+            f"Kopieer de tabel, open de mail — onderwerp *{onderwerp_stek}*, ontvangers staan klaar — "
+            "en plak hem boven je handtekening. Totaal geplant: "
+            f"{_stek_getal(totaal_geplant)}."
         )
         if niet_opgeslagen:
             st.caption("Let op: het rapport toont ook wat nog niet is opgeslagen.")
-        with st.expander("Voorbeeld van de mailtekst"):
-            st.text(mailtekst_stek)
-        with st.expander("⚙️ E-mailadres stekleverancier"):
+        with st.expander("⚙️ Ontvangers van de mail"):
             nieuw_email = st.text_input(
-                "Wordt als ontvanger ingevuld bij 'Mail opstellen'", value=leverancier_email,
+                "Aan (meerdere adressen scheiden met een komma)", value=leverancier_email,
                 key="stek_email_invoer",
             )
-            if st.button("Opslaan", key="stek_email_opslaan") and nieuw_email.strip() != leverancier_email:
-                set_instelling("stek_leverancier_email", nieuw_email.strip() or None, gebruiker=huidige_gebruiker())
+            nieuw_cc = st.text_input("CC", value=leverancier_cc, key="stek_cc_invoer")
+            if st.button("Opslaan", key="stek_email_opslaan"):
+                if nieuw_email.strip() != leverancier_email:
+                    set_instelling("stek_leverancier_email", nieuw_email.strip() or None,
+                                   gebruiker=huidige_gebruiker())
+                if nieuw_cc.strip() != leverancier_cc:
+                    set_instelling("stek_leverancier_cc", nieuw_cc.strip() or None,
+                                   gebruiker=huidige_gebruiker())
                 st.rerun()
 
 
