@@ -8,6 +8,8 @@ import pandas as pd
 import psycopg2
 from psycopg2 import pool as psycopg2_pool
 
+from utils.format import fmt_verschil
+
 
 def _laad_dotenv():
     """
@@ -683,12 +685,28 @@ def get_lopende_teelten(tuin_id=None, zonder_florgib=False):
     return resultaat
 
 
+def meting(waarde):
+    """
+    Een lengte of gewicht van 0 (of minder) is niet gemeten, geen meting van
+    nul: de invoervelden staan standaard op 0, en een leeg gelaten veld kwam
+    zo als 0 in de database. Grafieken en gemiddelden trokken dan naar 0.
+    Bij opslaan en uitlezen wordt het daarom None.
+    """
+    if waarde is None:
+        return None
+    try:
+        return waarde if float(waarde) > 0 else None
+    except (TypeError, ValueError):
+        return None
+
+
 def update_halverwege(teelt_id, datum_half, lengte_half, gebruiker=None, florgib_gram=None):
     """
     Slaat de Florgib-meting op: de datum, de lengte op dat moment en de
     gespoten hoeveelheid in gram voor dat vak. Een lege hoeveelheid laat wat
     er al stond ongemoeid.
     """
+    lengte_half, florgib_gram = meting(lengte_half), meting(florgib_gram)
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
@@ -712,6 +730,7 @@ def update_oogst(teelt_id, lengte_eind, oogstgewicht, rijpheid=None, gebruiker=N
     Raakt bewust de oogstdatum niet aan: het afronden van een teelt gebeurt
     los hiervan via markeer_teelt_afgerond (bijv. bij de laatste emmers).
     """
+    lengte_eind, oogstgewicht = meting(lengte_eind), meting(oogstgewicht)
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
@@ -806,10 +825,10 @@ def get_alle_teelten_detail(tuin_id=None):
             "vaknummer": vaknummer,
             "datum_teelt_start": start,
             "datum_half": half_datum,
-            "lengte_half": half_lengte,
+            "lengte_half": meting(half_lengte),
             "datum_oogst": oogst_datum,
-            "lengte_eind": eind_lengte,
-            "oogstgewicht": gewicht,
+            "lengte_eind": meting(eind_lengte),
+            "oogstgewicht": meting(gewicht),
             "rijpheid": rijpheid,
             "uitval_pct": uitval_pct,
             "aantal_planten": aantal_planten,
@@ -858,6 +877,7 @@ def update_teelt_volledig(teelt_id, datum_teelt_start, datum_half, lengte_half,
                            florgib_gram=None):
     """Overschrijft alle velden van een bestaande teelt (gebruikt bij handmatige correctie)."""
     code = genereer_teelt_code(datum_teelt_start, vaknummer) if vaknummer else None
+    lengte_half, lengte_eind, oogstgewicht = meting(lengte_half), meting(lengte_eind), meting(oogstgewicht)
 
     with get_connection() as conn:
         cursor = conn.cursor()
@@ -2011,11 +2031,11 @@ def get_klimaat_overzicht_dataframe(tuin_id=None):
         if ideaal is not None and gem_temperatuur is not None:
             verschil = gem_temperatuur - ideaal
             if verschil > 0.3:
-                verschil_tekst = f"↑ +{verschil:.1f}"
+                verschil_tekst = f"↑ {fmt_verschil(verschil, 1)}"
             elif verschil < -0.3:
-                verschil_tekst = f"↓ {verschil:.1f}"
+                verschil_tekst = f"↓ {fmt_verschil(verschil, 1)}"
             else:
-                verschil_tekst = f"≈ {verschil:+.1f}"
+                verschil_tekst = f"≈ {fmt_verschil(verschil, 1)}"
         else:
             verschil_tekst = "-"
 
@@ -3116,8 +3136,8 @@ def get_teeltkengetallen(tuin_id=None):
             "plantjaar": isojaar, "plantweek": week, "looptijd_dagen": looptijd,
             "teeltduur": (datetime.strptime(datum_oogst, "%Y-%m-%d").date()
                           - datetime.strptime(start, "%Y-%m-%d").date()).days if datum_oogst else None,
-            "aantal_planten": aantal_planten, "lengte_half": lengte_half,
-            "lengte_eind": lengte_eind, "oogstgewicht": oogstgewicht, "rijpheid": rijpheid,
+            "aantal_planten": aantal_planten, "lengte_half": meting(lengte_half),
+            "lengte_eind": meting(lengte_eind), "oogstgewicht": meting(oogstgewicht), "rijpheid": rijpheid,
             "ras": ras, "uitval_pct": uitval_pct,
             "stelen": stelen,
             "lichtsom": lichtsom, "gem_temperatuur": gem_temperatuur,

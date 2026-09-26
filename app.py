@@ -7,12 +7,17 @@ import re
 import secrets
 import urllib.parse
 
+import numpy as np
 import streamlit as st
 import streamlit.components.v1 as components
 import streamlit_authenticator as stauth
 import pandas as pd
 import altair as alt
 from datetime import datetime, timedelta, date
+from utils.format import (
+    LEEG, fmt_getal, fmt_kort, fmt_pct, fmt_temp, fmt_weken, fmt_dagen, fmt_verschil,
+    getalkolom, zet_altair_nl,
+)
 from database import (
     init_db,
     get_lopende_teelten,
@@ -104,6 +109,9 @@ from database import (
 # Moet de eerste Streamlit-aanroep zijn. Bepaalt o.a. de titel van het
 # browsertabblad.
 st.set_page_config(page_title="VEM teeltregistratie", page_icon="🌱", layout="wide")
+
+# Alle Altair-grafieken in Nederlandse getalnotatie (komma, punt voor duizendtallen).
+zet_altair_nl()
 
 # Gedeelde opmaak voor de hele app: kengetallen-tegels en de compacte kop.
 st.markdown("""
@@ -389,7 +397,10 @@ def toon_tabel(df, kolommen, verberg_leeg=False, pin_eerste=False):
             continue
         if verberg_leeg and df[kolom].isna().all():
             continue
-        f = formaat or "%d"
+        # Aantal decimalen uit het printf-formaat ("%d" = 0, "%.1f" = 1);
+        # getoond wordt in Nederlandse notatie (utils.format).
+        decimalen_match = re.match(r"%\.(\d+)f", formaat or "")
+        decimalen = int(decimalen_match.group(1)) if decimalen_match else 0
         if soort in ("getal", "datum"):
             gelezen = (
                 pd.to_numeric(df[kolom], errors="coerce") if soort == "getal"
@@ -400,7 +411,7 @@ def toon_tabel(df, kolommen, verberg_leeg=False, pin_eerste=False):
             else:
                 if gelezen.isna().any():  # gaten: tekst met echt lege cellen
                     if soort == "getal":
-                        tekst = gelezen.map(lambda v: "" if pd.isna(v) else f % v)
+                        tekst = gelezen.map(lambda v: "" if pd.isna(v) else fmt_getal(v, decimalen))
                         breed = tekst.str.len().max()
                         gelezen = tekst.map(lambda t: t.rjust(breed, " ") if t else t)
                     else:
@@ -416,7 +427,7 @@ def toon_tabel(df, kolommen, verberg_leeg=False, pin_eerste=False):
         elif breedte == "large":
             breedte = 320
         if soort == "getal":
-            config[kolom] = st.column_config.NumberColumn(label, format=f, width=breedte)
+            config[kolom] = getalkolom(label, decimalen, width=breedte)
         elif soort == "datum":
             config[kolom] = st.column_config.DateColumn(label, format="DD-MM-YY", width=breedte)
         else:
@@ -449,9 +460,7 @@ def toon_strokenplanning(stroken, vaknummers, hoogte=640, legenda=True):
 
     df_stroken["start_tekst"] = df_stroken["start"].apply(_week_dag)
     df_stroken["eind_tekst"] = df_stroken["eind"].apply(_week_dag)
-    df_stroken["duur_tekst"] = df_stroken["teeltduur_weken"].apply(
-        lambda x: f"{x:.1f} wk" if pd.notna(x) else "–"
-    )
+    df_stroken["duur_tekst"] = df_stroken["teeltduur_weken"].apply(fmt_weken)
 
     # Overlap: per vak, het stuk van een balk dat vóór de oogst van een
     # eerder gestarte balk in datzelfde vak valt (nu toegestaan door de
@@ -539,6 +548,8 @@ def toon_kengetallen(items, titel=None):
         return
     tegels = []
     for item in items:
+        if item.get("waarde") in (None, "-", ""):
+            item = {**item, "waarde": LEEG}
         uitleg = item.get("help")
         uitleg_html = f' <abbr title="{html.escape(uitleg)}">ⓘ</abbr>' if uitleg else ""
         delta = item.get("delta")
@@ -598,6 +609,79 @@ def jaargemiddelden_oogst(jaar):
     }
 
 
+# --- STATISTIEKEN: seizoensgecorrigeerde verbanden ---
+
+# Minimaal aantal teelten met beide waarden voordat een verband iets zegt.
+ANALYSE_MIN_N = 20
+# Minimaal aantal buren (eigen tuin, plantweek ±2) voor een eigen normaal;
+# anders telt de andere tuin mee.
+SEIZOEN_MIN_BUREN = 5
+
+# Groeifactoren eerst, dan het resultaat: in een verband is de eerste de
+# "oorzaak"-kant van de zin. Per kolom: (eenheid, eenheid bij 1, stap in de
+# zin, werkwoord, (woord bij hoger, woord bij lager), decimalen).
+ANALYSE_VARIABELEN = {
+    # Licht eerst: dat stuurt de kastemperatuur, niet andersom.
+    "Lichtsom (per dag)": ("J/cm² per dag", "J/cm² per dag", 100, "kregen", ("meer licht", "minder licht"), 0),
+    "Temperatuur (°C)": ("°C", "°C", 1, "waren", ("warmer", "kouder"), 1),
+    "Water (l/m²)": ("l/m²", "l/m²", 10, "kregen", ("meer water", "minder water"), 0),
+    "Teeltduur (dagen)": ("dagen", "dag", 1, "duurden", ("langer", "korter"), 1),
+    "Lengte (cm)": ("cm", "cm", 1, "waren", ("langer", "korter"), 1),
+    "Gewicht (g)": ("g", "g", 10, "waren", ("zwaarder", "lichter"), 0),
+    "Rijpheid": ("punt", "punt", 1, "waren", ("rijper", "minder rijp"), 1),
+}
+
+
+def seizoensafwijking(df, kolommen, venster=2, min_buren=SEIZOEN_MIN_BUREN):
+    """
+    Zet per teelt elke waarde om in de afwijking van het seizoensnormaal: de
+    waarde min het gemiddelde van de andere teelten met een plantweek binnen
+    ±`venster` weken (over alle jaren, over de jaargrens heen). Normaal uit de
+    eigen tuin (kolom tuin_id) als daar minstens `min_buren` teelten met een
+    waarde zijn, anders uit beide tuinen samen; met minder dan 3 buren blijft
+    de afwijking leeg. De teelt zelf telt niet mee in zijn eigen normaal.
+    """
+    uit = df.copy()
+    weken = df["plantweek"].to_numpy(dtype=float)
+    tuinen = df["tuin_id"].to_numpy()
+    afstand = np.abs(weken[:, None] - weken[None, :])
+    in_venster = np.minimum(afstand, 52 - afstand) <= venster
+    np.fill_diagonal(in_venster, False)
+    zelfde_tuin = tuinen[:, None] == tuinen[None, :]
+    for kolom in kolommen:
+        waarden = df[kolom].to_numpy(dtype=float)
+        heeft = ~np.isnan(waarden)
+        buren = in_venster & heeft[None, :]
+        eigen = buren & zelfde_tuin
+        kies = np.where((eigen.sum(axis=1) >= min_buren)[:, None], eigen, buren)
+        aantal = kies.sum(axis=1)
+        som = np.where(kies, np.nan_to_num(waarden)[None, :], 0.0).sum(axis=1)
+        normaal = np.divide(som, aantal, out=np.full(len(df), np.nan), where=aantal >= 3)
+        uit[kolom] = np.where(heeft, waarden - normaal, np.nan)
+    return uit
+
+
+def verband_zin(kol_a, kol_b, helling, r, n, seizoen):
+    """
+    Het verband in gewone woorden, bijv. "Teelten die 1 °C warmer waren dan
+    normaal voor hun plantweek, duurden gemiddeld 2,6 dagen korter dan normaal
+    (r = −0,62, n = 150)." `helling` is de verandering in kol_b per eenheid
+    kol_a (regressielijn).
+    """
+    eenheid_a, eenheid_a1, stap, werkwoord_a, (hoger_a, _), _ = ANALYSE_VARIABELEN[kol_a]
+    eenheid_b, eenheid_b1, _, werkwoord_b, (hoger_b, lager_b), decimalen_b = ANALYSE_VARIABELEN[kol_b]
+    effect = helling * stap
+    hoeveel = fmt_getal(abs(effect), decimalen_b)
+    oorzaak = f"{fmt_kort(stap)} {eenheid_a1 if stap == 1 else eenheid_a} {hoger_a}"
+    gevolg = f"{hoeveel} {eenheid_b1 if hoeveel == '1' else eenheid_b} {hoger_b if effect > 0 else lager_b}"
+    maat = f"(r = {fmt_verschil(r, 2)}, n = {n})"
+    if seizoen:
+        return (f"Teelten die {oorzaak} {werkwoord_a} dan normaal voor hun plantweek, "
+                f"{werkwoord_b} gemiddeld {gevolg} dan normaal {maat}.")
+    return (f"Teelten die {oorzaak} {werkwoord_a} dan andere teelten, "
+            f"{werkwoord_b} gemiddeld {gevolg} {maat}.")
+
+
 def klimaat_grafieken(dagen_records, toon_dagnacht=False, toon_trend=False, licht_max=2500):
     """
     Tekent twee grafieken uit dagrecords (dicts met datum, afdeling, temp_24h,
@@ -648,7 +732,7 @@ def klimaat_grafieken(dagen_records, toon_dagnacht=False, toon_trend=False, lich
             y=alt.Y("lichtsom:Q", title="Lichtsom per dag",
                     scale=alt.Scale(domain=[0, licht_max], clamp=True)),
             tooltip=[alt.Tooltip("datum:T", title="datum", format="%d-%m-%y"),
-                     alt.Tooltip("lichtsom:Q", title="lichtsom", format=".0f")],
+                     alt.Tooltip("lichtsom:Q", title="lichtsom", format=",.0f")],
         ))
     if not temp_lang.empty:
         temp_lagen.append(alt.Chart(temp_lang).mark_line().encode(
@@ -689,8 +773,8 @@ def klimaat_grafieken(dagen_records, toon_dagnacht=False, toon_trend=False, lich
 
     st.caption(
         "Temperatuur (lijn, links) + lichtsom per dag (staaf, gemiddeld over de afdelingen, rechts). "
-        f"Rode stippellijn = ideale temperatuur bij dat licht ({LICHT_TEMP_FACTOR} x lichtsom + "
-        f"{LICHT_TEMP_BASIS} °C) — temperatuurlijn erboven is relatief te warm, eronder te koud."
+        f"Rode stippellijn = ideale temperatuur bij dat licht ({fmt_kort(LICHT_TEMP_FACTOR, 4)} x lichtsom + "
+        f"{fmt_kort(LICHT_TEMP_BASIS, 1)} °C) — temperatuurlijn erboven is relatief te warm, eronder te koud."
         + (" Dikke effen lijn = 14-daags voortschrijdend gemiddelde." if toon_trend else "")
         + (" Per afdeling: donker = 24h, licht = dag, gestippeld = nacht." if toon_dagnacht else "")
     )
@@ -701,7 +785,7 @@ def klimaat_grafieken(dagen_records, toon_dagnacht=False, toon_trend=False, lich
 
     st.caption("Relatieve luchtvochtigheid (%)")
     lijngrafiek_per_afdeling(
-        _lang("rv"), "RV (%)", toon_dagnacht=toon_dagnacht, formaat=".0f",
+        _lang("rv"), "RV (%)", toon_dagnacht=toon_dagnacht, formaat=",.0f",
         melding="Geen luchtvochtigheidsdata in deze periode.",
     )
 
@@ -740,7 +824,7 @@ def licht_temperatuur_grafiek(dagen_records):
                  alt.Tooltip("waarde:Q", title="°C", format=".1f")],
     )
     st.caption(
-        f"Ideaal = {LICHT_TEMP_FACTOR} x lichtsom + {LICHT_TEMP_BASIS} °C van diezelfde dag. "
+        f"Ideaal = {fmt_kort(LICHT_TEMP_FACTOR, 4)} x lichtsom + {fmt_kort(LICHT_TEMP_BASIS, 1)} °C van diezelfde dag. "
         "Werkelijk boven ideaal: relatief te warm gestookt voor het licht. Eronder: te koud."
     )
     toon_grafiek(chart, lang, "Geen gekoppelde lichtsom/temperatuur in deze periode.", waardekolom="waarde")
@@ -942,12 +1026,12 @@ def toon_oogstregistraties_beheer(teelt_id, teelt_info):
         return
 
     totaal_emmers = sum(r[2] for r in registraties)
-    samenvatting = f"{totaal_emmers:g} emmers"
+    samenvatting = f"{fmt_kort(totaal_emmers)} emmers"
     if teelt_info.get("aantal_planten"):
         uitval_pct = (
             (teelt_info["aantal_planten"] - totaal_emmers * 100) / teelt_info["aantal_planten"] * 100
         )
-        samenvatting += f" · {uitval_pct:.1f}% uitval"
+        samenvatting += f" · {fmt_pct(uitval_pct)} uitval"
     st.caption(samenvatting)
 
     for reg_id, reg_datum, reg_emmers in registraties:
@@ -1412,9 +1496,6 @@ with tab_beide:
             "warmte": _bt_gem(teelten, "warmte_per_teelt"),
         }
 
-    def _bt_getal(waarde, decimalen=0):
-        return f"{waarde:,.{decimalen}f}".replace(",", "X").replace(".", ",").replace("X", ".")
-
     # (sleutel, label, eenheid, decimalen, uitleg, veld per teelt voor het detailvenster)
     _bt_tegel_defs = [
         ("teelten", "Afgeronde teelten", "", 0, "Teelten met een oogstdatum in deze periode.",
@@ -1482,7 +1563,7 @@ with tab_beide:
                     pd.DataFrame(rijen).drop(columns=[] if meerdere else ["Tuin"]),
                     hide_index=True, use_container_width=True,
                     column_config={"Geplant": st.column_config.DateColumn(format="DD-MM-YY"),
-                                   "m²": st.column_config.NumberColumn(format="%.1f")},
+                                   "m²": getalkolom("m²", 1)},
                 )
                 return
 
@@ -1547,8 +1628,7 @@ with tab_beide:
                 column_config={
                     "Geplant": st.column_config.DateColumn(format="DD-MM-YY"),
                     "Geoogst": st.column_config.DateColumn(format="DD-MM-YY"),
-                    kolomnaam: st.column_config.NumberColumn(
-                        format=f"%.{0 if veld == 'geoogste_stelen' else max(decimalen, 1)}f"),
+                    kolomnaam: getalkolom(kolomnaam, 0 if veld == "geoogste_stelen" else max(decimalen, 1)),
                 },
             )
             st.caption("Gesorteerd van laag naar hoog; klik op een kolomkop om anders te sorteren.")
@@ -1600,16 +1680,12 @@ with tab_beide:
         for sleutel, label, eenheid, decimalen, uitleg, _ in _bt_tegel_defs:
             waarde = nu[sleutel]
             tegel = {"sleutel": sleutel, "label": label, "help": uitleg,
-                     "waarde": f"{_bt_getal(waarde, decimalen)} {eenheid}".strip() if waarde is not None else "-"}
+                     "waarde": fmt_getal(waarde, decimalen, eenheid)}
             if waarde is not None and vorig and not vorig_compleet and sleutel in _bt_tellingen:
                 tegel["delta"] = f"{vorig_label} niet volledig geregistreerd"
             elif waarde is not None and vorig.get(sleutel) is not None:
-                verschil = waarde - vorig[sleutel]
-                teken = "" if round(verschil, decimalen) == 0 else "+" if verschil > 0 else "−"
-                tegel["delta"] = " ".join(
-                    d for d in (f"{teken}{_bt_getal(abs(verschil), decimalen)}", eenheid, f"t.o.v. {vorig_label}")
-                    if d
-                )
+                tegel["delta"] = (f"{fmt_verschil(waarde - vorig[sleutel], decimalen, eenheid)} "
+                                  f"t.o.v. {vorig_label}")
             tegels.append(tegel)
         _bt_tegelknoppen(tuinen, titel, tegels, venster)
 
@@ -1620,10 +1696,10 @@ with tab_beide:
         })
         vakken = sum(len(get_vaknummers(t["id"])) for t in tuinen) or 1
         return [
-            {"sleutel": "bezetting", "label": "Bezetting nu", "waarde": f"{lopend / vakken * 100:.0f}%",
+            {"sleutel": "bezetting", "label": "Bezetting nu", "waarde": fmt_pct(lopend / vakken * 100, 0),
              "help": f"{lopend} van de {vakken} vakken heeft nu een lopende teelt."},
             {"sleutel": "oppervlakte", "label": "Teeltoppervlakte",
-             "waarde": f"{_bt_getal(_bt_oppervlakte(tuinen))} m²",
+             "waarde": fmt_getal(_bt_oppervlakte(tuinen), 0, "m²"),
              "help": "Som van de oppervlakte van alle vakken."},
         ]
 
@@ -1742,14 +1818,14 @@ with tab_beide:
     # --- Kengetallen per periode ---
     st.write("Kengetallen per periode")
     _bt_dashboard_metrics = [
-        ("Oogstgewicht", "oogstgewicht", "g", ".0f"),
-        ("Oogstlengte", "lengte_eind", "cm", ".1f"),
-        ("Gewicht per 10 cm", "gewicht_per_10cm", "g", ".1f"),
-        ("Uitval", "uitval_pct", "%", ".1f"),
-        ("Etmaaltemperatuur", "gem_temperatuur", "°C", ".1f"),
-        ("Lichtsom per dag", "lichtsom_per_dag", "J/cm²", ".0f"),
-        ("Water per teelt", "liters", "l/m²", ".0f"),
-        ("Teeltduur", "teeltduur", "dgn", ".0f"),
+        ("Oogstgewicht", "oogstgewicht", "g", ",.0f"),
+        ("Oogstlengte", "lengte_eind", "cm", ",.1f"),
+        ("Gewicht per 10 cm", "gewicht_per_10cm", "g", ",.1f"),
+        ("Uitval", "uitval_pct", "%", ",.1f"),
+        ("Etmaaltemperatuur", "gem_temperatuur", "°C", ",.1f"),
+        ("Lichtsom per dag", "lichtsom_per_dag", "J/cm²", ",.0f"),
+        ("Water per teelt", "liters", "l/m²", ",.0f"),
+        ("Teeltduur", "teeltduur", "dgn", ",.0f"),
     ]
     _bt_mini_kolommen = st.columns(2)
     for _bt_i, (_bt_titel, _bt_veld, _bt_eenheid, _bt_fmt) in enumerate(_bt_dashboard_metrics):
@@ -1901,7 +1977,7 @@ with tab_overzicht:
             {"label": "Actief", "waarde": len(df[df['Status'] == 'Lopend'])},
             {"label": "Nog te starten", "waarde": len(df[df['Status'] == 'Nog te starten'])},
             {"label": "Afgerond", "waarde": len(df[df['Status'] == 'Afgerond'])},
-            {"label": "Gem. duur", "waarde": f"{gem_duur:.0f} dgn" if not pd.isna(gem_duur) else "-"},
+            {"label": "Gem. duur", "waarde": fmt_dagen(gem_duur)},
         ])
 
         st.markdown("---")
@@ -2173,14 +2249,14 @@ with tab_week:
     # --- Samenvatting bovenaan ---
     toon_kengetallen([
         {"label": "Geplant", "waarde": len(geplant_week), "help": "Teelten gestart in deze week"},
-        {"label": "Emmers", "waarde": f"{totaal_emmers_week:g}" if emmers_week else "-"},
+        {"label": "Emmers", "waarde": fmt_kort(totaal_emmers_week) if emmers_week else LEEG},
         {"label": "Stelen",
-         "waarde": f"{totaal_stelen_week:,.0f}".replace(",", ".") if emmers_week else "-"},
+         "waarde": fmt_getal(totaal_stelen_week) if emmers_week else LEEG},
         {"label": "Gem. uitval",
-         "waarde": f"{sum(uitval_pct_week) / len(uitval_pct_week):.1f} %" if uitval_pct_week else "-",
+         "waarde": fmt_pct(sum(uitval_pct_week) / len(uitval_pct_week)) if uitval_pct_week else LEEG,
          "help": "Teelten die deze week zijn afgerond"},
         {"label": "Gem. water",
-         "waarde": f"{gem_water_week:.1f} l/m²" if gem_water_week is not None and pd.notna(gem_water_week) else "-",
+         "waarde": fmt_getal(gem_water_week, 1, "l/m²"),
          "help": f"Gemiddeld over {len(df_water_week)} vakken" if df_water_week is not None else None},
     ])
 
@@ -2273,7 +2349,7 @@ with tab_week:
         pivot_water = df_water_dag.pivot_table(index="Vak", columns="Datum", values="Liter/m²", aggfunc="sum")
         pivot_water = pivot_water.reindex(kolomvolgorde_water, axis=1).sort_index()
         st.dataframe(pivot_water.round(1), column_config={
-            dag: st.column_config.NumberColumn(dag[:5], format="%.1f", width="small")
+            dag: getalkolom(dag[:5], 1, width="small")
             for dag in pivot_water.columns
         })
     else:
@@ -2426,13 +2502,14 @@ with tab_detail:
         if dagen_lijst:
             gem_dagen = sum(dagen_lijst) / len(dagen_lijst)
             gem_weken = round(gem_dagen / 7 * 2) / 2
-            teeltduur_tekst = f"{gem_weken:g} wk ({gem_dagen:.0f} dgn)"
+            teeltduur_tekst = f"{fmt_kort(gem_weken, 1, 'wk')} ({fmt_dagen(gem_dagen)})"
         else:
-            teeltduur_tekst = "-"
+            teeltduur_tekst = LEEG
 
         teeltduur_delta = None
         if dagen_lijst and verwachte_duur_weken is not None:
-            teeltduur_delta = f"{gem_weken - verwachte_duur_weken:+.1f} wk t.o.v. gepland ({verwachte_duur_weken:g} wk)"
+            teeltduur_delta = (f"{fmt_verschil(gem_weken - verwachte_duur_weken, 1, 'wk')} t.o.v. gepland "
+                               f"({fmt_kort(verwachte_duur_weken, 1, 'wk')})")
 
         def _datum_bereik(datums, voorvoegsel=""):
             # Niet-afbrekende streepjes (U+2011): op een smal scherm mag het
@@ -2465,19 +2542,20 @@ with tab_detail:
 
         toon_kengetallen(titel="Klimaat", items=[
             {"label": "Gem. temp.",
-             "waarde": f"{sum(temp_lijst) / len(temp_lijst):.1f} °C" if temp_lijst else "-",
-             "delta": f"{sum(delta_temp_lijst) / len(delta_temp_lijst):+.1f} °C t.o.v. ideaal" if delta_temp_lijst else None,
+             "waarde": fmt_temp(sum(temp_lijst) / len(temp_lijst)) if temp_lijst else LEEG,
+             "delta": (f"{fmt_verschil(sum(delta_temp_lijst) / len(delta_temp_lijst), 1, '°C')} t.o.v. ideaal"
+                       if delta_temp_lijst else None),
              "help": "Gemiddelde etmaaltemperatuur. Ideaal is afhankelijk van de lichtsom: "
-                     f"{LICHT_TEMP_FACTOR} x lichtsom + {LICHT_TEMP_BASIS} °C."},
-            {"label": "Gem. RV", "waarde": f"{sum(rv_lijst) / len(rv_lijst):.0f} %" if rv_lijst else "-"},
+                     f"{fmt_kort(LICHT_TEMP_FACTOR, 4)} x lichtsom + {fmt_kort(LICHT_TEMP_BASIS, 1)} °C."},
+            {"label": "Gem. RV", "waarde": fmt_pct(sum(rv_lijst) / len(rv_lijst), 0) if rv_lijst else LEEG},
             {"label": "Lichtsom/dag",
-             "waarde": f"{sum(straling_lijst) / len(straling_lijst):.0f}" if straling_lijst else "-",
+             "waarde": fmt_getal(sum(straling_lijst) / len(straling_lijst)) if straling_lijst else LEEG,
              "help": "Gemiddelde lichtsom per dag."},
             {"label": "Water",
-             "waarde": f"{sum(water_lijst) / len(water_lijst):.0f} l/m²" if water_lijst else "-",
+             "waarde": fmt_getal(sum(water_lijst) / len(water_lijst), 0, "l/m²") if water_lijst else LEEG,
              "help": "Gemiddelde totale watergift per vak."},
             {"label": "Warmte",
-             "waarde": f"{sum(warmte_lijst) / len(warmte_lijst) / 1000:.2f} GJ" if warmte_lijst else "-",
+             "waarde": fmt_getal(sum(warmte_lijst) / len(warmte_lijst) / 1000, 2, "GJ") if warmte_lijst else LEEG,
              "help": "Gemiddeld warmteverbruik per teelt."},
         ])
 
@@ -2504,7 +2582,7 @@ with tab_detail:
         def _delta_jaar(waarde, jaar_waarde, eenheid="", decimalen=1):
             if waarde is None or jaar_waarde is None:
                 return None
-            return f"{waarde - jaar_waarde:+.{decimalen}f}{eenheid} t.o.v. dit jaar"
+            return f"{fmt_verschil(waarde - jaar_waarde, decimalen, eenheid.strip())} t.o.v. dit jaar"
 
         gem_halve_lengte = sum(halve_lengtes) / len(halve_lengtes) if halve_lengtes else None
         gem_lengte = sum(lengtes) / len(lengtes) if lengtes else None
@@ -2516,23 +2594,23 @@ with tab_detail:
         )
         toon_kengetallen(titel="Oogst", items=[
             {"label": "Florgib",
-             "waarde": f"{gem_halve_lengte:.1f} cm" if gem_halve_lengte is not None else "-",
+             "waarde": fmt_getal(gem_halve_lengte, 1, "cm"),
              "help": "Gemiddelde lengte bij de Florgib-meting halverwege de teelt."},
             {"label": "Gem. taklengte",
-             "waarde": f"{gem_lengte:.1f} cm" if gem_lengte is not None else "-",
+             "waarde": fmt_getal(gem_lengte, 1, "cm"),
              "delta": _delta_jaar(gem_lengte, jaar_gem["lengte"], " cm")},
             {"label": "Gem. takgewicht",
-             "waarde": f"{gem_gewicht:.0f} g" if gem_gewicht is not None else "-",
+             "waarde": fmt_getal(gem_gewicht, 0, "g"),
              "delta": _delta_jaar(gem_gewicht, jaar_gem["gewicht"], " g", 0)},
             {"label": "Gem. uitval",
-             "waarde": f"{gem_uitval:.1f} %" if gem_uitval is not None else "-",
+             "waarde": fmt_pct(gem_uitval),
              "delta": _delta_jaar(gem_uitval, jaar_gem["uitval"], " %-punt")},
             {"label": "Gem. factor",
-             "waarde": f"{gem_factor:.2f}" if gem_factor is not None else "-",
+             "waarde": fmt_getal(gem_factor, 2),
              "delta": _delta_jaar(gem_factor, jaar_gem["factor"], "", 2),
              "help": "Eindlengte gedeeld door de lengte bij de Florgib-meting halverwege."},
             {"label": "Gewicht/10 cm",
-             "waarde": f"{gem_gewicht_10cm:.1f} g" if gem_gewicht_10cm is not None else "-",
+             "waarde": fmt_getal(gem_gewicht_10cm, 1, "g"),
              "delta": _delta_jaar(gem_gewicht_10cm, jaar_gem["gewicht_10cm"], " g"),
              "help": "Gemiddeld takgewicht per 10 cm taklengte."},
         ])
@@ -2562,10 +2640,10 @@ with tab_detail:
             st.caption("Temperatuur (°C): donker = 24 uur, licht = dag, gestippeld = nacht")
             lijngrafiek_per_afdeling(pd.DataFrame(records_temp), "Temperatuur (°C)", melding=geen_klimaat)
             st.caption("RV (%): donker = 24 uur, licht = dag, gestippeld = nacht")
-            lijngrafiek_per_afdeling(pd.DataFrame(records_rv), "RV (%)", formaat=".0f", melding=geen_klimaat)
+            lijngrafiek_per_afdeling(pd.DataFrame(records_rv), "RV (%)", formaat=",.0f", melding=geen_klimaat)
             st.caption("Lichtsom (per dag)")
             lijngrafiek_per_afdeling(
-                pd.DataFrame(records_straling), "Lichtsom", toon_dagnacht=False, formaat=".0f",
+                pd.DataFrame(records_straling), "Lichtsom", toon_dagnacht=False, formaat=",.0f",
                 melding=geen_klimaat,
             )
         else:
@@ -2781,7 +2859,7 @@ with tab_planning:
     plan_duur, plan_eind = bereken_verwachte_oogstdatum(plan_startdatum)
     if plan_duur is not None:
         st.caption(
-            f"Plantweek {get_weeknummer(plan_startdatum)} → verwachte teeltduur {plan_duur:g} weken, "
+            f"Plantweek {get_weeknummer(plan_startdatum)} → verwachte teeltduur {fmt_kort(plan_duur, 1)} weken, "
             f"verwachte oogst {format_datum(plan_eind)}"
         )
     else:
@@ -2816,7 +2894,7 @@ with tab_planning:
             if col2b.button("💾", key=f"plan_datum_opslaan_{planning_id}", help="Startdatum aanpassen"):
                 wijzig_planning(planning_id, nieuwe_datum_plan, gebruiker=huidige_gebruiker())
                 st.rerun()
-            col3.write(f"{duur:g} wk" if duur is not None else "-")
+            col3.write(fmt_kort(duur, 1, "wk"))
             col4.write(format_datum(eind) if eind else "-")
             dichtheid_plan = standaard_dichtheid_voor_plantweek(get_weeknummer(start))
             aantal_planten_plan = col5.number_input(
@@ -3026,7 +3104,7 @@ with tab_stek:
                 "Te poten": st.column_config.NumberColumn(format="%d", width="small"),
                 "Plant": st.column_config.TextColumn(width="small"),
                 "Bakjes": st.column_config.NumberColumn(
-                    min_value=0.0, step=0.5, format="%.1f", width="small",
+                    min_value=0.0, step=0.5, format="localized", width="small",
                     help="Aantal gepote bakjes (600 stekken per bakje)",
                 ),
                 "Wortel": st.column_config.SelectboxColumn(options=STEK_KEUZES["wortel"], width="small"),
@@ -3231,7 +3309,7 @@ with tab_klimaat:
                     if uren_geleden > 36:
                         st.warning(
                             f"⚠️ Laatste automatische ophaling: {wanneer}, "
-                            f"{uren_geleden / 24:.0f} dagen geleden. Priva bewaart 5 dagen, "
+                            f"{fmt_getal(uren_geleden / 24)} dagen geleden. Priva bewaart 5 dagen, "
                             "dus controleer de taak voordat er een gat ontstaat."
                         )
                     else:
@@ -3324,15 +3402,17 @@ with tab_klimaat:
                     df_energie[["datum", "warmte_mj_totaal"]],
                     df_gas[["datum", "gas_mj_totaal"]],
                     on="datum", how="outer",
-                ).fillna(0)
+                )
                 df_warmte_dag["Hoofdwarmte (GJ)"] = df_warmte_dag["warmte_mj_totaal"] / 1000
                 df_warmte_dag["Gasketel (GJ)"] = df_warmte_dag["gas_mj_totaal"] / 1000
                 df_warmte_dag["datum"] = pd.to_datetime(df_warmte_dag["datum"])
 
+                # Een dag zonder meting van een bron blijft leeg (geen staafdeel),
+                # niet 0: 0 zou betekenen dat er die dag niet gestookt is.
                 df_warmte_lang = df_warmte_dag.melt(
                     id_vars="datum", value_vars=["Hoofdwarmte (GJ)", "Gasketel (GJ)"],
                     var_name="Bron", value_name="GJ",
-                )
+                ).dropna(subset=["GJ"])
                 warmte_chart = alt.Chart(df_warmte_lang).mark_bar().encode(
                     x=datum_as(),
                     y=alt.Y("GJ:Q", title="Warmte (GJ)", stack=True),
@@ -3350,8 +3430,7 @@ with tab_klimaat:
         st.caption(
             f"Warmteverbruik geregistreerd van {format_datum(e_eerste)} t/m {format_datum(e_laatste)} "
             f"({e_aantal} dagen, {e_ontbrekend} ontbrekend). Kasoppervlak {TUIN_NAAM}: "
-            f"{oppervlakte_van_tuin(TUIN_ID) or 0:,.0f} m²."
-            .replace(",", ".")
+            f"{fmt_getal(oppervlakte_van_tuin(TUIN_ID), 0, 'm²')}."
         )
         gas_dekking = get_gasdata_dekking()
         if gas_dekking:
@@ -3359,7 +3438,7 @@ with tab_klimaat:
             st.caption(
                 f"Gasketel (bijstook, Pulsteller 1) geregistreerd van {format_datum(g_eerste)} t/m "
                 f"{format_datum(g_laatste)} ({g_aantal} dagen), omgerekend met "
-                f"{GAS_CALORISCHE_WAARDE_MJ_PER_M3} MJ/m³."
+                f"{fmt_kort(GAS_CALORISCHE_WAARDE_MJ_PER_M3, 2)} MJ/m³."
             )
 
     # --- Gemiddelden per teelt (onder de grafieken) ---
@@ -3432,9 +3511,9 @@ with tab_stats:
             maximum = df_afgerond['Teeltduur (dagen)'].max()
 
             toon_kengetallen([
-                {"label": "Gemiddeld", "waarde": f"{gemiddeld:.0f} dgn"},
-                {"label": "Kortst", "waarde": f"{minimum:.0f} dgn"},
-                {"label": "Langst", "waarde": f"{maximum:.0f} dgn"},
+                {"label": "Gemiddeld", "waarde": fmt_dagen(gemiddeld)},
+                {"label": "Kortst", "waarde": fmt_dagen(minimum)},
+                {"label": "Langst", "waarde": fmt_dagen(maximum)},
             ])
 
         # --- Analyse: lengtegroei ---
@@ -3498,87 +3577,138 @@ with tab_stats:
             "(gewicht, lengte, rijpheid, teeltduur) en zoekt naar de sterkste samenhang."
         )
 
-        # Uit dezelfde bron als het teeltoverzicht: dat is een query voor alle
-        # teelten samen, in plaats van per teelt klimaat en water opvragen.
+        # Beide tuinen ophalen: het seizoensnormaal van een tuin met weinig
+        # teelten rond een plantweek valt terug op beide tuinen samen. De
+        # analyse zelf gaat over de gekozen tuin.
         analyse_rijen = []
-        for k in get_teeltkengetallen():
-            if not k["datum_oogst"]:
-                continue
-            laag, hoog = rijpheid_tekst_naar_bereik(k["rijpheid"]) if k["rijpheid"] else (None, None)
-            lichtsom_per_dag = (
-                k["lichtsom"] / k["klimaatdagen"] if k["lichtsom"] and k["klimaatdagen"] else None
-            )
-            analyse_rijen.append({
-                "Teeltduur (dagen)": k["teeltduur"],
-                "Gewicht (g)": k["oogstgewicht"],
-                "Lengte (cm)": k["lengte_eind"],
-                "Rijpheid": (laag + hoog) / 2 if laag is not None else None,
-                "Lichtsom (per dag)": lichtsom_per_dag,
-                "Temperatuur (°C)": k["gem_temperatuur"],
-                "Water (l/m²)": k["liters"],
-            })
+        for _tuin in TUINEN:
+            for k in get_teeltkengetallen(_tuin["id"]):
+                if not k["datum_oogst"]:
+                    continue
+                laag, hoog = rijpheid_tekst_naar_bereik(k["rijpheid"]) if k["rijpheid"] else (None, None)
+                analyse_rijen.append({
+                    "tuin_id": _tuin["id"],
+                    "plantweek": k["plantweek"],
+                    "Temperatuur (°C)": k["gem_temperatuur"],
+                    "Lichtsom (per dag)": (
+                        k["lichtsom"] / k["klimaatdagen"] if k["lichtsom"] and k["klimaatdagen"] else None
+                    ),
+                    "Water (l/m²)": k["liters"],
+                    "Teeltduur (dagen)": k["teeltduur"],
+                    "Lengte (cm)": k["lengte_eind"],
+                    "Gewicht (g)": k["oogstgewicht"],
+                    "Rijpheid": (laag + hoog) / 2 if laag is not None else None,
+                })
+        kolommen_analyse = list(ANALYSE_VARIABELEN)
+        df_alle = pd.DataFrame(analyse_rijen)
+        if not df_alle.empty:
+            df_alle[kolommen_analyse] = df_alle[kolommen_analyse].apply(pd.to_numeric, errors="coerce")
+        df_tuin = df_alle[df_alle["tuin_id"] == TUIN_ID] if not df_alle.empty else df_alle
 
-        df_analyse = pd.DataFrame(analyse_rijen).apply(pd.to_numeric, errors="coerce")
-
-        if len(df_analyse) < 5:
-            st.info("Nog te weinig afgeronde teelten voor een zinvolle analyse (minimaal 5 nodig).")
+        if len(df_tuin) < ANALYSE_MIN_N:
+            st.info(f"Nog te weinig afgeronde teelten voor een zinvolle analyse (minimaal {ANALYSE_MIN_N} nodig).")
         else:
-            kolommen_analyse = list(df_analyse.columns)
+            seizoen_eruit = st.toggle(
+                "Seizoenseffect eruit halen", value=True, key="stats_seizoen",
+                help="Vergelijkt elke teelt met teelten uit dezelfde tijd van het jaar (plantweek ±2), "
+                     "zodat winter tegen zomer niet de verbanden bepaalt.",
+            )
+            if seizoen_eruit:
+                df_analyse = seizoensafwijking(df_alle, kolommen_analyse)
+                df_analyse = df_analyse[df_analyse["tuin_id"] == TUIN_ID][kolommen_analyse]
+                st.caption(
+                    "Per teelt is elke waarde vergeleken met het normaal voor die tijd van het jaar: het "
+                    "gemiddelde van de andere teelten met een plantweek binnen 2 weken (alle jaren, eigen "
+                    f"tuin; zijn dat er minder dan {SEIZOEN_MIN_BUREN}, dan beide tuinen samen). De verbanden "
+                    "hieronder gaan over die afwijkingen: wat er binnen een seizoen gebeurt."
+                )
+            else:
+                df_analyse = df_tuin[kolommen_analyse]
+                st.caption(
+                    "Ruwe waarden: de verbanden zijn grotendeels het seizoen (winterteelten zijn kouder, "
+                    "donkerder en duren langer)."
+                )
+
             corr = df_analyse.corr(min_periods=5)
+            aanwezig = df_analyse.notna().astype(int)
+            n_paren = aanwezig.T @ aanwezig
 
             corr_lang = (
                 corr.reset_index().melt(id_vars="index", var_name="Variabele 2", value_name="r")
-                .rename(columns={"index": "Variabele 1"}).dropna(subset=["r"])
+                .rename(columns={"index": "Variabele 1"})
             )
+            corr_lang["n"] = [int(n_paren.loc[a, b]) for a, b in zip(corr_lang["Variabele 1"], corr_lang["Variabele 2"])]
+            corr_lang = corr_lang.dropna(subset=["r"])
+            genoeg = f"datum.n >= {ANALYSE_MIN_N}"
             heatmap = alt.Chart(corr_lang).mark_rect().encode(
                 x=alt.X("Variabele 1:N", title=None, sort=kolommen_analyse),
                 y=alt.Y("Variabele 2:N", title=None, sort=kolommen_analyse),
-                color=alt.Color("r:Q", title="Correlatie", scale=alt.Scale(scheme="redblue", domain=[-1, 1])),
-                tooltip=["Variabele 1:N", "Variabele 2:N", alt.Tooltip("r:Q", format=".2f")],
+                color=alt.condition(
+                    genoeg,
+                    alt.Color("r:Q", title="Correlatie", scale=alt.Scale(scheme="redblue", domain=[-1, 1])),
+                    alt.value("#e3e3e3"),
+                ),
+                tooltip=["Variabele 1:N", "Variabele 2:N", alt.Tooltip("r:Q", format=".2f"), "n:Q"],
             )
+            # Tekstkleur: wit op een donker vakje, grijs als n te klein is.
+            corr_lang["tekstkleur"] = [
+                "#9a9a9a" if n < ANALYSE_MIN_N else "white" if abs(r) > 0.5 else "black"
+                for r, n in zip(corr_lang["r"], corr_lang["n"])
+            ]
             tekst = alt.Chart(corr_lang).mark_text(fontSize=11).encode(
                 x=alt.X("Variabele 1:N", sort=kolommen_analyse),
                 y=alt.Y("Variabele 2:N", sort=kolommen_analyse),
                 text=alt.Text("r:Q", format=".2f"),
-                color=alt.condition("abs(datum.r) > 0.5", alt.value("white"), alt.value("black")),
+                color=alt.Color("tekstkleur:N", scale=None),
             )
-            st.altair_chart((heatmap + tekst).properties(height=340), use_container_width=True)
-            st.caption(f"Gebaseerd op {len(df_analyse)} afgeronde teelten.")
+            # Eigen kleurschaal per laag: de tekstkleur is een vaste kleur per
+            # vakje en hoort niet in de correlatieschaal van de vakjes.
+            st.altair_chart(
+                (heatmap + tekst).resolve_scale(color="independent").properties(height=340),
+                use_container_width=True,
+            )
+            st.caption(
+                f"Gebaseerd op {len(df_analyse)} afgeronde teelten van {TUIN_NAAM}. Grijze vakjes: minder dan "
+                f"{ANALYSE_MIN_N} teelten met beide waarden, te weinig om iets over te zeggen. "
+                "Beweeg over een vakje voor r en n."
+            )
 
             paren = []
             for i, kol_a in enumerate(kolommen_analyse):
                 for kol_b in kolommen_analyse[i + 1:]:
                     r = corr.loc[kol_a, kol_b]
-                    n = df_analyse[[kol_a, kol_b]].dropna().shape[0]
-                    if pd.notna(r) and n >= 5:
+                    n = int(n_paren.loc[kol_a, kol_b])
+                    if pd.notna(r) and n >= ANALYSE_MIN_N:
                         paren.append((abs(r), r, kol_a, kol_b, n))
             paren.sort(key=lambda p: p[0], reverse=True)
+            te_klein = sum(
+                1 for i, a in enumerate(kolommen_analyse) for b in kolommen_analyse[i + 1:]
+                if pd.notna(corr.loc[a, b]) and int(n_paren.loc[a, b]) < ANALYSE_MIN_N
+            )
 
             if paren:
                 st.write("**Sterkste samenhangen:**")
                 for abs_r, r, kol_a, kol_b, n in paren[:3]:
+                    df_paar = df_analyse[[kol_a, kol_b]].dropna()
+                    helling = r * df_paar[kol_b].std() / df_paar[kol_a].std() if df_paar[kol_a].std() else 0
                     sterkte = "sterk" if abs_r > 0.7 else "matig" if abs_r > 0.4 else "zwak"
-                    richting = "ook hoger" if r > 0 else "juist lager"
-                    st.write(
-                        f"- **{kol_a}** vs **{kol_b}**: naarmate {kol_a.lower()} hoger is, is "
-                        f"{kol_b.lower()} {richting} (r = {r:+.2f}, {sterkte} verband, n={n})"
-                    )
-                    df_paar = df_analyse.dropna(subset=[kol_a, kol_b])
+                    st.write(f"- {verband_zin(kol_a, kol_b, helling, r, n, seizoen_eruit)} {sterkte.capitalize()} verband.")
+                    as_titel = (lambda kol: f"{kol} t.o.v. normaal") if seizoen_eruit else (lambda kol: kol)
                     scatter = alt.Chart(df_paar).mark_circle(size=60, opacity=0.6).encode(
-                        x=alt.X(f"{kol_a}:Q", scale=alt.Scale(zero=False)),
-                        y=alt.Y(f"{kol_b}:Q", scale=alt.Scale(zero=False)),
-                        tooltip=[kol_a, kol_b],
+                        x=alt.X(f"{kol_a}:Q", title=as_titel(kol_a), scale=alt.Scale(zero=False)),
+                        y=alt.Y(f"{kol_b}:Q", title=as_titel(kol_b), scale=alt.Scale(zero=False)),
+                        tooltip=[alt.Tooltip(f"{kol_a}:Q", format=".1f"), alt.Tooltip(f"{kol_b}:Q", format=".1f")],
                     )
                     trend = scatter.transform_regression(kol_a, kol_b).mark_line(color="#c0392b")
                     st.altair_chart((scatter + trend).properties(height=220), use_container_width=True)
 
                 st.caption(
-                    f"Let op: gebaseerd op {len(df_analyse)} teelten — met zo'n kleine steekproef kan een "
-                    "verband ook toeval zijn. Gebruik dit als richting om op te letten, niet als bewijs, "
-                    "en correlatie is geen oorzakelijk verband."
+                    (f"{te_klein} paren met minder dan {ANALYSE_MIN_N} teelten zijn weggelaten. " if te_klein else "")
+                    + "Een verband kan ook toeval zijn: gebruik dit als richting om op te letten, niet als "
+                    "bewijs, en correlatie is geen oorzakelijk verband."
                 )
             else:
-                st.caption("Geen paren met genoeg overlappende data gevonden.")
+                st.caption(f"Geen paren met minstens {ANALYSE_MIN_N} teelten met beide waarden.")
     else:
         st.info("Geen data beschikbaar voor statistieken.")
 
