@@ -1765,38 +1765,104 @@ def get_gasdata_dekking(tuin_id=None):
     return (str(rij[0]), str(rij[1]), rij[2])
 
 
+def warmte_per_bezette_m2(tuin_id=None):
+    """
+    {datum: MJ/m²} per dag: het totale warmteverbruik van de kas (Pulsteller-
+    warmte plus gasgestookte warmte) gedeeld door de oppervlakte van de vakken
+    waar die week een teelt stond.
+
+    De kas wordt als geheel verwarmd en gemeten. Staan er vakken leeg, dan gaat
+    die warmte naar de teelten die er wel staan; delen door de hele tuin zou
+    elke teelt in een half lege week te weinig warmte toerekenen. "Die week" is
+    de ISO-week: een vak telt mee als er ergens in die week een teelt op stond.
+
+    Vóór de eerste week waarin minstens 90% van de vakken een teelt had, valt
+    het terug op de hele tuin: daarvoor was de registratie in de app nog niet
+    compleet (tuin 3 staat pas vanaf eind juni 2025 volledig in de app), en
+    zou de warmte van een volle kas op de paar ingevoerde teelten landen.
+    """
+    tuin_id = _tuin_of_standaard(tuin_id)
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT datum, SUM(mj) FROM (
+                SELECT datum, warmte_mj_totaal AS mj FROM energiedata_dag WHERE tuin_id = %s
+                UNION ALL
+                SELECT datum, gas_mj_totaal AS mj FROM gasdata_dag WHERE tuin_id = %s
+            ) bronnen
+            GROUP BY datum
+        """, (tuin_id, tuin_id))
+        per_dag = [(d, mj) for d, mj in cursor.fetchall() if mj is not None]
+        if not per_dag:
+            return {}
+        cursor.execute("""
+            SELECT v.vaknummer, t.datum_teelt_start, t.datum_oogst
+            FROM teelten t JOIN teeltvakken v ON v.id = t.teeltvak_id
+            WHERE v.tuin_id = %s AND v.vaknummer IS NOT NULL AND t.datum_teelt_start IS NOT NULL
+        """, (tuin_id,))
+        teelten = cursor.fetchall()
+
+    oppervlakte = {vak: g["oppervlakte_m2"] for vak, g in get_vakgegevens(tuin_id).items()}
+    hele_tuin = oppervlakte_van_tuin(tuin_id) or sum(oppervlakte.values())
+    vandaag = date.today()
+
+    # Per maandag van een week: de vakken met een teelt in die week.
+    bezet = {}
+    for vak, start, oogst in teelten:
+        begin = datetime.strptime(start, "%Y-%m-%d").date()
+        eind = datetime.strptime(oogst, "%Y-%m-%d").date() if oogst else vandaag
+        maandag = begin - timedelta(days=begin.weekday())
+        while maandag <= eind:
+            bezet.setdefault(maandag, set()).add(vak)
+            maandag += timedelta(days=7)
+
+    volledig_vanaf = min(
+        (maandag for maandag, vakken in bezet.items() if len(vakken) >= 0.9 * len(oppervlakte)),
+        default=None,
+    )
+
+    resultaat = {}
+    for datum, mj in per_dag:
+        dag = datetime.strptime(datum, "%Y-%m-%d").date()
+        maandag = dag - timedelta(days=dag.weekday())
+        if volledig_vanaf is None or maandag < volledig_vanaf:
+            bezet_m2 = hele_tuin
+        else:
+            bezet_m2 = sum(oppervlakte.get(v, 0) for v in bezet.get(maandag, ())) or hele_tuin
+        resultaat[datum] = float(mj) / bezet_m2 if bezet_m2 else None
+    return resultaat
+
+
+def warmte_over_periode(per_dag, datum_start, datum_eind):
+    """(MJ/m² opgeteld, aantal dagen met data) uit warmte_per_bezette_m2 over een periode."""
+    start = datetime.strptime(str(datum_start), "%Y-%m-%d").date()
+    eind = datetime.strptime(str(datum_eind), "%Y-%m-%d").date()
+    som, dagen = 0.0, 0
+    dag = start
+    while dag <= eind:
+        waarde = per_dag.get(str(dag))
+        if waarde is not None:
+            som += waarde
+            dagen += 1
+        dag += timedelta(days=1)
+    return (som if dagen else None), dagen
+
+
 def get_warmte_voor_periode(vaknummer, datum_start, datum_eind, tuin_id=None):
     """
     Geeft het totale warmteverbruik (MJ) van één vak binnen een periode terug
     — Pulsteller-warmte plus (in weken met bijstook) gasgestookte warmte
-    opgeteld — berekend als de kaswaarde per m2 per dag keer de oppervlakte
-    van dat vak. Geeft None als er geen data of geen bekende oppervlakte is.
+    opgeteld — berekend als de warmte per bezette m² per dag (zie
+    warmte_per_bezette_m2) keer de oppervlakte van dat vak. Geeft None als er
+    geen data of geen bekende oppervlakte is.
     """
     oppervlakte = oppervlakte_van_vaknummer(vaknummer, tuin_id)
     if not oppervlakte:
         return None
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT SUM(totaal), COUNT(*)
-            FROM (
-                SELECT datum, SUM(mj_per_m2) AS totaal
-                FROM (
-                    SELECT datum, warmte_mj_per_m2 AS mj_per_m2
-                    FROM energiedata_dag WHERE tuin_id = %s AND datum BETWEEN %s AND %s
-                    UNION ALL
-                    SELECT datum, gas_mj_per_m2 AS mj_per_m2
-                    FROM gasdata_dag WHERE tuin_id = %s AND datum BETWEEN %s AND %s
-                ) per_bron
-                GROUP BY datum
-            ) per_dag
-        """, (_tuin_of_standaard(tuin_id), str(datum_start), str(datum_eind),
-              _tuin_of_standaard(tuin_id), str(datum_start), str(datum_eind)))
-        rij = cursor.fetchone()
-
-    if not rij or rij[1] == 0:
+    mj_per_m2, dagen = warmte_over_periode(warmte_per_bezette_m2(tuin_id), datum_start, datum_eind)
+    if not dagen:
         return None
-    return {"totaal_mj": (rij[0] or 0.0) * oppervlakte, "aantal_dagen": rij[1]}
+    return {"totaal_mj": mj_per_m2 * oppervlakte, "aantal_dagen": dagen}
 
 
 def get_klimaat_voor_periode(afdeling, datum_start, datum_eind, tuin_id=None):
@@ -1908,7 +1974,7 @@ def get_klimaat_overzicht_dataframe(tuin_id=None):
             SELECT b.code, b.naam, b.afdeling, b.start, b.datum_oogst, b.id,
                    b.vaknummer, b.oppervlakte_m2,
                    k.gem_temperatuur, k.gem_rv, k.gem_straling,
-                   w.liters, e.mj_per_m2
+                   w.liters
             FROM basis b
             LEFT JOIN LATERAL (
                 SELECT AVG(gem_temperatuur) AS gem_temperatuur, AVG(gem_rv) AS gem_rv,
@@ -1923,29 +1989,17 @@ def get_klimaat_overzicht_dataframe(tuin_id=None):
                 WHERE w.tuin_id = b.tuin_id AND w.vaknummer = b.vaknummer
                   AND w.datum BETWEEN b.start AND b.eind
             ) w ON TRUE
-            LEFT JOIN LATERAL (
-                SELECT SUM(mj) AS mj_per_m2
-                FROM (
-                    SELECT datum, SUM(mj_per_m2) AS mj
-                    FROM (
-                        SELECT datum, warmte_mj_per_m2 AS mj_per_m2 FROM energiedata_dag
-                        WHERE tuin_id = b.tuin_id AND datum BETWEEN b.start AND b.eind
-                        UNION ALL
-                        SELECT datum, gas_mj_per_m2 AS mj_per_m2 FROM gasdata_dag
-                        WHERE tuin_id = b.tuin_id AND datum BETWEEN b.start AND b.eind
-                    ) bronnen
-                    GROUP BY datum
-                ) per_dag
-            ) e ON TRUE
             WHERE k.dagen > 0
             ORDER BY (b.code IS NULL), b.code
         """, (vandaag, tuin_id))
         teelt_rijen = cursor.fetchall()
 
+    warmte_per_dag = warmte_per_bezette_m2(tuin_id)
     rijen = []
     standaard_maat = {}
     for (code, naam, afdeling, start, oogst, teelt_id, vaknummer, oppervlakte,
-         gem_temperatuur, gem_rv, gem_straling, liters, mj_per_m2) in teelt_rijen:
+         gem_temperatuur, gem_rv, gem_straling, liters) in teelt_rijen:
+        mj_per_m2, _ = warmte_over_periode(warmte_per_dag, start, oogst or vandaag)
         if not oppervlakte:
             if vaknummer not in standaard_maat:
                 standaard_maat[vaknummer] = standaard_oppervlakte_van_vak(vaknummer, tuin_id)
@@ -1965,8 +2019,9 @@ def get_klimaat_overzicht_dataframe(tuin_id=None):
         else:
             verschil_tekst = "-"
 
-        # De warmte wordt per m2 voor de hele kas gemeten; maal het oppervlak van
-        # dit vak geeft de GJ die in die periode naar deze teelt gingen.
+        # De warmte per bezette m2 (alleen vakken met een teelt) maal het
+        # oppervlak van dit vak geeft de GJ die in die periode naar deze
+        # teelt gingen.
         warmte_gj = (float(mj_per_m2) * oppervlakte / 1000) if (mj_per_m2 and oppervlakte) else None
 
         rijen.append((
@@ -3014,7 +3069,6 @@ def get_teeltkengetallen(tuin_id=None):
                    b.uitval_pct_gemeten,
                    k.lichtsom, k.gem_temperatuur, k.dagen,
                    w.liters, w.dagen, w.excel_dagen,
-                   e.mj_per_m2, e.dagen,
                    o.emmers
             FROM basis b
             LEFT JOIN LATERAL (
@@ -3032,20 +3086,6 @@ def get_teeltkengetallen(tuin_id=None):
                   AND w.datum BETWEEN b.start AND b.eind
             ) w ON TRUE
             LEFT JOIN LATERAL (
-                SELECT SUM(mj) AS mj_per_m2, COUNT(*) AS dagen
-                FROM (
-                    SELECT datum, SUM(mj_per_m2) AS mj
-                    FROM (
-                        SELECT datum, warmte_mj_per_m2 AS mj_per_m2 FROM energiedata_dag
-                        WHERE tuin_id = b.tuin_id AND datum BETWEEN b.start AND b.eind
-                        UNION ALL
-                        SELECT datum, gas_mj_per_m2 AS mj_per_m2 FROM gasdata_dag
-                        WHERE tuin_id = b.tuin_id AND datum BETWEEN b.start AND b.eind
-                    ) bronnen
-                    GROUP BY datum
-                ) per_dag
-            ) e ON TRUE
-            LEFT JOIN LATERAL (
                 SELECT SUM(aantal_emmers) AS emmers
                 FROM oogstregistraties o WHERE o.teelt_id = b.id
             ) o ON TRUE
@@ -3053,11 +3093,13 @@ def get_teeltkengetallen(tuin_id=None):
         """, (vandaag, STANDAARD_RAS, _tuin_of_standaard(tuin_id)))
         rijen = cursor.fetchall()
 
+    warmte_per_dag = warmte_per_bezette_m2(tuin_id)
     kengetallen = []
     for (teelt_id, code, vaknummer, afdeling, start, datum_oogst, eind, aantal_planten,
          lengte_half, lengte_eind, oogstgewicht, rijpheid, ras, uitval_pct_gemeten,
          lichtsom, gem_temperatuur, klimaatdagen, liters, waterdagen, water_excel_dagen,
-         mj_per_m2, energiedagen, emmers) in rijen:
+         emmers) in rijen:
+        mj_per_m2, energiedagen = warmte_over_periode(warmte_per_dag, start, eind)
         looptijd = (datetime.strptime(eind, "%Y-%m-%d").date()
                     - datetime.strptime(start, "%Y-%m-%d").date()).days + 1
         isojaar, week = get_isojaar_week(start)

@@ -1413,20 +1413,26 @@ with tab_beide:
 
     _bt_tellingen = ("teelten", "stelen", "stelen_m2_jaar")
 
-    def _bt_toon_tegels(tuinen, titel, venster, vorig_venster, vorig_label):
+    def _bt_toon_tegels(tuinen, titel, venster, vergelijkingen):
+        """
+        vergelijkingen: [(venster, label), ...] in volgorde van voorkeur. De
+        eerste waarin elke tuin van de groep oogstte wordt gebruikt; anders
+        vergelijk je bijv. tuin 3 alleen met tuin 1 + 3 samen.
+        """
         teelten = [k for t in tuinen for k in _bt_kg[t["id"]]]
         oppervlakte = _bt_oppervlakte(tuinen)
         nu = _bt_samenvatting(_bt_geoogst_tussen(teelten, *venster), oppervlakte)
-        # Alleen een verschil als elke tuin in de groep toen ook oogstte;
-        # anders vergelijk je tuin 3 alleen met tuin 1 + 3 samen.
-        vorig = {}
-        if all(_bt_geoogst_tussen(_bt_kg[t["id"]], *vorig_venster) for t in tuinen):
-            vorig = _bt_samenvatting(_bt_geoogst_tussen(teelten, *vorig_venster), oppervlakte)
+        vorig, vorig_venster, vorig_label = {}, None, None
+        for kandidaat_venster, kandidaat_label in vergelijkingen:
+            if all(_bt_geoogst_tussen(_bt_kg[t["id"]], *kandidaat_venster) for t in tuinen):
+                vorig = _bt_samenvatting(_bt_geoogst_tussen(teelten, *kandidaat_venster), oppervlakte)
+                vorig_venster, vorig_label = kandidaat_venster, kandidaat_label
+                break
         # Tellingen (teelten, stelen) zijn alleen te vergelijken als de
         # registratie toen de hele periode liep, dus als elke tuin al vóór
         # het begin ervan oogstte. Anders lijkt een half ingevoerd jaar een
         # slecht jaar. Gemiddelden hebben daar geen last van.
-        vorig_compleet = all(
+        vorig_compleet = vorig_venster is not None and all(
             _bt_geoogst_tussen(_bt_kg[t["id"]], date.min, vorig_venster[0] - timedelta(days=1)) for t in tuinen
         )
         tegels = _bt_bezetting(tuinen)
@@ -1476,24 +1482,32 @@ with tab_beide:
         _bt_van, _bt_tot = periode_grenzen(_bt_tegel_sleutel, _bt_periode_naam)
         _bt_lopend = _bt_tot > _bt_vandaag
         _bt_tot = min(_bt_tot, _bt_vandaag)
-        # Dezelfde periode een jaar eerder, bij een lopende periode tot
-        # dezelfde dag.
-        _bt_vorig_sleutel = (_bt_tegel_sleutel[0] - 1,) + tuple(_bt_tegel_sleutel[1:])
-        _bt_vorig_van, _bt_vorig_eind = periode_grenzen(_bt_vorig_sleutel, _bt_periode_naam)
-        _bt_vorig_tot = min(_bt_vorig_eind, _bt_vorig_van + (_bt_tot - _bt_van))
-        _bt_vorig_label = periode_sleutel(_bt_vorig_van, _bt_periode_naam)[1]
+        def _bt_vergelijk_venster(sleutel):
+            """(venster, label) van een andere periode; loopt de gekozen periode
+            nog, dan tot hetzelfde aantal dagen na het begin."""
+            van, eind = periode_grenzen(sleutel, _bt_periode_naam)
+            return (van, min(eind, van + (_bt_tot - _bt_van))), periode_sleutel(van, _bt_periode_naam)[1]
+
+        # Eerst dezelfde periode een jaar eerder (zelfde seizoen); heeft een
+        # groep die niet (tuin 1 bestaat pas sinds december 2025), dan de
+        # periode ervoor.
+        _bt_vergelijkingen = [
+            _bt_vergelijk_venster((_bt_tegel_sleutel[0] - 1,) + tuple(_bt_tegel_sleutel[1:])),
+            _bt_vergelijk_venster(periode_sleutel(_bt_van - timedelta(days=1), _bt_periode_naam)[0]),
+        ]
         st.caption(
             f"Teelten geoogst van {format_datum(_bt_van)} t/m {format_datum(_bt_tot)}"
             + (" (loopt nog)" if _bt_lopend else "")
-            + f". De kleine regel onder een getal is het verschil met {_bt_vorig_label}"
-            + (f" t/m {format_datum(_bt_vorig_tot)}" if _bt_lopend else "")
-            + ", alleen als elke tuin in de groep toen ook oogstte."
+            + f". De kleine regel onder een getal is het verschil met {_bt_vergelijkingen[0][1]}"
+            + (f"; oogstte een tuin toen nog niet, dan met {_bt_vergelijkingen[1][1]}"
+               if _bt_vergelijkingen[1][1] != _bt_vergelijkingen[0][1] else "")
+            + (", steeds tot even ver in de periode" if _bt_lopend else "")
+            + "."
         )
         for _bt_groep, _bt_titel in [(_bt_tuinen, "🌍 Bedrijf (beide tuinen)")] + [
             ([t], f"🏡 {t['naam']}") for t in _bt_tuinen
         ]:
-            _bt_toon_tegels(_bt_groep, _bt_titel, (_bt_van, _bt_tot),
-                            (_bt_vorig_van, _bt_vorig_tot), _bt_vorig_label)
+            _bt_toon_tegels(_bt_groep, _bt_titel, (_bt_van, _bt_tot), _bt_vergelijkingen)
 
     st.markdown("---")
 
@@ -1736,7 +1750,12 @@ with tab_overzicht:
         mask_afgerond = df['Status'] == 'Afgerond'
         verborgen = ['ID', '_startdatum_iso']
         df_ov_actief = df.loc[~mask_afgerond].drop(columns=verborgen)
-        df_ov_afgerond = df.loc[mask_afgerond].sort_values('_startdatum_iso', ascending=False).drop(columns=verborgen)
+        # Laatst afgeronde teelt bovenaan: op oogstdatum (staat als dd-mm-yy
+        # in de tabel, dus eerst terug naar een datum), bij gelijke oogstdag
+        # de laatst geplante eerst.
+        df_ov_afgerond = df.loc[mask_afgerond].assign(
+            _oogst=lambda d: pd.to_datetime(d["Oogstdatum"], format="%d-%m-%y", errors="coerce")
+        ).sort_values(['_oogst', '_startdatum_iso'], ascending=False).drop(columns=verborgen + ['_oogst'])
 
         # Kolommen over de oogst bestaan pas bij afgeronde teelten en horen daar;
         # bij lopende teelten worden ze niet getoond. Overige kolommen die voor
@@ -1826,7 +1845,8 @@ with tab_overzicht:
         ], pin_eerste=True)
         st.caption(
             "Lichtsom en warmte zijn opgeteld over de hele teelt, de etmaaltemperatuur is "
-            "een gemiddelde; klimaat komt van de eigen afdeling, warmte van de hele kas. "
+            "een gemiddelde; klimaat komt van de eigen afdeling. Warmte is het verbruik van de "
+            "kas, verdeeld over alleen de vakken die die week een teelt hadden. "
             "Is een periode maar deels gemeten, dan blijft de cel leeg in plaats van te laag. "
             "Klimaatdata begint op 29-12-25, warmte op 29-06-26; watergift vóór 05-09-26 is de "
             "ingestelde gift uit de oude Excel: alleen dagen met een gift, dus mogelijk "
