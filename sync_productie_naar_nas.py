@@ -9,10 +9,12 @@ Alles wat alleen op de NAS is ingevoerd, is na een kopie weg.
 
 Op de NAS (Taakplanner, Door gebruiker gedefinieerd script, root), vanuit de
 map met docker-compose.yml:
-    docker run --rm --network vemteelt_default --env-file .env --env-file .env.taak \\
-        vemteelt-app:latest python sync_productie_naar_nas.py
+    docker run --rm --network container:vemteelt-db -e NAS_DB_HOST=localhost \\
+        --env-file .env --env-file .env.taak vemteelt-app:latest python sync_productie_naar_nas.py
     - .env.taak levert DATABASE_URL = Supabase (de bron)
-    - .env levert DB_WACHTWOORD; het doel is dan de db-container (host "db")
+    - .env levert DB_WACHTWOORD; het doel is de db-container, via zijn eigen
+      netwerk (container:vemteelt-db, dus localhost) — dan maakt de naam van
+      het compose-netwerk niet uit
 
 Vanaf een laptop (bron .env.productie, doel .env in deze map):
     python sync_productie_naar_nas.py --lokaal
