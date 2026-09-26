@@ -1924,6 +1924,90 @@ def get_klimaatdata_dagen_voor_periode(afdeling, datum_start, datum_eind, tuin_i
         return cursor.fetchall()
 
 
+def vakstatus_dataversie():
+    """
+    Goedkope sleutel die verandert zodra er iets geregistreerd wordt: het
+    hoogste id in het wijzigingenlog (teelten, oogst, planning, Priva-import)
+    plus het aantal stekbeoordelingen (die worden niet gelogd). Het scherm
+    "Nu" cachet zijn data op deze sleutel, zodat een registratie meteen
+    zichtbaar is zonder de cache op elke opslagplek te hoeven legen.
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT (SELECT COALESCE(MAX(id), 0) FROM wijzigingenlog),
+                   (SELECT COUNT(*) FROM stekbeoordelingen)
+        """)
+        return tuple(cursor.fetchone())
+
+
+def _df(cursor, sql, params=None):
+    """Voert een query uit en geeft een DataFrame met de kolomnamen terug."""
+    cursor.execute(sql, params)
+    return pd.DataFrame(cursor.fetchall(), columns=[k[0] for k in cursor.description])
+
+
+def get_vakstatus_data(dagen_klimaat=150):
+    """
+    Alle data voor het scherm "Nu", voor alle tuinen tegelijk, in vijf query's
+    (nooit per vak): de referentieladder kijkt ook naar de andere tuin.
+
+    Geeft een dict met pandas-DataFrames:
+    - vakken: tuin_id, vaknummer, afdeling, oppervlakte_m2
+    - teelten: alle teelten met meting, oogst, emmers en stekbeoordeling
+    - klimaat: per tuin/afdeling/dag temperatuur (24h/dag/nacht), RV en lichtsom
+      over de laatste `dagen_klimaat` dagen
+    - water: per tuin/vak/dag de gift in l/m², vanaf de oudste teelt met een
+      Florgib-meting (voor "water op dezelfde leeftijd" van referenties)
+    - concepten: toekomstige plantingen uit de planning per tuin/vak
+    Lengtes en gewichten van 0 zijn None (zie meting()).
+    """
+    vandaag = date.today()
+    klimaat_vanaf = str(vandaag - timedelta(days=dagen_klimaat))
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        vakken = _df(cursor, """
+            SELECT tuin_id, vaknummer, afdeling, oppervlakte_m2
+            FROM teeltvakken WHERE vaknummer IS NOT NULL
+        """)
+        teelten = _df(cursor, """
+            SELECT t.id, v.tuin_id, v.vaknummer, v.afdeling, t.code,
+                   COALESCE(NULLIF(t.ras, ''), %(ras)s) AS ras,
+                   t.datum_teelt_start, t.datum_half, t.lengte_half, t.florgib_gram,
+                   t.datum_oogst, t.lengte_eind, t.oogstgewicht, t.aantal_planten, t.uitval_pct,
+                   o.emmers, o.laatste_emmers,
+                   s.bakjes, s.wortel, s.plantmaat, s.uniformiteit, s.beoordeling, s.opmerking
+            FROM teelten t
+            JOIN teeltvakken v ON v.id = t.teeltvak_id
+            LEFT JOIN (
+                SELECT teelt_id, SUM(aantal_emmers) AS emmers, MAX(datum) AS laatste_emmers
+                FROM oogstregistraties GROUP BY teelt_id
+            ) o ON o.teelt_id = t.id
+            LEFT JOIN stekbeoordelingen s ON s.teelt_id = t.id
+            WHERE v.vaknummer IS NOT NULL AND t.datum_teelt_start IS NOT NULL
+        """, {"ras": STANDAARD_RAS})
+        klimaat = _df(cursor, """
+            SELECT tuin_id, afdeling, datum, gem_temperatuur AS temp_24h,
+                   gem_temperatuur_dag AS temp_dag, gem_temperatuur_nacht AS temp_nacht,
+                   gem_rv AS rv_24h, gem_rv_dag AS rv_dag, gem_rv_nacht AS rv_nacht,
+                   stralingssom_dag AS lichtsom
+            FROM klimaatdata_dag WHERE datum >= %(vanaf)s
+        """, {"vanaf": klimaat_vanaf})
+        eerste_meting = teelten.loc[teelten["datum_half"].notna(), "datum_teelt_start"].min()
+        water = _df(cursor, """
+            SELECT tuin_id, vaknummer, datum, liter_per_m2
+            FROM watergift_dag WHERE datum >= %(vanaf)s
+        """, {"vanaf": eerste_meting if isinstance(eerste_meting, str) else klimaat_vanaf})
+        concepten = _df(cursor, """
+            SELECT tuin_id, vaknummer, verwachte_startdatum
+            FROM teeltplanning WHERE verwachte_startdatum >= %(vandaag)s
+        """, {"vandaag": str(vandaag)})
+
+    for kolom in ("lengte_half", "lengte_eind", "oogstgewicht"):
+        teelten[kolom] = teelten[kolom].map(meting)
+    return {"vakken": vakken, "teelten": teelten, "klimaat": klimaat, "water": water, "concepten": concepten}
+
+
 def laatste_priva_ophaling():
     """
     Wanneer de automatische Priva-taak voor het laatst iets heeft weggeschreven,
