@@ -108,6 +108,16 @@ class TestBeoordeling(unittest.TestCase):
         self.assertEqual(s["prognose_dagen"], 5)
         self.assertEqual(s["prognose"], s["plan"] + timedelta(days=5))
 
+    def test_florgib_voor_het_planten_telt_niet_mee(self):
+        t = teelt(99, 3, self.start, self.start - timedelta(days=6), 30)
+        s = vs.beoordeel_teelt(t, self.refs(), self.vandaag, plan_50_dagen)
+        self.assertIsNone(s["meting"])
+        self.assertIsNone(s["prognose"])
+        self.assertEqual(s["kleur"], "grijs")
+        self.assertEqual(s["florgib_fout"], self.start - timedelta(days=6))
+        punten = vs.aandachtspunten([s], {}, {}, None, self.vandaag, lambda licht: 0)
+        self.assertTrue(any("ligt vóór het planten" in p["tekst"] for p in punten))
+
     def test_zonder_meting_grijs(self):
         s = vs.beoordeel_teelt(teelt(99, 3, self.start), self.refs(), self.vandaag, plan_50_dagen)
         self.assertEqual(s["kleur"], "grijs")
@@ -121,13 +131,14 @@ class TestAandachtspunten(unittest.TestCase):
         return 0.0072 * licht + 11.7
 
     def status(self, vak, kleur="groen", afwijking=None, prognose_dagen=None, leeftijd=40,
-               plan=None, emmers=None, **teelt_extra):
+               plan=None, emmers=None, florgib=None, **teelt_extra):
         start = self.vandaag - timedelta(days=leeftijd)
         plan = plan or self.vandaag + timedelta(days=20)
         return {"teelt": teelt(vak, 3, start, vak=vak, emmers=emmers, **teelt_extra), "start": start,
                 "leeftijd": leeftijd, "plantweek": start.isocalendar()[1], "plan": plan,
                 "prognose": plan + timedelta(days=prognose_dagen) if prognose_dagen else None,
-                "prognose_dagen": prognose_dagen, "afwijking_pct": afwijking, "kleur": kleur}
+                "prognose_dagen": prognose_dagen, "afwijking_pct": afwijking, "kleur": kleur,
+                "florgib": florgib, "florgib_fout": None}
 
     def test_volgorde_en_teksten(self):
         statussen = [
@@ -143,7 +154,7 @@ class TestAandachtspunten(unittest.TestCase):
         teksten = [p["tekst"] for p in punten]
         self.assertTrue(teksten[0].startswith("Vak 17: lengte −12 %"))
         self.assertTrue(teksten[1].startswith("Afd. 3: 7 van de laatste 7 dagen > 1 °C boven ideaal"))
-        self.assertIn("Vak 17: 40 dagen geen watergift geregistreerd", teksten)
+        self.assertIn(f"Vak 17: geen watergift sinds {self.vandaag - timedelta(days=40):%d-%m}", teksten)
         self.assertIn("Vak 9: oogst verwacht deze week, nog geen oogst geregistreerd", teksten)
         self.assertIn("Stek wk 38: vak 3 en 4 wortel 'Matig'", teksten)
         self.assertTrue(teksten[-1].startswith("Vak 12: lengte +7 %"))
@@ -157,6 +168,45 @@ class TestAandachtspunten(unittest.TestCase):
         # Priva loopt 3 dagen achter: dan geen melding voor een vak dat 5 dagen voor die dag water kreeg.
         horizon = self.vandaag - timedelta(days=3)
         self.assertEqual(vs.dagen_zonder_water(date(2026, 8, 1), horizon - timedelta(days=5), horizon), 5)
+
+    def test_watergift_samengevoegd_per_datum_en_alleen_voor_de_florgib(self):
+        sinds = self.vandaag - timedelta(days=10)
+        statussen = [self.status(v, leeftijd=25) for v in (10, 11, 12, 13, 14, 17)]
+        statussen.append(self.status(20, leeftijd=25))                                   # heeft wel water
+        statussen.append(self.status(30, leeftijd=35, florgib=self.vandaag - timedelta(days=8)))  # na Florgib
+        water = {v: sinds for v in (10, 11, 12, 13, 14, 17)}
+        water[20] = self.vandaag
+        punten = vs.watergift_meldingen(statussen, water, self.vandaag, self.vandaag)
+        self.assertEqual([p["tekst"] for p in punten], [f"Vak 10–14 en 17: geen watergift sinds {sinds:%d-%m}"])
+
+    def test_watergift_onder_de_drempel_geen_melding(self):
+        water = {5: self.vandaag - timedelta(days=vs.WATER_DROOG_DAGEN - 1), 6: self.vandaag}
+        statussen = [self.status(5, leeftijd=20), self.status(6, leeftijd=20)]
+        self.assertEqual(vs.watergift_meldingen(statussen, water, self.vandaag, self.vandaag), [])
+
+    def test_watergift_import_loopt_achter(self):
+        horizon = self.vandaag - timedelta(days=5)
+        punten = vs.watergift_meldingen([self.status(5, leeftijd=20)], {5: horizon}, horizon, self.vandaag)
+        self.assertEqual([p["tekst"] for p in punten], [f"Watergift-import loopt achter (laatste data {horizon:%d-%m})"])
+
+    def test_watergift_alle_vakken_tegelijk_is_de_import(self):
+        oud = self.vandaag - timedelta(days=6)
+        statussen = [self.status(v, leeftijd=20) for v in (1, 2, 3)]
+        punten = vs.watergift_meldingen(statussen, {1: oud, 2: oud, 3: oud}, self.vandaag, self.vandaag)
+        self.assertTrue(punten[0]["tekst"].startswith("Watergift-import loopt achter"))
+
+    def test_vakken_tekst(self):
+        self.assertEqual(vs.vakken_tekst([12]), "Vak 12")
+        self.assertEqual(vs.vakken_tekst([3, 5, 7]), "Vak 3, 5 en 7")
+        self.assertEqual(vs.vakken_tekst([14, 10, 11, 12, 13]), "Vak 10–14")
+        self.assertEqual(vs.vakken_tekst([1, 2, 9]), "Vak 1, 2 en 9")
+
+    def test_klimaat_in_teeltvolgorde(self):
+        dagen = [(self.vandaag - timedelta(days=i), self.ideaal(800) + 2, 800) for i in range(7)]
+        klimaat = {a: dagen for a in (1, 2, 3, 4)}
+        punten = vs.aandachtspunten([], klimaat, {}, self.vandaag, self.vandaag, self.ideaal,
+                                    afdeling_volgorde=(1, 3, 4, 2))
+        self.assertEqual([p["sleutel"] for p in punten], [1, 3, 4, 2])
 
     def test_maximaal_acht(self):
         statussen = [self.status(v, "oranje", 8) for v in range(1, 15)]

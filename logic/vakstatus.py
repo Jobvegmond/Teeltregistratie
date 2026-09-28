@@ -25,28 +25,15 @@ Prognose-oogst
 """
 from datetime import date, datetime, timedelta
 
+from config import (  # noqa: F401  (drempels ook bereikbaar als vs.NAAM voor het scherm)
+    KLIMAAT_MIN_DAGEN, KLIMAAT_TEMP_MARGE, KLIMAAT_VENSTER_DAGEN, LENGTE_ORANJE_PCT, LENGTE_ROOD_PCT,
+    MAX_AANDACHTSPUNTEN, MAX_PROGNOSE_DAGEN, MIN_REFERENTIES, OOGST_ROOD_DAGEN, REF_WEEKVENSTER,
+    REF_WEEKVENSTER_BREED, STEK_CIJFER_GRENS, STEK_GOED, STEK_RECENT_DAGEN, WATER_DROOG_DAGEN,
+)
 from utils.format import fmt_getal, fmt_kort, fmt_verschil
 
-# --- DREMPELS (hier aanpassen) ---
-LENGTE_ORANJE_PCT = 5       # afwijking buiten ±5 % → oranje
-LENGTE_ROOD_PCT = 10        # meer dan 10 % achter → rood (meer dan 10 % voor blijft oranje)
-OOGST_ROOD_DAGEN = 5        # prognose-oogst meer dan 5 dagen na plan → rood
-MIN_REFERENTIES = 3         # minder referentieteelten → grijs
-REF_WEEKVENSTER = 2         # plantweek ±2 (eigen tuin, daarna beide tuinen)
-REF_WEEKVENSTER_BREED = 4   # laatste stap van de ladder: ±4 in de eigen tuin ("≈")
-MAX_PROGNOSE_DAGEN = 21     # prognose wijkt nooit meer dan 3 weken af van plan
-
-KLIMAAT_TEMP_MARGE = 1.0    # °C boven (of onder) de ideale etmaaltemperatuur
-KLIMAAT_VENSTER_DAGEN = 7   # kijk naar de laatste 7 dagen met klimaatdata
-KLIMAAT_MIN_DAGEN = 4       # melding bij minstens 4 van die dagen buiten de marge
-WATER_DROOG_DAGEN = 6       # melding bij zoveel dagen zonder geregistreerde gift
-STEK_RECENT_DAGEN = 21      # stekmeldingen alleen voor teelten die korter staan
-STEK_GOED = {"Goed"}        # wortel/plantmaat/uniformiteit anders → melding
-STEK_CIJFER_GRENS = 6       # stekcijfer ≤ 6 → melding
-MAX_AANDACHTSPUNTEN = 8
-
 # Volgorde = ernst in de lijst aandachtspunten (laag getal eerst).
-ERNST = {"rood": 1, "klimaat": 2, "water": 3, "oogst": 4, "stek": 5, "oranje": 6}
+ERNST = {"rood": 1, "klimaat": 2, "data": 3, "water": 3, "oogst": 4, "stek": 5, "oranje": 6}
 
 REFERENTIE_NIVEAUS = {
     "eigen": f"plantweek ±{REF_WEEKVENSTER}, eigen tuin",
@@ -204,12 +191,17 @@ def beoordeel_teelt(teelt, kandidaten, vandaag, plan_oogst):
         "teelt": teelt, "start": start, "leeftijd": (vandaag - start).days, "plantweek": plantweek(start),
         "plan": plan, "prognose": None, "prognose_dagen": None,
         "meting": None, "meet_leeftijd": None, "verwacht": None, "p25": None, "p75": None,
-        "afwijking_pct": None, "refs": [], "niveau": None,
+        "afwijking_pct": None, "refs": [], "niveau": None, "florgib": None, "florgib_fout": None,
     }
     lengte = _getal(teelt.get("lengte_half"))
     half = als_datum(teelt.get("datum_half"))
-    if lengte and half:
-        status["meting"], status["meet_leeftijd"] = lengte, (half - start).days
+    if half and half <= start:
+        # Een Florgib op of vóór de plantdatum kan niet: telt niet mee, wel een melding.
+        status["florgib_fout"] = half
+    elif half:
+        status["florgib"] = half
+        if lengte:
+            status["meting"], status["meet_leeftijd"] = lengte, (half - start).days
     refs, niveau = kies_referenties(teelt, kandidaten)
     status["refs"], status["niveau"] = refs, niveau
 
@@ -256,6 +248,55 @@ def dagen_zonder_water(start, laatste_gift, horizon):
     return (horizon - vanaf).days
 
 
+def vakken_tekst(vakken):
+    """[10, 11, 12, 13, 14, 17] → "Vak 10–14 en 17"; aaneengesloten reeksen als bereik."""
+    vakken = sorted(set(vakken))
+    reeksen = []
+    for vak in vakken:
+        if reeksen and vak == reeksen[-1][1] + 1:
+            reeksen[-1][1] = vak
+        else:
+            reeksen.append([vak, vak])
+    delen = []
+    for a, b in reeksen:
+        delen += [f"{a}–{b}"] if b > a + 1 else ([str(a), str(b)] if b == a + 1 else [str(a)])
+    return "Vak " + ", ".join(delen[:-1]) + (" en " if len(delen) > 1 else "") + delen[-1]
+
+
+def watergift_meldingen(statussen, water_laatste, horizon, vandaag):
+    """
+    Meldingen over ontbrekende watergift. Alleen voor teelten vóór de Florgib:
+    daarna wordt er bewust geen water meer gegeven. Vakken met dezelfde
+    laatste gift worden samengevoegd ("Vak 10–14: geen watergift sinds 01-09").
+    Loopt de import zelf WATER_DROOG_DAGEN of meer achter, of missen alle
+    vakken tegelijk water, dan één melding over de import in plaats van per vak.
+    """
+    kandidaten = [s for s in statussen if s["florgib"] is None and s["leeftijd"] >= WATER_DROOG_DAGEN]
+    if not kandidaten:
+        return []
+    import_melding = {
+        "ernst": ERNST["water"], "gewicht": 0, "soort": "import", "sleutel": None,
+        "tekst": "Watergift-import loopt achter (laatste data "
+                 + (f"{horizon:%d-%m})" if horizon else "onbekend)"),
+    }
+    if horizon is None or (vandaag - horizon).days >= WATER_DROOG_DAGEN:
+        return [import_melding]
+    droog = {}
+    for s in kandidaten:
+        vak = s["teelt"]["vaknummer"]
+        dagen = dagen_zonder_water(s["start"], water_laatste.get(vak), horizon)
+        if dagen is not None and dagen >= WATER_DROOG_DAGEN:
+            sinds = max(d for d in (s["start"], als_datum(water_laatste.get(vak))) if d)
+            droog.setdefault(sinds, []).append(vak)
+    if len(kandidaten) > 1 and sum(len(v) for v in droog.values()) == len(kandidaten):
+        return [import_melding]
+    return [
+        {"ernst": ERNST["water"], "gewicht": -(horizon - sinds).days, "soort": "vak", "sleutel": min(vakken),
+         "tekst": f"{vakken_tekst(vakken)}: geen watergift sinds {sinds:%d-%m}"}
+        for sinds, vakken in sorted(droog.items())
+    ]
+
+
 def stek_afwijkingen(teelt):
     """Lijst (veld, waarde) van stekkenmerken die niet goed zijn."""
     uit = []
@@ -269,24 +310,19 @@ def stek_afwijkingen(teelt):
     return uit
 
 
-def _vakken_tekst(vakken):
-    vakken = sorted(vakken)
-    if len(vakken) == 1:
-        return f"vak {vakken[0]}"
-    return "vak " + ", ".join(str(v) for v in vakken[:-1]) + f" en {vakken[-1]}"
-
-
 def aandachtspunten(statussen, klimaat_per_afdeling, water_laatste, water_horizon, vandaag, ideaal,
-                    ideaal_tekst=""):
+                    ideaal_tekst="", afdeling_volgorde=None):
     """
     Maximaal MAX_AANDACHTSPUNTEN meldingen, ernstigste eerst. Elke melding is
-    een dict met ernst, tekst, soort ("vak"/"afdeling") en sleutel (vaknummer
-    of afdeling).
+    een dict met ernst, tekst, soort ("vak"/"afdeling"/"import") en sleutel
+    (vaknummer, afdeling of None).
 
     - statussen: beoordeel_teelt-resultaten van de lopende teelten van één tuin
     - klimaat_per_afdeling: {afdeling: [(datum, temp_24h, lichtsom), ...]}
     - water_laatste: {vaknummer: datum laatste gift}; water_horizon: laatste
       dag met watergift in deze tuin
+    - afdeling_volgorde: teeltvolgorde van de afdelingen (config), voor
+      klimaatmeldingen met gelijke ernst
     """
     punten = []
     for s in statussen:
@@ -321,17 +357,24 @@ def aandachtspunten(statussen, klimaat_per_afdeling, water_laatste, water_horizo
                                "soort": "vak", "sleutel": vak,
                                "tekst": f"Vak {vak}: oogst was verwacht op {verwacht:%d-%m}, "
                                         "nog geen oogst geregistreerd"})
-        droog = dagen_zonder_water(s["start"], water_laatste.get(vak), water_horizon)
-        if droog is not None and droog >= WATER_DROOG_DAGEN:
-            punten.append({"ernst": ERNST["water"], "gewicht": -droog, "soort": "vak", "sleutel": vak,
-                           "tekst": f"Vak {vak}: {droog} dagen geen watergift geregistreerd"})
+        if s.get("florgib_fout"):
+            punten.append({"ernst": ERNST["data"], "gewicht": 0, "soort": "vak", "sleutel": vak,
+                           "tekst": f"Vak {vak}: Florgib-datum {s['florgib_fout']:%d-%m} ligt vóór het planten "
+                                    f"({s['start']:%d-%m}); controleer de registratie"})
 
-    for afdeling, dagen in sorted(klimaat_per_afdeling.items()):
+    punten += watergift_meldingen(statussen, water_laatste, water_horizon, vandaag)
+
+    volgorde = list(afdeling_volgorde) if afdeling_volgorde else sorted(klimaat_per_afdeling)
+    volgorde += [a for a in sorted(klimaat_per_afdeling) if a not in volgorde]
+    for positie, afdeling in enumerate(a for a in volgorde if a in klimaat_per_afdeling):
+        dagen = klimaat_per_afdeling[afdeling]
         boven, onder, aantal = klimaat_afwijking(dagen, ideaal)
         for telling, richting in ((boven, "boven"), (onder, "onder")):
             if telling >= KLIMAAT_MIN_DAGEN:
+                # Bij gelijke ernst in teeltvolgorde (positie als fractie achter het gewicht).
                 punten.append({
-                    "ernst": ERNST["klimaat"], "gewicht": -telling, "soort": "afdeling", "sleutel": afdeling,
+                    "ernst": ERNST["klimaat"], "gewicht": -telling + positie / 100,
+                    "soort": "afdeling", "sleutel": afdeling,
                     "tekst": f"Afd. {afdeling}: {telling} van de laatste {aantal} dagen > "
                              f"{fmt_getal(KLIMAAT_TEMP_MARGE, 0)} °C {richting} ideaal"
                              + (f" ({ideaal_tekst})" if ideaal_tekst else ""),
@@ -346,7 +389,7 @@ def aandachtspunten(statussen, klimaat_per_afdeling, water_laatste, water_horizo
             stek.setdefault((s["plantweek"], veld, waarde), []).append(s["teelt"]["vaknummer"])
     for (week, veld, waarde), vakken in sorted(stek.items()):
         punten.append({"ernst": ERNST["stek"], "gewicht": -len(vakken), "soort": "vak", "sleutel": min(vakken),
-                       "tekst": f"Stek wk {week}: {_vakken_tekst(vakken)} {veld} '{waarde}'"})
+                       "tekst": f"Stek wk {week}: {vakken_tekst(vakken).lower()} {veld} '{waarde}'"})
 
     punten.sort(key=lambda p: (p["ernst"], p["gewicht"]))
     return punten[:MAX_AANDACHTSPUNTEN]

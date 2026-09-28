@@ -107,6 +107,8 @@ from database import (
     vakstatus_dataversie,
 )
 from logic import vakstatus as vs
+from logic.afdelingen import sorteer_afdelingen
+from config import AFDELING_VOLGORDE
 
 # --- PAGINA-INSTELLINGEN ---
 # Moet de eerste Streamlit-aanroep zijn. Bepaalt o.a. de titel van het
@@ -163,15 +165,21 @@ st.markdown("""
 [class*="st-key-bt_tegels_"] button strong { font-size: 1rem; font-weight: 600; }
 [class*="st-key-bt_tegels_"] button em { font-style: normal; font-size: 0.68rem; opacity: 0.65; }
 
-/* Vakkenmatrix ("Nu"): per afdeling één rij, label + max. 10 vakken. Elk vak
-   is een st.button in een container met key nu_rij_*; de kleur zit in de
-   knop-key (nu_vak_<kleur>_*). Vaste tekstkleur, zodat het ook in donkere
-   modus leesbaar blijft op de lichte achtergronden. */
+/* Vakkenmatrix ("Nu"): per afdeling een rij (nu_rij_*) met links het label en
+   rechts de vakken in een eigen raster (nu_blokken_*). Blokken hebben een
+   minimale breedte waarin elke regel past; past een afdeling niet op één
+   regel, dan loopt het raster door naar de volgende. Elk vak is een
+   st.button; de kleur zit in de knop-key (nu_vak_<kleur>_*). Vaste
+   tekstkleur, zodat het ook in donkere modus leesbaar blijft. */
 [class*="st-key-nu_rij_"] {
-    display: grid !important; grid-template-columns: 3rem repeat(10, minmax(0, 1fr));
-    gap: 0.25rem !important; align-items: stretch; margin-bottom: 0.25rem;
+    display: grid !important; grid-template-columns: 3rem minmax(0, 1fr);
+    gap: 0.25rem !important; align-items: start; margin-bottom: 0.25rem;
 }
-[class*="st-key-nu_rij_"] > div { width: auto !important; min-width: 0; }
+[class*="st-key-nu_blokken_"] {
+    display: grid !important; grid-template-columns: repeat(auto-fill, minmax(5.6rem, 1fr));
+    gap: 0.25rem !important;
+}
+[class*="st-key-nu_rij_"] > div, [class*="st-key-nu_blokken_"] > div { width: auto !important; min-width: 0; }
 .nu-afd { font-size: 0.72rem; font-weight: 600; opacity: 0.65; padding-top: 0.3rem; }
 [class*="st-key-nu_vak_"] button {
     width: 100%; height: 100%; min-height: 3.2rem; padding: 0.15rem 0.3rem;
@@ -184,8 +192,8 @@ st.markdown("""
     width: 100%; justify-content: flex-start; text-align: left;
 }
 [class*="st-key-nu_vak_"] button p {
-    white-space: pre-line; font-size: 0.66rem; margin: 0; text-align: left; color: #1f1f1f;
-    overflow: hidden; text-overflow: ellipsis;
+    white-space: pre; font-size: 0.66rem; margin: 0; text-align: left; color: #1f1f1f;
+    overflow: hidden;
 }
 [class*="st-key-nu_vak_"] button strong { font-size: 0.85rem; }
 [class*="st-key-nu_vak_"] button:hover { filter: brightness(0.95); border-color: rgba(0, 0, 0, 0.35); }
@@ -210,10 +218,9 @@ st.markdown("""
 }
 /* Minder witruimte tussen de afdelingsrijen dan tussen gewone elementen. */
 [class*="st-key-nu_rij_"] { margin-top: -0.6rem; }
-/* Telefoon: afdelingslabel op een eigen regel, 5 vakken naast elkaar. */
+/* Telefoon: afdelingslabel boven de vakken in plaats van ernaast. */
 @media (max-width: 700px) {
-    [class*="st-key-nu_rij_"] { grid-template-columns: repeat(5, minmax(0, 1fr)); margin-top: 0.5rem; }
-    [class*="st-key-nu_rij_"] > div:first-child { grid-column: 1 / -1; }
+    [class*="st-key-nu_rij_"] { grid-template-columns: minmax(0, 1fr); margin-top: 0.5rem; }
 }
 
 /* Compacte kop: titel links, week + datum rechts, altijd op één regel. */
@@ -310,9 +317,15 @@ def gedeeld_domein(*reeksen, marge=1.0):
     return [math.floor(min(waarden) - marge), math.ceil(max(waarden) + marge)]
 
 
-def afdeling_kleur(labels):
-    """Vaste kleur per afdeling ("Afd. 3" -> AFDELING_KLEUR[3])."""
-    labels = sorted(labels)
+def afdeling_kleur(labels, tuin_nummer=None):
+    """
+    Vaste kleur per afdeling ("Afd. 3" -> AFDELING_KLEUR[3]); de legenda staat
+    in de teeltvolgorde van de tuin (config.AFDELING_VOLGORDE), standaard de
+    bovenin gekozen tuin.
+    """
+    nummers = sorteer_afdelingen([int(lbl.split()[-1]) for lbl in labels],
+                                 tuin_nummer or globals().get("TUIN_NUMMER"))
+    labels = [f"Afd. {n}" for n in nummers]
     return alt.Color(
         "Afdeling:N",
         scale=alt.Scale(
@@ -852,14 +865,19 @@ def watergift_grafiek(records, melding="Nog geen watergift gekoppeld."):
     `records`: dicts met datum, Vak ("Vak 12") en liter (l/m²). Gedeeld door
     Teelt-detail en het vakvenster op "Nu".
     """
+    # Priva schrijft ook dagen zonder gift weg (0,0); die zijn geen gift en
+    # rekten de as op tot vandaag, alsof er nog water gegeven werd.
     df_water = pd.DataFrame(records).dropna(subset=["liter"]) if records else None
+    if df_water is not None:
+        df_water = df_water[df_water["liter"] > 0]
     if df_water is None or df_water.empty:
         st.info(melding)
         return
     df_water["datum"] = pd.to_datetime(df_water["datum"])
     df_water = df_water.sort_values("datum")
     df_water["dag"] = df_water["datum"].dt.strftime(DATUM_FORMAAT_AS)
-    st.caption("Watergift per vak (l/m² per dag) — vakken naast elkaar, niet opgeteld")
+    st.caption("Watergift per vak (l/m² per dag, alleen dagen met een gift) — vakken naast elkaar, "
+               f"niet opgeteld. Laatste gift {df_water['datum'].max():%d-%m-%y}.")
     # x als ordinaal (i.p.v. temporeel) zetten, want xOffset heeft een
     # discrete band-schaal per dag nodig om de vakken naast elkaar te
     # kunnen zetten — op een continue tijdas vallen de staven anders
@@ -907,7 +925,10 @@ def licht_temperatuur_grafiek(dagen_records):
         x=datum_as(),
         y=y_as("waarde", "Etmaaltemperatuur (°C)"),
         color=kleur,
-        strokeDash=alt.StrokeDash("Type:N", legend=alt.Legend(title=None, orient="bottom")),
+        strokeDash=alt.StrokeDash(
+            "Type:N", legend=alt.Legend(title=None, orient="bottom"),
+            scale=alt.Scale(domain=["Werkelijk", "Ideaal (obv licht)"], range=[[1, 0], [6, 3]]),
+        ),
         tooltip=[alt.Tooltip("datum:T", title="datum", format="%d-%m-%y"), "Afdeling:N", "Type:N",
                  alt.Tooltip("waarde:Q", title="°C", format=".1f")],
     )
@@ -1498,7 +1519,7 @@ def _nu_tuin(data, tuin, vandaag):
     """Status van alle vakken van één tuin, plus de aandachtspunten."""
     alle = data["teelten"].to_dict("records")
     eigen = [t for t in alle if t["tuin_id"] == tuin["id"]]
-    vakken = data["vakken"][data["vakken"]["tuin_id"] == tuin["id"]].sort_values(["afdeling", "vaknummer"])
+    vakken = data["vakken"][data["vakken"]["tuin_id"] == tuin["id"]]
 
     lopend = {}
     for t in eigen:
@@ -1535,7 +1556,7 @@ def _nu_tuin(data, tuin, vandaag):
 
     punten = vs.aandachtspunten(
         list(statussen.values()), klimaat_per_afdeling, water_laatste, water_horizon, vandaag,
-        ideale_etmaaltemperatuur,
+        ideale_etmaaltemperatuur, afdeling_volgorde=AFDELING_VOLGORDE.get(tuin["nummer"]),
     )
     return {"tuin": tuin, "vakken": vakken, "statussen": statussen, "gepland": gepland,
             "laatste_oogst": laatste_oogst, "punten": punten, "alle": alle}
@@ -1652,6 +1673,8 @@ def _nu_vak_venster(info, vak, vandaag, data):
         )
 
         st.write("**Watergift**")
+        if s["florgib"]:
+            st.caption(f"Na de Florgib ({format_datum(s['florgib'])}) wordt er geen water meer gegeven.")
         water = data["water"]
         water = water[(water["tuin_id"] == tuin["id"]) & (water["vaknummer"] == vak)
                       & (water["datum"] >= str(s["start"]))]
@@ -1764,22 +1787,27 @@ def _nu_toon_tuin(info, vandaag, data):
             uitleg = (f"Ideaal = {fmt_kort(LICHT_TEMP_FACTOR, 4)} × lichtsom + {fmt_kort(LICHT_TEMP_BASIS, 1)} °C"
                       if p["soort"] == "afdeling" else None)
             if kolommen[i % 2].button(f"{NU_PUNT_ICOON[p['ernst']]} {p['tekst']}", key=f"nu_punt_{tuin_nr}_{i}",
-                                      type="tertiary", help=uitleg):
+                                      type="tertiary", help=uitleg, disabled=p["soort"] == "import"):
                 if p["soort"] == "afdeling":
                     _nu_afdeling_venster(info, p["sleutel"], data)
                 else:
                     _nu_vak_venster(info, p["sleutel"], vandaag, data)
 
-    for afdeling, groep in info["vakken"].groupby("afdeling", sort=True):
-        with st.container(key=f"nu_rij_{tuin_nr}_{int(afdeling)}"):
-            st.markdown(f'<div class="nu-afd">Afd. {int(afdeling)}</div>', unsafe_allow_html=True)
-            for vak in sorted(int(v) for v in groep["vaknummer"]):
-                s = info["statussen"].get(vak)
-                kleur = s["kleur"] if s else "leeg"
-                label = _nu_bloklabel(vak, s, info["gepland"].get(vak))
-                tip = _nu_bloktip(vak, s, info["gepland"].get(vak), info["laatste_oogst"].get(vak))
-                if st.button(label, key=f"nu_vak_{kleur}_{tuin_nr}_{vak}", help=tip, width="stretch"):
-                    _nu_vak_venster(info, vak, vandaag, data)
+    # Per afdeling (in teeltvolgorde) een rij: het label links en de vakken in
+    # een eigen raster dat bij een smal scherm naar een volgende regel loopt.
+    vakken = info["vakken"]
+    for afdeling in sorteer_afdelingen(vakken["afdeling"].dropna(), tuin_nr):
+        groep = vakken[vakken["afdeling"] == afdeling]
+        with st.container(key=f"nu_rij_{tuin_nr}_{afdeling}"):
+            st.markdown(f'<div class="nu-afd">Afd. {afdeling}</div>', unsafe_allow_html=True)
+            with st.container(key=f"nu_blokken_{tuin_nr}_{afdeling}"):
+                for vak in sorted(int(v) for v in groep["vaknummer"]):
+                    s = info["statussen"].get(vak)
+                    kleur = s["kleur"] if s else "leeg"
+                    label = _nu_bloklabel(vak, s, info["gepland"].get(vak))
+                    tip = _nu_bloktip(vak, s, info["gepland"].get(vak), info["laatste_oogst"].get(vak))
+                    if st.button(label, key=f"nu_vak_{kleur}_{tuin_nr}_{vak}", help=tip, width="stretch"):
+                        _nu_vak_venster(info, vak, vandaag, data)
 
 
 with tab_nu:
@@ -2805,7 +2833,7 @@ with tab_week:
     st.write("**🌡️ Klimaat deze week**")
     klimaat_rijen_week = []
     klimaat_dagen_week = []
-    for afdeling_week in (1, 2, 3, 4):
+    for afdeling_week in sorteer_afdelingen((1, 2, 3, 4), TUIN_NUMMER):
         k_week = get_klimaat_voor_periode(afdeling_week, week_start_s, week_eind_s)
         if k_week:
             klimaat_rijen_week.append({
@@ -3062,10 +3090,10 @@ with tab_detail:
         st.markdown("---")
 
         st.write("**Klimaat tijdens deze plantweek**")
-        afdelingen_groep = sorted({
-            afdeling_van_vak(t["vaknummer"]) for t in teelten_groep
-            if afdeling_van_vak(t["vaknummer"])
-        })
+        afdelingen_groep = sorteer_afdelingen(
+            [afdeling_van_vak(t["vaknummer"]) for t in teelten_groep if afdeling_van_vak(t["vaknummer"])],
+            TUIN_NUMMER,
+        )
         if afdelingen_groep:
             eind_groep = max(t["datum_oogst"] or vandaag_detail for t in teelten_groep)
             records_temp, records_rv, records_straling = [], [], []
@@ -3751,7 +3779,7 @@ with tab_klimaat:
     # --- Grafieken: klimaatverloop per afdeling over een vrije periode ---
     if dekking:
         st.write("**Grafieken**")
-        alle_afdelingen = [r[0] for r in dekking]
+        alle_afdelingen = sorteer_afdelingen([r[0] for r in dekking], TUIN_NUMMER)
         data_eerste = datetime.strptime(min(r[1] for r in dekking), "%Y-%m-%d").date()
         data_laatste = datetime.strptime(max(r[2] for r in dekking), "%Y-%m-%d").date()
 
@@ -3778,7 +3806,7 @@ with tab_klimaat:
 
         if gekozen_afdelingen and datum_van <= datum_tot:
             records = []
-            for afdeling in sorted(gekozen_afdelingen):
+            for afdeling in sorteer_afdelingen(gekozen_afdelingen, TUIN_NUMMER):
                 for datum, temp, rv, straling, temp_dag, temp_nacht, rv_dag, rv_nacht in \
                         get_klimaatdata_dagen_voor_periode(afdeling, datum_van, datum_tot):
                     records.append({
@@ -3887,7 +3915,8 @@ with tab_klimaat:
         with st.expander("🗂️ Geïmporteerd t/m (dekking per afdeling)"):
             laatste_alle = max(r[2] for r in dekking)
             dekking_rijen = []
-            for afdeling, eerste, laatste, aantal, ontbrekend in dekking:
+            _volgorde_dekking = {a: i for i, a in enumerate(sorteer_afdelingen([r[0] for r in dekking], TUIN_NUMMER))}
+            for afdeling, eerste, laatste, aantal, ontbrekend in sorted(dekking, key=lambda r: _volgorde_dekking[r[0]]):
                 achterstand = (
                     datetime.strptime(laatste_alle, "%Y-%m-%d").date()
                     - datetime.strptime(laatste, "%Y-%m-%d").date()
