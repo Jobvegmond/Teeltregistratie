@@ -1604,6 +1604,22 @@ PULSTELLER_IDX_WARMTE = 2
 PULSTELLER_IDX_GAS = 1
 GAS_CALORISCHE_WAARDE_MJ_PER_M3 = 31.65
 
+# Waar warmte en gas per tuin in de export staan: (label, type_1, idx_1) en
+# de factor naar MJ. Tuin 1 heeft een andere installatie dan tuin 3: de
+# warmte komt daar door de warmtewisselaar (Sum_24h_HXEnergy, in kWh; 1 kWh =
+# 3,6 MJ) en Pulsteller 1 is ook daar de gasmeter (m3). Pulsteller 2 staat op
+# tuin 1 altijd op 0 (Job, sept 2026).
+ENERGIE_BRONNEN = {
+    3: {"warmte": (ENERGIE_LABEL, "Pulsteller", PULSTELLER_IDX_WARMTE, ENERGIE_EENHEID_NAAR_MJ),
+        "gas": (ENERGIE_LABEL, "Pulsteller", PULSTELLER_IDX_GAS)},
+    1: {"warmte": ("Sum_24h_HXEnergy", "Warmtewis.", 1, 3.6),
+        "gas": (ENERGIE_LABEL, "Pulsteller", PULSTELLER_IDX_GAS)},
+}
+# Vóór deze dag werd er nog niet gemeten (de export geeft dan 0, geen leeg
+# veld); die dagen worden niet opgeslagen, zodat een teelt uit die tijd als
+# "onvolledig gemeten" telt in plaats van als teelt zonder warmte.
+ENERGIE_METING_VANAF = {1: date(2026, 1, 9)}
+
 VAK_OPPERVLAKTE_STANDAARD = 550
 VAK_OPPERVLAKTE_SMAL = 275
 VAKKEN_SMAL = {19, 20}
@@ -1704,63 +1720,65 @@ def upsert_gasdata_dag(datum, gas_m3_totaal, tuin_id=None):
         conn.commit()
 
 
-def verwerk_energie_csv(bestand, gebruiker=None, tuin_id=None):
+def lees_energie_csv(bestand, tuin_nummer):
     """
-    Leest een energiecomputer-CSV in (Priva-export "Rapport Energie") en
-    verwerkt twee bronnen uit dezelfde upload, beide onder het label
-    Sum_24h_PtEnergyUse maar met een andere Pulsteller-index:
-    - PULSTELLER_IDX_WARMTE (2): de hoofdwarmte, in GJ -> energiedata_dag;
-    - PULSTELLER_IDX_GAS (1): de gasketel (bijstook), in m3 (gasmeter als
-      pulsgever) -> omgerekend naar MJ, in gasdata_dag.
-    Er kan per dag meer dan één rij per teller in de export staan; die
-    worden per bron per dag bij elkaar opgeteld. Dagen die nog niet helemaal
-    voorbij zijn worden overgeslagen. Geeft terug: (aantal dagen warmte
-    verwerkt, aantal dagen warmte overgeslagen, aantal dagen gas verwerkt).
+    Leest een energiecomputer-CSV (Priva-export "Rapport Energie") zonder iets
+    op te slaan. Welke regels warmte en gas zijn hangt af van de tuin (zie
+    ENERGIE_BRONNEN). Meerdere regels per teller per dag worden opgeteld; dagen
+    die nog niet voorbij zijn en dagen vóór ENERGIE_METING_VANAF tellen niet.
+    Geeft ({datum: warmte in MJ}, {datum: gas in m3}, aantal dagen overgeslagen).
     """
     try:
         df = pd.read_csv(bestand, sep=None, engine="python", decimal=",")
     except Exception:
         bestand.seek(0)
-        df = pd.read_csv(bestand, sep="\t", decimal=",")
+        df = pd.read_csv(bestand, sep="	", decimal=",")
 
     df.columns = df.columns.str.strip()
     df["datum"] = pd.to_datetime(df["startdate"], dayfirst=True, format="mixed").dt.date
     df["datum_tot"] = pd.to_datetime(df["enddate"], dayfirst=True, format="mixed").dt.date
     df["value"] = pd.to_numeric(df["value"], errors="coerce")
+    df["idx_1"] = pd.to_numeric(df["idx_1"], errors="coerce")
+    vanaf = ENERGIE_METING_VANAF.get(tuin_nummer, date.min)
+    bronnen = ENERGIE_BRONNEN.get(tuin_nummer, ENERGIE_BRONNEN[3])
 
-    def _verwerk_bron(subset, upsert_fn):
-        alle_dagen = subset["datum"].drop_duplicates()
-        volledig = subset[subset["datum_tot"] < date.today()]
-        volledige_dagen = volledig["datum"].drop_duplicates()
-        overgeslagen = len(alle_dagen) - len(volledige_dagen)
-        verwerkt = 0
+    def per_dag(label, type_1, idx_1, factor=1):
+        regels = df[(df["label"] == label) & (df["type_1"] == type_1) & (df["idx_1"] == idx_1)]
+        regels = regels[regels["datum"] >= vanaf]
+        volledig = regels[regels["datum_tot"] < date.today()]
+        overgeslagen = regels["datum"].nunique() - volledig["datum"].nunique()
+        uit = {}
         for datum, groep in volledig.groupby("datum"):
             waarden = groep["value"].dropna()
-            if waarden.empty:
-                continue
-            upsert_fn(datum, float(waarden.sum()))
-            verwerkt += 1
-        return verwerkt, overgeslagen
+            if not waarden.empty:
+                uit[datum] = float(waarden.sum()) * factor
+        return uit, overgeslagen
 
-    is_pulsteller = (df["type_1"] == "Pulsteller") & (df["label"] == ENERGIE_LABEL)
+    warmte, overgeslagen = per_dag(*bronnen["warmte"])
+    gas, _ = per_dag(*bronnen["gas"])
+    return warmte, gas, overgeslagen
 
-    df_warmte = df[is_pulsteller & (df["idx_1"] == PULSTELLER_IDX_WARMTE)].copy()
-    verwerkt, overgeslagen = _verwerk_bron(
-        df_warmte,
-        lambda d, v: upsert_energiedata_dag(d, v * ENERGIE_EENHEID_NAAR_MJ, tuin_id=tuin_id),
-    )
 
-    df_gas = df[is_pulsteller & (df["idx_1"] == PULSTELLER_IDX_GAS)].copy()
-    verwerkt_gas, _overgeslagen_gas = _verwerk_bron(
-        df_gas, lambda d, v: upsert_gasdata_dag(d, v, tuin_id=tuin_id))
+def verwerk_energie_csv(bestand, gebruiker=None, tuin_id=None):
+    """
+    Leest een "Rapport Energie"-CSV in (zie lees_energie_csv) en slaat per dag
+    de warmte (MJ, energiedata_dag) en het gas (m3, omgerekend naar MJ in
+    gasdata_dag) op; een dag die er al staat wordt overschreven. Geeft terug:
+    (aantal dagen warmte verwerkt, aantal dagen overgeslagen, aantal dagen gas verwerkt).
+    """
+    tuin_id = _tuin_of_standaard(tuin_id)
+    warmte, gas, overgeslagen = lees_energie_csv(bestand, _tuinnummer(tuin_id))
+    for datum, mj in warmte.items():
+        upsert_energiedata_dag(datum, mj, tuin_id=tuin_id)
+    for datum, m3 in gas.items():
+        upsert_gasdata_dag(datum, m3, tuin_id=tuin_id)
 
     log_wijziging(
         gebruiker, "geupload", "energiedata_csv", None,
-        f"{verwerkt} dagen warmte verwerkt, {overgeslagen} overgeslagen (nog niet afgerond), "
-        f"{verwerkt_gas} dagen gasverbruik verwerkt"
+        f"tuin {_tuinnummer(tuin_id)}: {len(warmte)} dagen warmte verwerkt, {overgeslagen} overgeslagen "
+        f"(nog niet afgerond), {len(gas)} dagen gasverbruik verwerkt"
     )
-
-    return verwerkt, overgeslagen, verwerkt_gas
+    return len(warmte), overgeslagen, len(gas)
 
 
 def get_energiedata_dagen_voor_periode(datum_start, datum_eind, tuin_id=None):

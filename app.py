@@ -3967,8 +3967,8 @@ with tab_klimaat:
                 "Energiecomputer-export (.csv)",
                 type=["csv"],
                 key="energie_csv_upload",
-                help="Rapport Energie-export uit Priva; hieruit worden de Pulsteller (warmteverbruik hele kas) "
-                     "en, in weken met bijstook, het gasverbruik gehaald.",
+                help="Rapport Energie-export uit Priva, voor de tuin die bovenin gekozen is. Warmte: tuin 3 "
+                     "Pulsteller 2 (GJ), tuin 1 de warmtewisselaar (kWh, omgerekend). Gas: Pulsteller 1 (m³).",
             )
             if energie_csv is not None:
                 try:

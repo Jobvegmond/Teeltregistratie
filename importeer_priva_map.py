@@ -25,6 +25,7 @@ import sys
 import pandas as pd
 
 import database
+from utils.format import fmt_getal
 
 HIER = os.path.dirname(os.path.abspath(__file__))
 STANDAARD_MAPPEN = ["Teelt", "Klimaat 2026 tuin 3", "Energie 2026 tuin 3"]
@@ -89,6 +90,20 @@ def main():
             geldig = [p for p in periodes if p[0]]
             if geldig:
                 print(f"  {soort}: {min(p[0] for p in geldig):%d-%m-%y} t/m {max(p[1] for p in geldig):%d-%m-%y}")
+
+    if energie:
+        # Wat er uit de energiebestanden komt (zie database.ENERGIE_BRONNEN per tuin).
+        warmte, gas = {}, {}
+        for _, pad, _ in energie:
+            w, g, _ = database.lees_energie_csv(pad, args.tuin)
+            warmte.update(w)
+            gas.update(g)
+        if warmte:
+            print(f"  warmte: {len(warmte)} dagen ({min(warmte):%d-%m-%y} t/m {max(warmte):%d-%m-%y}), "
+                  f"{fmt_getal(sum(warmte.values()) / 1000, 0, 'GJ')}")
+        if gas:
+            print(f"  gas: {len(gas)} dagen, {fmt_getal(sum(gas.values()), 0, 'm3')} = "
+                  f"{fmt_getal(sum(gas.values()) * database.GAS_CALORISCHE_WAARDE_MJ_PER_M3 / 1000, 0, 'GJ')}")
 
     if not args.uitvoeren:
         print("\nProefdraai: er is niets geschreven. Gebruik --uitvoeren om te importeren.")
