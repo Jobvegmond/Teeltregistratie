@@ -32,6 +32,13 @@ class TestSnelheid(unittest.TestCase):
         self.assertAlmostEqual(tm.duur_uit_snelheid([0.4] * 10, begin=0.6), 1.0)
         self.assertIsNone(tm.duur_uit_snelheid([0.01] * 10))
 
+    def test_doelfractie_en_florgib_fractie(self):
+        self.assertAlmostEqual(tm.duur_uit_snelheid([0.02] * 100, doel=0.56), 28.0)
+        m = tm.GraaddagenModel(6).fit([teelt(50, T=16.0)])
+        T, L = np.full(50, 16.0), np.full(50, 800.0)
+        self.assertAlmostEqual(tm.florgib_fractie(m, T, L, 28, 50), 28 / 50)
+        self.assertAlmostEqual(tm.ontwikkeling(m, T[:25], L[:25]), 0.5)
+
     def test_lineair_model_vindt_exacte_verband(self):
         # 1/duur = 0,01 + 0,00001·L + 0,001·afwijking: het model moet dat terugvinden.
         teelten = []

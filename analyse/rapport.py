@@ -56,7 +56,10 @@ def maak(res):
     # --- Samenvatting ---
     t1 = res["tuinfactor"].get("1", res["tuinfactor"].get(1))
     bt = {r["checkpoint"]: r for r in res["backtest"]}
+    for r in bt.values():
+        r.setdefault("mae_ijking", None)
     kw = res["kwaliteit"]["gewicht"]
+    fg = res["florgib"]
     delen.append(f"""
 <h1>Teeltduur, stooklijn en kwaliteit — analyse</h1>
 <p class="sub">{res['n']} afgeronde teelten: tuin 3 (code S, 2022–2026) en tuin 1 (2025–2026), waarvan {res['n_dag']}
@@ -75,9 +78,11 @@ bij gemiddeld licht {d(-res['per_graad']['beste'][1]['plus_1'])} en bij veel lic
 teelt van 56 dagen). Een deel daarvan is een jaareffect (2026 was in beide tuinen trager); binnen 2026 is het
 verschil tussen de tuinen ongeveer {d(abs(res['diagnose'].get('1|2026|dag', {}).get('fout', 0) - res['diagnose'].get('3|2026|week', {}).get('fout', 0)))} dagen.
 Voorstel: tuincorrectie gebruiken (zit in het beste model), en na een jaar opnieuw bekijken.</li>
-<li><b>Fase 1 (planten → Florgib)</b> is goed te voorspellen (±{d(res['fasen']['fase 1'][beste]['mae'])} d);
-<b>fase 2</b> minder (±{d(res['fasen']['fase 2'][beste]['mae'])} d). Een apart fase 2-model maakt de prognose bij de
-Florgib nu niet beter ({d(bt.get('bij Florgib', {}).get('mae_fase2'))} tegen {d(bt.get('bij Florgib', {}).get('mae_model'))} d).</li>
+<li><b>De Florgib als indicator:</b> bij het spuiten heeft een teelt mediaan
+{fmt_getal(fg['fractie_mediaan'] * 100, 0)} % van zijn ontwikkeling bereikt (80 % van de teelten tussen
+{fmt_getal(fg['fractie_p10'] * 100, 0)} en {fmt_getal(fg['fractie_p90'] * 100, 0)} %). De voortgang op dat moment
+gelijkzetten maakt de oogstprognose beter ({d(bt['bij Florgib']['mae_ijking'])} tegen {d(bt['bij Florgib']['mae_model'])} d),
+en de Florgib-datum zelf is op dag 14 al op {d(fg['backtest'].get('dag 14', {}).get('mae'))} d te voorspellen.</li>
 <li><b>Backtest:</b> op dag 14 al {d(bt['dag 14']['mae_model'])} dagen gemiddelde fout (plan: {d(bt['dag 14']['mae_plan'])}).
 Dichter bij de oogst wordt het niet beter: de modelfout is groter dan de onzekerheid over het weer.</li>
 <li><b>Kwaliteit:</b> te weinig data ({kw['n']} teelten uit {kw['plantweken']} plantweken, alleen tuin 3 in juli–augustus 2026).
@@ -145,20 +150,27 @@ snelheid. Fout = voorspelde min werkelijke teeltduur in dagen; bias &lt; 0 = te 
                         legend=alt.Legend(orient="top", title=None)),
         tooltip=["Licht", "Afwijking", alt.Tooltip("Dagen:Q", format=".1f")]).properties(height=240)))
 
-    # --- 2. Fasen ---
-    f = res["fasen"]
-    delen.append("<h2>2. Fase 1 en fase 2</h2><p>Alleen teelten met een Florgib-datum (2026, voorjaar en zomer). "
-                 "Fase 1 = planten → Florgib, fase 2 = Florgib → oogst.</p>")
-    rijen = []
-    for label, r in f.items():
-        rij = {"fase": label, "n": r["n"], "duur": d(r["gem_duur"]), "sd": d(r["sd_duur"])}
-        for naam in r:
-            if isinstance(r[naam], dict):
-                rij[naam] = d(r[naam]["mae"], 2)
-        rijen.append(rij)
-    modellen = [k for k in f["fase 1"] if isinstance(f["fase 1"][k], dict)]
-    delen.append(tabel(rijen, [("fase", "Deel"), ("n", "Teelten"), ("duur", "Gem. duur (d)"), ("sd", "Spreiding (sd, d)")]
-                       + [(m, f"Fout {nl(m)} (d)") for m in modellen]))
+    # --- 2. De Florgib als indicator ---
+    delen.append("<h2>2. De Florgib als indicator</h2><p>Licht en temperatuur lopen over de hele teelt; de Florgib "
+                 "splitst de teelt niet, maar zegt hoe ver hij is. Florgib-datums uit de app en uit Overview (\"Fg\" in "
+                 f"de GBM-rij): {fg['n']} teelten ({', '.join(f'tuin {k}: {v}' for k, v in fg['per_tuin'].items())}).</p>")
+    delen.append(tabel([
+        {"wat": "Deel van de ontwikkeling bij het spuiten (model)", "med": fmt_getal(fg["fractie_mediaan"] * 100, 0) + " %",
+         "band": f"{fmt_getal(fg['fractie_p10'] * 100, 0)}–{fmt_getal(fg['fractie_p90'] * 100, 0)} %"},
+        {"wat": "Deel van de teeltduur in dagen", "med": fmt_getal(fg["dagdeel_mediaan"] * 100, 0) + " %",
+         "band": f"{fmt_getal(fg['dagdeel_p10'] * 100, 0)}–{fmt_getal(fg['dagdeel_p90'] * 100, 0)} %"},
+        {"wat": "Dagen van planten tot Florgib", "med": d(fg["dagen_mediaan"], 0), "band": ""},
+    ], [("wat", ""), ("med", "Mediaan"), ("band", "80 % van de teelten")]))
+    vb = fg["backtest"]
+    delen.append(f"<p><b>Verwachte Florgib-datum</b> (de dag waarop het model {fmt_getal(fg['fractie_mediaan'] * 100, 0)} % "
+                 f"bereikt): met het werkelijke klimaat gemiddeld {d(fg['voorspelling']['mae'])} dagen fout; in de backtest "
+                 f"op dag 14 {d(vb.get('dag 14', {}).get('mae'))} dagen (n = {vb.get('dag 14', {}).get('n', 0)}). "
+                 "Daarmee is een melding \"over tijd voor Florgib\" zinvol vanaf een paar dagen achterstand.</p>")
+    delen.append(f"<p><b>Voortgang ijken op de Florgib:</b> zet op de dag van het spuiten het opgebouwde deel op "
+                 f"{fmt_getal(fg['fractie_mediaan'] * 100, 0)} % in plaats van het uit te rekenen. De oogstprognose op dat "
+                 f"moment wordt daarmee {d(bt['bij Florgib']['mae_ijking'])} dagen fout gemiddeld, tegen "
+                 f"{d(bt['bij Florgib']['mae_model'])} zonder ijking. Voorstel: in de app de voortgang vanaf de Florgib "
+                 "zo rekenen.</p>")
 
     # --- 3. Kwaliteit ---
     delen.append("<h2>3. Kwaliteit: gewicht tegen de stooklijn</h2>")
@@ -181,12 +193,12 @@ snelheid. Fout = voorspelde min werkelijke teeltduur in dagen; bias &lt; 0 = te 
                  "de data tot dat moment. Verwacht licht = meerjarig gemiddelde per kalenderweek (zonder het eigen jaar); "
                  "verwachte temperatuur = lichtlijn + de gemiddelde afwijking van de laatste 14 dagen.</p>")
     rijen = [{"cp": r["checkpoint"], "n": r["n"], "model": d(r["mae_model"], 2), "bias": fmt_verschil(r["bias_model"], 1),
-              "plan": d(r["mae_plan"], 2), "fase2": d(r.get("mae_fase2"), 2) if r.get("mae_fase2") == r.get("mae_fase2") else "–"}
+              "plan": d(r["mae_plan"], 2), "ijking": d(r.get("mae_ijking"), 2) if r.get("mae_ijking") == r.get("mae_ijking") else "–"}
              for r in res["backtest"]]
     volgorde = ["dag 14", "dag 28", "bij Florgib", "7 d voor oogst"]
     rijen.sort(key=lambda r: volgorde.index(r["cp"]))
     delen.append(tabel(rijen, [("cp", "Moment"), ("n", "Teelten"), ("model", f"Fout {nl(beste)} (d)"), ("bias", "Bias (d)"),
-                               ("plan", "Fout plan/tabel (d)"), ("fase2", "Fout met fase 2-model (d)")]))
+                               ("plan", "Fout plan/tabel (d)"), ("ijking", "Fout met Florgib-ijking (d)")]))
     bt_df = pd.DataFrame([{"Moment": r["checkpoint"], "Wat": w, "Fout (d)": r[k]} for r in res["backtest"]
                           for w, k in ((nl(beste), "mae_model"), ("plan (tabel)", "mae_plan")) if r.get(k) == r.get(k)])
     delen.append(grafiek(alt.Chart(bt_df).mark_bar().encode(

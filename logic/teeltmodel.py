@@ -30,19 +30,37 @@ from logic.lichtlijn import t_ideaal
 MIN_SNELHEID = 1e-4   # nooit 0 of negatief: anders "nooit rijp"
 
 
-def duur_uit_snelheid(snelheid, begin=0.0):
+def duur_uit_snelheid(snelheid, begin=0.0, doel=1.0):
     """
     Aantal dagen (met fractie) tot de opgetelde snelheid, vanaf `begin`
-    (al opgebouwd deel), 1 bereikt. None als dat binnen de reeks niet lukt.
+    (al opgebouwd deel), `doel` bereikt (1 = oogstrijp; een fractie, bijv. het
+    deel waarop de Florgib valt). None als dat binnen de reeks niet lukt.
     """
     r = np.maximum(np.asarray(snelheid, dtype=float), MIN_SNELHEID)
     som = begin + np.cumsum(r)
-    klaar = np.nonzero(som >= 1.0)[0]
+    klaar = np.nonzero(som >= doel)[0]
     if not len(klaar):
         return None
     i = int(klaar[0])
-    over = som[i] - 1.0            # deel van dag i dat al niet meer nodig was
+    over = som[i] - doel           # deel van dag i dat al niet meer nodig was
     return i + 1 - over / r[i]
+
+
+def ontwikkeling(model, T, L):
+    """Opgebouwd deel van de teelt (1 = oogstrijp) na de dagen in T/L."""
+    if not len(T):
+        return 0.0
+    return float(np.maximum(model.snelheid(T, L), MIN_SNELHEID).sum())
+
+
+def florgib_fractie(model, T, L, florgib_dag, duur):
+    """
+    Deel van de ontwikkeling dat de teelt had bereikt op de Florgib-dag,
+    genormeerd op de werkelijke oogst: som tot de Florgib / som tot de oogst.
+    Onafhankelijk van een tuinfactor (die valt weg in de deling).
+    """
+    totaal = ontwikkeling(model, T[:int(round(duur))], L[:int(round(duur))])
+    return ontwikkeling(model, T[:florgib_dag], L[:florgib_dag]) / totaal if totaal else None
 
 
 class LineairModel:

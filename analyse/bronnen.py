@@ -133,6 +133,51 @@ def lees_florgib_tuin1(wb):
     return uit
 
 
+def lees_florgib_overview(wb):
+    """
+    Blad Overview: {vak: [datums]} waarop in de GBM-rij "Fg" (Florgib) staat.
+    De kop heeft per week een blok van zeven dagen dat op zondag begint (jaar,
+    week en dagletter in de eerste drie rijen). Staat het jaartal niet goed,
+    dan telt het jaar op zodra het weeknummer terugspringt.
+    """
+    if "Overview" not in wb.sheetnames:
+        return {}
+    rijen = wb["Overview"].iter_rows(values_only=True)
+    jaren, weken, dagen = next(rijen), next(rijen), next(rijen)
+    next(rijen)
+    kolomdatum, jaar, vorige_week, positie, blokstart = {}, None, None, 0, None
+    for i in range(len(dagen)):
+        if i < len(weken) and isinstance(weken[i], (int, float)) and i < len(dagen) and dagen[i] in ("Z", "zo"):
+            week = int(weken[i])
+            kop_jaar = jaren[i] if i < len(jaren) and isinstance(jaren[i], (int, float)) else None
+            if jaar is None:
+                jaar = int(kop_jaar) if kop_jaar else None
+            elif vorige_week is not None and week < vorige_week:
+                jaar += 1
+            elif kop_jaar and int(kop_jaar) > jaar:
+                jaar = int(kop_jaar)
+            vorige_week, positie = week, 0
+            try:
+                blokstart = date.fromisocalendar(jaar, week, 1) - timedelta(days=1) if jaar else None
+            except ValueError:
+                blokstart = None
+        elif blokstart is not None:
+            positie += 1
+        if blokstart is not None and dagen[i]:
+            kolomdatum[i] = blokstart + timedelta(days=positie)
+    uit, vak = defaultdict(list), None
+    for rij in rijen:
+        if rij[0] is not None and isinstance(rij[0], (int, float)):
+            vak = int(rij[0])
+        if rij[1] != "GBM" or vak is None:
+            continue
+        for i, d in kolomdatum.items():
+            waarde = rij[i] if i < len(rij) else None
+            if isinstance(waarde, str) and re.search(r"\bfg\b", waarde.strip().lower()):
+                uit[vak].append(d)
+    return {v: sorted(ds) for v, ds in uit.items()}
+
+
 def lees_database():
     """Teelten (met aantal oogstregistraties), vak→afdeling en klimaat per dag."""
     from database import get_connection, meting
@@ -181,11 +226,12 @@ def bouw_dataset():
     from database import bereken_verwachte_oogstdatum
 
     db, vak_afd, db_klimaat = lees_database()
-    excel, stek, florgib_t1 = [], {}, {}
+    excel, stek, florgib_t1, florgib_overview = [], {}, {}, {}
     for tuin, pad in EXCEL.items():
         wb = _open(pad)
         excel += lees_excel_teelt(wb, tuin)
         stek.update({(tuin,) + k: v for k, v in lees_stek_plantdata(wb).items()})
+        florgib_overview.update({(tuin, vak): ds for vak, ds in lees_florgib_overview(wb).items()})
         if tuin == 1:
             florgib_t1 = lees_florgib_tuin1(wb)
 
@@ -267,19 +313,23 @@ def bouw_dataset():
             T.append(x[0]); L.append(x[1])
         T, L = np.array(T), np.array(L)
 
-        fg = None
-        if r is not None and isinstance(r.half, str):
-            fg = date.fromisoformat(r.half)
-        elif tuin == 1:
-            fg = florgib_t1.get((jaar, week, vak))
+        # Florgib: de registratie in de app, anders het eerste "Fg" in Overview
+        # binnen de teelt, anders de Aantekeningen (tuin 1).
+        fg_db = date.fromisoformat(r.half) if r is not None and isinstance(r.half, str) else None
+        fg_ov = next((d for d in florgib_overview.get((tuin, vak), []) if start < d < oogst), None)
+        fg = fg_db or fg_ov or (florgib_t1.get((jaar, week, vak)) if tuin == 1 else None)
+        if fg_db and fg_ov:
+            log["Florgib in app én Overview (verschil in dagen)"] = log.get(
+                "Florgib in app én Overview (verschil in dagen)", []) + [(fg_db - fg_ov).days]
         if fg is not None and not (start < fg < oogst):
             log["Florgib-datum buiten de teelt (genegeerd)"] += 1
             fg = None
+        bron_fg = None if fg is None else ("app" if fg == fg_db else "overview" if fg == fg_ov else "aantekeningen")
 
         teelten.append({
             "tuin": tuin, "jaar": jaar, "plantweek": week, "vak": vak, "afdeling": afd,
             "code": ex["code"] if ex else None, "start": start, "oogst": oogst, "precisie": precisie,
-            "florgib": fg, "gewicht": _getal(r.gewicht) if r is not None else None,
+            "florgib": fg, "florgib_bron": bron_fg, "gewicht": _getal(r.gewicht) if r is not None else None,
             "lengte": _getal(r.lengte) if r is not None else None,
             "bron": "beide" if (ex is not None and r is not None) else ("excel" if ex is not None else "database"),
             "duur": float(duur), "T": T[:duur], "L": L[:duur], "T_ext": T, "L_ext": L,

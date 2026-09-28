@@ -1,5 +1,5 @@
 """
-Stap 1: teeltduur-, fase- en kwaliteitsanalyse, alles leave-one-out.
+Stap 1: teeltduur-, Florgib- en kwaliteitsanalyse, alles leave-one-out.
 
     python analyse/teeltduur_analyse.py        # met DATABASE_URL (productie of NAS)
 
@@ -23,8 +23,8 @@ import pandas as pd
 
 from analyse.bronnen import bouw_dataset
 from logic.lichtlijn import t_ideaal
-from logic.teeltmodel import (GraaddagenModel, LineairModel, MetTuinfactor, MIN_SNELHEID, duur_uit_snelheid,
-                              leave_one_out, voor_tuin, voorspel_duur)
+from logic.teeltmodel import (GraaddagenModel, LineairModel, MetTuinfactor, duur_uit_snelheid, florgib_fractie,
+                              leave_one_out, ontwikkeling, voor_tuin, voorspel_duur)
 
 T_BASISSEN = (0, 4, 6, 8, 10)
 KAPPAS = (0.1, 0.25, 0.5, 1.0)
@@ -95,35 +95,36 @@ def maak_model(naam):
     return GraaddagenModel(tb, kappa)
 
 
-def fase_teelten(teelten, fase):
-    """Teelten ingekort tot fase 1 (planten → Florgib) of fase 2 (Florgib → oogst)."""
-    uit = []
-    for t in teelten:
-        if not t["florgib"]:
-            continue
-        f = (t["florgib"] - t["start"]).days
-        if fase == 1:
-            uit.append({**t, "duur": float(f), "T": t["T"][:f], "L": t["L"][:f], "T_ext": t["T_ext"], "L_ext": t["L_ext"]})
-        else:
-            uit.append({**t, "duur": t["duur"] - f, "T": t["T"][f:], "L": t["L"][f:],
-                        "T_ext": t["T_ext"][f:], "L_ext": t["L_ext"][f:]})
-    return uit
-
-
-def fase_analyse(teelten, modelnamen):
-    uit = {}
-    geheel = [t for t in teelten if t["florgib"]]
-    for label, subset in (("hele teelt", geheel), ("fase 1", fase_teelten(teelten, 1)),
-                          ("fase 2", fase_teelten(teelten, 2))):
-        werkelijk = np.array([t["duur"] for t in subset])
-        rij = {"n": len(subset), "gem_duur": float(werkelijk.mean()), "sd_duur": float(werkelijk.std(ddof=1))}
-        for naam in modelnamen:
-            m = maak_model(naam)
-            v = (loo_graaddagen(subset, m.t_basis, m.kappa) if isinstance(m, GraaddagenModel)
-                 else leave_one_out(lambda n=naam: maak_model(n), subset))
-            rij[naam] = fouten(v, werkelijk)
-        uit[label] = rij
-    return uit
+def florgib_analyse(teelten, modelnaam):
+    """
+    De Florgib als indicator van hoe ver de teelt is: welk deel van de
+    ontwikkeling (volgens het model over de hele teelt) is bereikt op de dag
+    van het spuiten, en hoe goed is de Florgib-datum daarmee te voorspellen.
+    Leave-one-out: per teelt het model en de mediaan-fractie zonder die teelt.
+    """
+    met = [t for t in teelten if t["florgib"]]
+    model = maak_model(modelnaam).fit(teelten)
+    fracties = np.array([florgib_fractie(model, t["T"], t["L"], (t["florgib"] - t["start"]).days, t["duur"])
+                         for t in met])
+    dagdeel = np.array([(t["florgib"] - t["start"]).days / t["duur"] for t in met])
+    fouten_dag = []
+    for i, t in enumerate(met):
+        m = maak_model(modelnaam).fit([x for x in teelten if x is not t])
+        f_med = float(np.median(np.delete(fracties, i)))
+        voorspeld = duur_uit_snelheid(voor_tuin(m, t["tuin"]).snelheid(t["T_ext"], t["L_ext"]), doel=f_med)
+        if voorspeld is not None:
+            fouten_dag.append(voorspeld - (t["florgib"] - t["start"]).days)
+    fouten_dag = np.array(fouten_dag)
+    return {
+        "n": len(met), "per_tuin": {str(k): int(v) for k, v in pd.Series([t["tuin"] for t in met]).value_counts().items()},
+        "fractie_mediaan": float(np.median(fracties)), "fractie_p10": float(np.percentile(fracties, 10)),
+        "fractie_p90": float(np.percentile(fracties, 90)),
+        "dagdeel_mediaan": float(np.median(dagdeel)), "dagdeel_p10": float(np.percentile(dagdeel, 10)),
+        "dagdeel_p90": float(np.percentile(dagdeel, 90)),
+        "dagen_mediaan": float(np.median([(t["florgib"] - t["start"]).days for t in met])),
+        "voorspelling": {"mae": float(np.abs(fouten_dag).mean()), "bias": float(fouten_dag.mean()),
+                         "binnen2": float((np.abs(fouten_dag) <= 2).mean() * 100)},
+    }
 
 
 def dagen_per_graad(model, teelten):
@@ -183,27 +184,24 @@ def verwacht_licht(klim, vanaf, dagen, eigen_jaar):
     return np.array(pd.Series(uit).ffill().bfill())
 
 
-def prognose_duur(model, t, k, klim, fase2_model=None):
+def prognose_duur(model, t, k, klim, gedaan=None, doel=1.0):
     """
-    Voorspelde teeltduur op dag k met alleen de data tot dan: werkelijke dagen
-    tot k, daarna verwacht licht en temperatuur = lichtlijn + de gemiddelde
-    afwijking van de laatste 14 dagen. Met fase2_model en k = Florgib: vanaf
-    de Florgib het fase 2-model.
+    Voorspelde dag (vanaf planten) waarop de teelt `doel` bereikt (1 = oogst),
+    op dag k met alleen de data tot dan: werkelijke dagen tot k, daarna
+    verwacht licht en temperatuur = lichtlijn + de gemiddelde afwijking van de
+    laatste 14 dagen. Met `gedaan` wordt het opgebouwde deel op dag k
+    vastgezet (Florgib-ijking) in plaats van uit de dagen berekend.
     """
     model = voor_tuin(model, t["tuin"])
-    if fase2_model is not None:
-        fase2_model = voor_tuin(fase2_model, t["tuin"])
     T_tot, L_tot = t["T_ext"][:k], t["L_ext"][:k]
     afw = float((T_tot[-14:] - t_ideaal(L_tot[-14:])).mean())
     L_verw = verwacht_licht(klim, t["start"] + timedelta(days=k), TOEKOMST_DAGEN, t["start"].year)
     T_verw = t_ideaal(L_verw) + afw
-    if fase2_model is not None:
-        rest = duur_uit_snelheid(fase2_model.snelheid(T_verw, L_verw))
-        return None if rest is None else k + rest
-    gedaan = float(np.maximum(model.snelheid(T_tot, L_tot), MIN_SNELHEID).sum())
-    if gedaan >= 1:
-        return float(duur_uit_snelheid(model.snelheid(T_tot, L_tot)))
-    rest = duur_uit_snelheid(model.snelheid(T_verw, L_verw), begin=gedaan)
+    if gedaan is None:
+        gedaan = ontwikkeling(model, T_tot, L_tot)
+    if gedaan >= doel:
+        return float(duur_uit_snelheid(model.snelheid(T_tot, L_tot), doel=doel))
+    rest = duur_uit_snelheid(model.snelheid(T_verw, L_verw), begin=gedaan, doel=doel)
     return None if rest is None else k + rest
 
 
@@ -211,16 +209,13 @@ def backtest(teelten, modelnaam, klim):
     """Alleen teelten met een oogstdatum op de dag; het model telkens zonder die teelt gefit."""
     tabel = tabel_duur(teelten)
     rijen = []
-    fase2_alle = fase_teelten(teelten, 2)
     for i, t in enumerate(teelten):
         if t["precisie"] != "dag":
             continue
         overige = teelten[:i] + teelten[i + 1:]
         model = maak_model(modelnaam).fit(overige)
-        fase2 = None
-        if t["florgib"]:
-            zelf = (t["tuin"], t["start"], t["vak"])
-            fase2 = maak_model(modelnaam).fit([f for f in fase2_alle if (f["tuin"], f["start"], f["vak"]) != zelf])
+        f_med = float(np.median([florgib_fractie(model, o["T"], o["L"], (o["florgib"] - o["start"]).days, o["duur"])
+                                 for o in overige if o["florgib"]]))
         punten = {"dag 14": 14, "dag 28": 28, "7 d voor oogst": int(t["duur"]) - 7}
         if t["florgib"]:
             punten["bij Florgib"] = (t["florgib"] - t["start"]).days
@@ -229,8 +224,11 @@ def backtest(teelten, modelnaam, klim):
                 continue
             v = prognose_duur(model, t, k, klim)
             rij = {"tuin": t["tuin"], "checkpoint": label, "werkelijk": t["duur"], "model": v, "plan": tabel[i]}
-            if label == "bij Florgib" and fase2 is not None:
-                rij["fase2"] = prognose_duur(model, t, k, klim, fase2_model=fase2)
+            if label == "bij Florgib":
+                rij["ijking"] = prognose_duur(model, t, k, klim, gedaan=f_med)
+            if label in ("dag 14", "dag 28") and t["florgib"] and k < (t["florgib"] - t["start"]).days:
+                rij["florgib_voorspeld"] = prognose_duur(model, t, k, klim, doel=f_med)
+                rij["florgib_werkelijk"] = (t["florgib"] - t["start"]).days
             rijen.append(rij)
     return pd.DataFrame(rijen)
 
@@ -277,10 +275,8 @@ def main():
                                      round(r["plus_1"], 1), round(r["min_1"], 1)) for r in per_graad["beste"]])
     print("regressie a, b, c:", regressie.a, regressie.b, regressie.c)
 
-    fasen = fase_analyse(teelten, ["regressie", beste] if beste != "regressie" else ["regressie"])
-    for label, rij in fasen.items():
-        print(f"  {label}: n {rij['n']} gem {rij['gem_duur']:.1f} sd {rij['sd_duur']:.1f} | "
-              + " | ".join(f"{n} MAE {rij[n]['mae']:.2f}" for n in rij if isinstance(rij[n], dict)))
+    florgib = florgib_analyse(teelten, beste)
+    print("Florgib:", {k: (round(v, 3) if isinstance(v, float) else v) for k, v in florgib.items()})
 
     kw = kwaliteit(teelten)
     for label, r in kw.items():
@@ -291,13 +287,16 @@ def main():
     bt = backtest(teelten, beste, klim)
     bt["fout_model"] = bt["model"] - bt["werkelijk"]
     bt["fout_plan"] = bt["plan"] - bt["werkelijk"]
-    if "fase2" in bt:
-        bt["fout_fase2"] = bt["fase2"] - bt["werkelijk"]
+    bt["fout_ijking"] = bt["ijking"] - bt["werkelijk"]
     samenvatting = bt.groupby("checkpoint").agg(
         n=("werkelijk", "size"), mae_model=("fout_model", lambda f: f.abs().mean()),
         bias_model=("fout_model", "mean"), mae_plan=("fout_plan", lambda f: f.abs().mean()),
-        **({"mae_fase2": ("fout_fase2", lambda f: f.abs().mean())} if "fout_fase2" in bt else {}))
+        mae_ijking=("fout_ijking", lambda f: f.abs().mean()))
     print(samenvatting.round(2).to_string())
+    fg = bt.dropna(subset=["florgib_voorspeld"])
+    florgib["backtest"] = {cp: {"n": int(len(g)), "mae": float((g["florgib_voorspeld"] - g["florgib_werkelijk"]).abs().mean())}
+                           for cp, g in fg.groupby("checkpoint")}
+    print("verwachte Florgib-datum in de backtest:", florgib["backtest"])
 
     resultaat = {
         "n": len(teelten), "n_dag": len(dag), "afgevallen": log, "beste": beste, "beste_licht": beste_licht,
@@ -307,7 +306,7 @@ def main():
                              if getattr(neutraal, k, None) is not None},
         "tuinfactor": tuinfactor, "diagnose": {f"{i[0]}|{i[1]}|{i[2]}": {"n": int(r["size"]), "fout": float(r["mean"])}
                                                for i, r in diag.iterrows()},
-        "fasen": fasen, "kwaliteit": kw,
+        "florgib": florgib, "kwaliteit": kw,
         "backtest": samenvatting.reset_index().to_dict("records"),
         "punten": [{"tuin": t["tuin"], "start": str(t["start"]), "werkelijk": t["duur"], "precisie": t["precisie"],
                     "zomer": zomer(t), "tabel": float(voorspeld["tabel"][i]), "beste": float(voorspeld[beste][i]),
