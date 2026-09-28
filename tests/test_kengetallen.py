@@ -1,4 +1,4 @@
-"""Tests voor logic/kengetallen.py (vergelijkingstabel Beide tuinen)."""
+"""Tests voor logic/kengetallen.py (de vergelijkingstabellen)."""
 import unittest
 
 from logic import kengetallen as kg

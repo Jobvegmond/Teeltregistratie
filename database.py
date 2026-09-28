@@ -1055,46 +1055,6 @@ def get_totaal_emmers_per_teelt(tuin_id=None):
         return {teelt_id: totaal for teelt_id, totaal in cursor.fetchall()}
 
 
-def get_oogstregistraties_voor_periode(datum_start, datum_eind, tuin_id=None):
-    """
-    Geeft alle oogstmomenten (emmers) binnen een periode terug, met vak en
-    teeltcode erbij — voor het weekoverzicht. Lijst van dicts, gesorteerd op
-    vaknummer en datum.
-    """
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT o.datum, v.vaknummer, t.code, o.aantal_emmers
-            FROM oogstregistraties o
-            JOIN teelten t ON o.teelt_id = t.id
-            JOIN teeltvakken v ON t.teeltvak_id = v.id
-            WHERE v.tuin_id = %s AND o.datum BETWEEN %s AND %s
-            ORDER BY v.vaknummer, o.datum
-        """, (_tuin_of_standaard(tuin_id), str(datum_start), str(datum_eind)))
-        return [
-            {"datum": datum, "vaknummer": vaknummer, "code": code, "aantal_emmers": emmers}
-            for datum, vaknummer, code, emmers in cursor.fetchall()
-        ]
-
-
-def get_watergift_per_vak_voor_periode(datum_start, datum_eind, tuin_id=None):
-    """
-    Totale watergift (liter/m²) per vak binnen een periode, voor alle vakken
-    met data in die periode. Lijst van (vaknummer, totaal_liter_per_m2,
-    aantal_dagen), gesorteerd op vaknummer (laag naar hoog).
-    """
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT vaknummer, SUM(liter_per_m2), COUNT(*)
-            FROM watergift_dag
-            WHERE tuin_id = %s AND datum BETWEEN %s AND %s
-            GROUP BY vaknummer
-            ORDER BY vaknummer
-        """, (_tuin_of_standaard(tuin_id), str(datum_start), str(datum_eind)))
-        return cursor.fetchall()
-
-
 # --- GEBRUIKERS (INLOG) ---
 
 def get_gebruikers_credentials():
@@ -1517,25 +1477,6 @@ def importeer_watergift_uit_priva(dagen_terug=4, gebruiker=None, tuin_id=None):
     return verwerkt, overgeslagen
 
 
-def get_watergift_voor_periode(vaknummer, datum_start, datum_eind, tuin_id=None):
-    """
-    Geeft het totaal aan watergift (liter/m²) en het aantal gemeten dagen
-    terug voor een vak binnen een periode. Geeft None als er geen data is.
-    """
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT SUM(liter_per_m2), COUNT(*)
-            FROM watergift_dag
-            WHERE tuin_id = %s AND vaknummer = %s AND datum BETWEEN %s AND %s
-        """, (_tuin_of_standaard(tuin_id), int(vaknummer), str(datum_start), str(datum_eind)))
-        rij = cursor.fetchone()
-
-    if not rij or rij[1] == 0:
-        return None
-    return {"totaal_liter_per_m2": rij[0] or 0.0, "aantal_dagen": rij[1]}
-
-
 def get_watergift_dagen_voor_periode(vaknummer, datum_start, datum_eind, tuin_id=None):
     """Losse dagregels (datum, liter_per_m2) voor grafieken, gesorteerd op datum."""
     with get_connection() as conn:
@@ -1546,23 +1487,6 @@ def get_watergift_dagen_voor_periode(vaknummer, datum_start, datum_eind, tuin_id
             WHERE tuin_id = %s AND vaknummer = %s AND datum BETWEEN %s AND %s
             ORDER BY datum
         """, (_tuin_of_standaard(tuin_id), int(vaknummer), str(datum_start), str(datum_eind)))
-        return cursor.fetchall()
-
-
-def get_watergift_per_dag_voor_periode(datum_start, datum_eind, tuin_id=None):
-    """
-    Losse (datum, vaknummer, liter_per_m2)-regels voor alle vakken binnen een
-    periode, gesorteerd op datum en daarna vaknummer (laag naar hoog) — voor
-    een dagoverzicht van wat er water heeft gehad.
-    """
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT datum, vaknummer, liter_per_m2
-            FROM watergift_dag
-            WHERE tuin_id = %s AND datum BETWEEN %s AND %s
-            ORDER BY datum, vaknummer
-        """, (_tuin_of_standaard(tuin_id), str(datum_start), str(datum_eind)))
         return cursor.fetchall()
 
 
@@ -1918,43 +1842,6 @@ def warmte_over_periode(per_dag, datum_start, datum_eind):
             dagen += 1
         dag += timedelta(days=1)
     return (som if dagen else None), dagen
-
-
-def get_warmte_voor_periode(vaknummer, datum_start, datum_eind, tuin_id=None):
-    """
-    Geeft het totale warmteverbruik (MJ) van één vak binnen een periode terug
-    — Pulsteller-warmte plus (in weken met bijstook) gasgestookte warmte
-    opgeteld — berekend als de warmte per bezette m² per dag (zie
-    warmte_per_bezette_m2) keer de oppervlakte van dat vak. Geeft None als er
-    geen data of geen bekende oppervlakte is.
-    """
-    oppervlakte = oppervlakte_van_vaknummer(vaknummer, tuin_id)
-    if not oppervlakte:
-        return None
-    mj_per_m2, dagen = warmte_over_periode(warmte_per_bezette_m2(tuin_id), datum_start, datum_eind)
-    if not dagen:
-        return None
-    return {"totaal_mj": mj_per_m2 * oppervlakte, "aantal_dagen": dagen}
-
-
-def get_klimaat_voor_periode(afdeling, datum_start, datum_eind, tuin_id=None):
-    """
-    Geeft de gemiddelde temperatuur, gemiddelde RV en gemiddelde dagstralingssom
-    terug over alle opgeslagen dagen binnen de opgegeven periode (bijv. de
-    looptijd van een teelt). Geeft None terug als er geen data is.
-    """
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT AVG(gem_temperatuur), AVG(gem_rv), AVG(stralingssom_dag)
-            FROM klimaatdata_dag
-            WHERE tuin_id = %s AND afdeling = %s AND datum BETWEEN %s AND %s
-        """, (_tuin_of_standaard(tuin_id), afdeling, str(datum_start), str(datum_eind)))
-        rij = cursor.fetchone()
-
-    if not rij or rij[0] is None:
-        return None
-    return {"gem_temperatuur": rij[0], "gem_rv": rij[1], "gem_stralingssom_dag": rij[2]}
 
 
 def get_klimaatdata_dagen_voor_periode(afdeling, datum_start, datum_eind, tuin_id=None):

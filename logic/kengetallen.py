@@ -1,5 +1,5 @@
 """
-Vergelijkingstabel op "Beide tuinen": wat per kengetal "beter" is, hoe een
+Vergelijkingstabellen (Tuin- en Teeltvergelijking): wat per kengetal "beter" is, hoe een
 verschil gekleurd wordt, welke tuin per regel de beste is en wanneer het
 totaal van beide tuinen met een eerdere periode te vergelijken is. Alleen
 rekenwerk; tests in tests/test_kengetallen.py.
