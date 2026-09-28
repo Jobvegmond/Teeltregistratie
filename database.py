@@ -2060,6 +2060,58 @@ def get_vakstatus_data(dagen_klimaat=150):
     return {"vakken": vakken, "teelten": teelten, "klimaat": klimaat, "water": water, "concepten": concepten}
 
 
+def get_vergelijking_data():
+    """
+    Alle data voor de Tuinvergelijking, voor alle tuinen tegelijk, in een
+    vaste set query's (nooit per vak). Geeft een dict met DataFrames:
+    - vakken: tuin_id, vaknummer, afdeling, m2 (vaste maat als de tabel leeg is)
+    - teelten: per teelt start/oogst, planten, emmers (som), uitval, lengte, gewicht, rijpheid
+    - emmers: elke oogstregistratie met tuin, vak, teelt, datum en emmers
+    - klimaat: per tuin/afdeling/dag etmaal-, dag- en nachttemperatuur, RV en lichtsom
+    - energie / gas: per tuin per dag warmte (MJ) en gas (m3)
+    - water: per tuin/vak/dag liter per m²
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        vakken = _df(cursor, """
+            SELECT v.tuin_id, t.nummer AS tuinnummer, v.vaknummer, v.afdeling, v.oppervlakte_m2
+            FROM teeltvakken v JOIN tuinen t ON t.id = v.tuin_id
+            WHERE v.vaknummer IS NOT NULL
+        """)
+        teelten = _df(cursor, """
+            SELECT t.id, v.tuin_id, v.vaknummer, v.afdeling, t.code, t.datum_teelt_start, t.datum_oogst,
+                   t.aantal_planten, t.uitval_pct, t.lengte_eind, t.oogstgewicht, t.rijpheid, o.emmers
+            FROM teelten t
+            JOIN teeltvakken v ON v.id = t.teeltvak_id
+            LEFT JOIN (SELECT teelt_id, SUM(aantal_emmers) AS emmers FROM oogstregistraties GROUP BY teelt_id) o
+                ON o.teelt_id = t.id
+            WHERE v.vaknummer IS NOT NULL AND t.datum_teelt_start IS NOT NULL
+        """)
+        emmers = _df(cursor, """
+            SELECT v.tuin_id, v.vaknummer, v.afdeling, t.code, o.teelt_id, o.datum, o.aantal_emmers
+            FROM oogstregistraties o
+            JOIN teelten t ON t.id = o.teelt_id
+            JOIN teeltvakken v ON v.id = t.teeltvak_id
+        """)
+        klimaat = _df(cursor, """
+            SELECT tuin_id, afdeling, datum, gem_temperatuur AS temp_24h, gem_temperatuur_dag AS temp_dag,
+                   gem_temperatuur_nacht AS temp_nacht, gem_rv AS rv_24h, stralingssom_dag AS lichtsom
+            FROM klimaatdata_dag
+        """)
+        energie = _df(cursor, "SELECT tuin_id, datum, warmte_mj_totaal AS warmte_mj FROM energiedata_dag")
+        gas = _df(cursor, "SELECT tuin_id, datum, gas_m3_totaal AS gas_m3 FROM gasdata_dag")
+        water = _df(cursor, "SELECT tuin_id, vaknummer, datum, liter_per_m2 FROM watergift_dag")
+
+    vakken["m2"] = [
+        float(m2) if m2 else _standaard_oppervlakte(vak, nummer)
+        for m2, vak, nummer in zip(vakken["oppervlakte_m2"], vakken["vaknummer"], vakken["tuinnummer"])
+    ]
+    for kolom in ("lengte_eind", "oogstgewicht"):
+        teelten[kolom] = teelten[kolom].map(meting)
+    return {"vakken": vakken, "teelten": teelten, "emmers": emmers, "klimaat": klimaat,
+            "energie": energie, "gas": gas, "water": water}
+
+
 def get_teelthistorie_data():
     """
     De leerdata van het teeltmodel in twee query's: teelt_historie (met tuin_id)

@@ -105,15 +105,21 @@ from database import (
     STEK_STANDAARD_RAS,
     get_vakstatus_data,
     get_teelthistorie_data,
+    get_vergelijking_data,
     vakstatus_dataversie,
 )
 from logic import vakstatus as vs
 from logic import kengetallen as kg
+from logic import perioden
+from logic import tuinvergelijking as tuinvgl
+from logic.perioden import periode_grenzen, periode_sleutel
 from logic import teeltprognose as tp
 from logic.afdelingen import sorteer_afdelingen
 from logic.lichtlijn import formule_tekst, t_ideaal
+from ui import styles, vergelijkingstabel
+from ui.vergelijkingstabel import Kengetal, verloop_frame
 from config import (
-    AFWIJKING_VENSTER_DAGEN, C_GRENZEN, FLORGIB_ACHTERSTAND_DAGEN, MELDING_C_DREMPEL,
+    AFDELING_VOLGORDE, AFWIJKING_VENSTER_DAGEN, C_GRENZEN, FLORGIB_ACHTERSTAND_DAGEN, MELDING_C_DREMPEL,
     OP_KOERS_MARGE,
 )
 
@@ -257,46 +263,6 @@ st.markdown("""
 
 # Vaste kleur per afdeling, zodat afd. 1 overal dezelfde kleur heeft.
 AFDELING_KLEUR = {1: "#2a78d6", 2: "#eb6834", 3: "#1baf7a", 4: "#eda100"}
-MAANDNAMEN_KORT = ["jan", "feb", "mrt", "apr", "mei", "jun", "jul", "aug", "sep", "okt", "nov", "dec"]
-
-
-def periode_sleutel(d, periode_naam):
-    """
-    (sorteersleutel, label) voor een datum, op de gekozen periode-granulariteit
-    ("Week"/"Maand"/"Kwartaal"/"Jaar"). De sleutel sorteert chronologisch; het
-    label is wat er in de grafieken en tabellen komt te staan.
-    """
-    if periode_naam == "Week":
-        jaar, week, _ = d.isocalendar()
-        return (jaar, week), f"Wk {week} - {jaar}"
-    if periode_naam == "Maand":
-        return (d.year, d.month), f"{MAANDNAMEN_KORT[d.month - 1]} {d.year}"
-    if periode_naam == "Kwartaal":
-        kwartaal = (d.month - 1) // 3 + 1
-        return (d.year, kwartaal), f"{d.year} K{kwartaal}"
-    return (d.year,), str(d.year)
-
-
-def periode_grenzen(sleutel, periode_naam):
-    """Eerste en laatste dag (beide inclusief) van een periode uit periode_sleutel."""
-    if periode_naam == "Week":
-        jaar, week = sleutel
-        # Week 53 bestaat niet elk jaar; dan de laatste week van dat jaar.
-        week = min(week, date(jaar, 12, 28).isocalendar()[1])
-        van = date.fromisocalendar(jaar, week, 1)
-        return van, van + timedelta(days=6)
-    if periode_naam == "Maand":
-        jaar, maand = sleutel
-        volgende = date(jaar + 1, 1, 1) if maand == 12 else date(jaar, maand + 1, 1)
-        return date(jaar, maand, 1), volgende - timedelta(days=1)
-    if periode_naam == "Kwartaal":
-        jaar, kwartaal = sleutel
-        van = date(jaar, 3 * kwartaal - 2, 1)
-        volgende = date(jaar + 1, 1, 1) if kwartaal == 4 else date(jaar, 3 * kwartaal + 1, 1)
-        return van, volgende - timedelta(days=1)
-    return date(sleutel[0], 1, 1), date(sleutel[0], 12, 31)
-
-
 # --- GRAFIEKEN: gedeelde instellingen (één plek, zodat alle grafieken gelijk ogen) ---
 
 # Datumas als dd-mm: nooit Engelse maandnamen ("Oct", "Nov") op de as.
@@ -1045,6 +1011,8 @@ if "tuin_nummer" not in st.session_state:
     st.session_state["tuin_nummer"] = _standaard_tuin
 
 _tuin_labels = {t["nummer"]: t["naam"] for t in TUINEN}
+_tuinnummer_van = {t["id"]: t["nummer"] for t in TUINEN}
+_tuinnaam_van = {t["id"]: t["naam"] for t in TUINEN}
 _tuin_nummers = [t["nummer"] for t in TUINEN]
 if len(_tuin_nummers) > 1:
     _kolom_tuin, _kolom_leeg = st.columns([2, 5])
@@ -1492,8 +1460,9 @@ with _paneel[actie].container():
             st.info("Nog geen registraties.")
 
 # --- HOOFDSCHERM: TABBLADEN ---
-tab_nu, tab_beide, tab_overzicht, tab_week, tab_detail, tab_planning, tab_stek, tab_klimaat, tab_stats, tab_meer = st.tabs([
-    "🧭 Nu", "🌍 Beide tuinen", "📊 Teeltoverzicht", "📆 Weekoverzicht", "🔍 Teelt-detail", "🗓️ Planning", "🌱 Stek",
+styles.laad()
+tab_nu, tab_tuinvgl, tab_beide, tab_overzicht, tab_week, tab_detail, tab_planning, tab_stek, tab_klimaat, tab_stats,     tab_meer = st.tabs([
+    "🧭 Nu", "⚖️ Tuinvergelijking", "🌍 Beide tuinen", "📊 Teeltoverzicht", "📆 Weekoverzicht", "🔍 Teelt-detail", "🗓️ Planning", "🌱 Stek",
     "🌡️ Klimaatdata", "📈 Statistieken", "ℹ️ Meer",
 ])
 # Weinig gebruikt: logboek en uitleg als subtabbladen onder "Meer".
@@ -2145,6 +2114,271 @@ with tab_nu:
         "<span>klik op een vak, melding of afdeling voor details</span></div>",
         unsafe_allow_html=True,
     )
+
+# --- TUINVERGELIJKING: wat er in een periode in de kas gebeurde, per m² ---
+#
+# Tuin 1 naast tuin 3 en het totaal (gewogen naar m²). Het rekenwerk staat in
+# logic/tuinvergelijking.py, de tabel in ui/vergelijkingstabel.py.
+
+
+def _tv_geplant(waarde, n):
+    if waarde is None:
+        return LEEG
+    return f"{fmt_getal(waarde, 0, 'm²')} ({n} {'vak' if n == 1 else 'vakken'})"
+
+
+TV_KENGETALLEN = [
+    Kengetal("bezetting", "Bezetting", "Bezetting & productie", "%", 0,
+             "Aandeel van het teeltoppervlak met een teelt, gemiddeld over de dagen van de periode."),
+    Kengetal("geplant", "Geplant", "Bezetting & productie", "m²", 0,
+             "Oppervlakte van de vakken die in de periode geplant zijn.", formaat=_tv_geplant),
+    Kengetal("stelen_m2", "Stelen per bezette m²", "Bezetting & productie", "", 1,
+             "Emmers × 100 geregistreerd in de periode, gedeeld door de gemiddelde bezette m². Alleen als de "
+             "emmerregistratie al vóór de periode liep (tuin 1 sinds 04-06-26, tuin 3 sinds 14-08-26).",
+             n_eenheid="teelten"),
+    Kengetal("uitval", "Uitval", "Bezetting & productie", "%", 1,
+             "Uitval van de teelten afgerond in de periode, gewogen naar vak-m². Uit de emmers, anders het "
+             "vastgelegde percentage.", n_eenheid="teelten"),
+    Kengetal("temp", "Etmaaltemperatuur", "Klimaat", "°C", 1,
+             "Gemiddeld over de afdelingen, gewogen naar hun m².", n_eenheid="d"),
+    Kengetal("temp_dag", "Dagtemperatuur", "Klimaat", "°C", 1, "Gemiddeld over de afdelingen, gewogen naar m².",
+             n_eenheid="d"),
+    Kengetal("temp_nacht", "Nachttemperatuur", "Klimaat", "°C", 1, "Gemiddeld over de afdelingen, gewogen naar m².",
+             n_eenheid="d"),
+    Kengetal("rv", "RV", "Klimaat", "%", 0, "Etmaalgemiddelde, gewogen naar m² per afdeling.", n_eenheid="d"),
+    Kengetal("lichtsom", "Lichtsom binnen per dag", "Klimaat", "J/cm²", 0,
+             "Gemiddelde dagsom binnen, gewogen naar m² per afdeling.", n_eenheid="d"),
+    Kengetal("afwijking", "Afwijking lichtlijn", "Klimaat", "°C", 1,
+             f"Etmaaltemperatuur min de lichtlijn ({formule_tekst()}), per afdeling per dag, gewogen naar m². "
+             "Positief = warmer gestookt dan de lichtlijn.", teken=True, n_eenheid="d"),
+    Kengetal("warmte", "Warmte", "Energie & water", "MJ/m²", 1,
+             "Warmte in de periode gedeeld door de m² kas (de hele kas wordt verwarmd). Tuin 3: Pulsteller; "
+             "tuin 1: warmtewisselaar (sinds 09-01-26).", n_eenheid="d"),
+    Kengetal("gas", "Gas", "Energie & water", "m³/m²", 2, "Gasverbruik (Pulsteller 1) gedeeld door de m² kas.",
+             n_eenheid="d"),
+    Kengetal("water", "Water", "Energie & water", "l/m²", 1,
+             "Watergift van alle vakken samen in de periode, gedeeld door de m² kas.", n_eenheid="d"),
+]
+
+
+@st.cache_resource(ttl=600, show_spinner="Gegevens ophalen…")
+def _tv_gegevens(versie):
+    """Alle data van de Tuinvergelijking, voorbereid. `versie` (wijzigingenlog) is alleen de cachesleutel."""
+    return tuinvgl.Gegevens(get_vergelijking_data())
+
+
+def _tv_volgorde(tuin_id, afdeling, vak):
+    """Sorteersleutel tuin → afdeling (teeltvolgorde) → vak."""
+    nummer = _tuinnummer_van.get(tuin_id, tuin_id)
+    volgorde = list(sorteer_afdelingen({afdeling} | set(AFDELING_VOLGORDE.get(nummer, ())), nummer))
+    return nummer, volgorde.index(afdeling) if afdeling in volgorde else 99, vak
+
+
+def _tv_uitklappers(g, van, tot, periode_naam):
+    """Geplant, geoogst en watergift in de periode, per vak (tuin → afdeling → vak)."""
+    afdeling = g.vak_afdeling
+
+    geplant = sorted((t for t in g.teelten if van <= t["start"] <= tot),
+                     key=lambda t: _tv_volgorde(t["tuin_id"], afdeling.get((t["tuin_id"], t["vaknummer"])),
+                                                t["vaknummer"]))
+    with st.expander(f"🌱 Geplant in deze periode ({len(geplant)})"):
+        if geplant:
+            toon_tabel(pd.DataFrame([{
+                "Tuin": _tuinnaam_van.get(t["tuin_id"], "?"),
+                "Afd.": afdeling.get((t["tuin_id"], t["vaknummer"])),
+                "Vak": t["vaknummer"], "Code": t.get("code") or "-",
+                "Plantdatum": format_datum(t["start"]),
+                "Planten": t.get("aantal_planten") if vs._getal(t.get("aantal_planten")) else "-",
+                "m²": g.vak_m2.get((t["tuin_id"], t["vaknummer"])),
+            } for t in geplant]), [
+                ("Tuin", "Tuin", "tekst", None, "small"), ("Afd.", "Afd.", "getal", "%d", "small"),
+                ("Vak", "Vak", "getal", "%d", "small"), ("Code", "Code", "tekst", None, "medium"),
+                ("Plantdatum", "Plantdatum", "datum", None, "small"), ("Planten", "Planten", "getal", "%d", "small"),
+                ("m²", "m²", "getal", "%.0f", "small"),
+            ])
+        else:
+            st.caption("Niets geplant in deze periode.")
+
+    emmers = [e for e in g.emmers if van <= e["datum"] <= tot]
+    afgerond = sorted((t for t in g.teelten if t["oogst"] and van <= t["oogst"] <= tot),
+                      key=lambda t: _tv_volgorde(t["tuin_id"], afdeling.get((t["tuin_id"], t["vaknummer"])),
+                                                 t["vaknummer"]))
+    with st.expander(f"🌾 Geoogst in deze periode ({len({e['teelt_id'] for e in emmers})} vakken, "
+                     f"{len(afgerond)} afgerond)"):
+        if emmers:
+            per_vak = {}
+            for e in emmers:
+                rij = per_vak.setdefault(e["teelt_id"], {"e": e, "emmers": 0.0, "dagen": set()})
+                rij["emmers"] += vs._getal(e["aantal_emmers"]) or 0
+                rij["dagen"].add(e["datum"])
+            rijen = sorted(per_vak.values(), key=lambda r: _tv_volgorde(
+                r["e"]["tuin_id"], afdeling.get((r["e"]["tuin_id"], int(r["e"]["vaknummer"]))),
+                int(r["e"]["vaknummer"])))
+            st.write("**Emmers per vak**")
+            toon_tabel(pd.DataFrame([{
+                "Tuin": _tuinnaam_van.get(r["e"]["tuin_id"], "?"),
+                "Afd.": afdeling.get((r["e"]["tuin_id"], int(r["e"]["vaknummer"]))),
+                "Vak": r["e"]["vaknummer"], "Code": r["e"]["code"] or "-",
+                "Emmers": r["emmers"], "Stelen": r["emmers"] * 100,
+                "Oogstdagen": ", ".join(f"{d:%d-%m}" for d in sorted(r["dagen"])),
+            } for r in rijen]), [
+                ("Tuin", "Tuin", "tekst", None, "small"), ("Afd.", "Afd.", "getal", "%d", "small"),
+                ("Vak", "Vak", "getal", "%d", "small"), ("Code", "Code", "tekst", None, "medium"),
+                ("Emmers", "Emmers", "getal", "%d", "small"), ("Stelen", "Stelen", "getal", "%d", "small"),
+                ("Oogstdagen", "Oogstdagen", "tekst", None, "medium"),
+            ])
+        else:
+            st.caption("Geen emmers geregistreerd in deze periode.")
+        if afgerond:
+            st.write("**Afgerond in deze periode**")
+            toon_tabel(pd.DataFrame([{
+                "Tuin": _tuinnaam_van.get(t["tuin_id"], "?"), "Afd.": afdeling.get((t["tuin_id"], t["vaknummer"])),
+                "Vak": t["vaknummer"], "Code": t.get("code") or "-", "Oogstdatum": format_datum(t["oogst"]),
+                "Planten": t.get("aantal_planten") if vs._getal(t.get("aantal_planten")) else "-",
+                "Stelen": vs._getal(t.get("emmers")) * 100 if vs._getal(t.get("emmers")) else "-",
+                "Uitval (%)": tuinvgl.uitval_teelt(t) if tuinvgl.uitval_teelt(t) is not None else "-",
+                "Lengte (cm)": t.get("lengte_eind") if vs._getal(t.get("lengte_eind")) else "-",
+                "Gewicht (g)": t.get("oogstgewicht") if vs._getal(t.get("oogstgewicht")) else "-",
+                "Rijpheid": t.get("rijpheid") or "-",
+            } for t in afgerond]), [
+                ("Tuin", "Tuin", "tekst", None, "small"), ("Afd.", "Afd.", "getal", "%d", "small"),
+                ("Vak", "Vak", "getal", "%d", "small"), ("Code", "Code", "tekst", None, "medium"),
+                ("Oogstdatum", "Oogst", "datum", None, "small"), ("Planten", "Planten", "getal", "%d", "small"),
+                ("Stelen", "Stelen", "getal", "%d", "small"), ("Uitval (%)", "Uitval (%)", "getal", "%.1f", "small"),
+                ("Lengte (cm)", "Lengte (cm)", "getal", "%.1f", "small"),
+                ("Gewicht (g)", "Gewicht (g)", "getal", "%d", "small"), ("Rijpheid", "Rijpheid", "tekst", None, "small"),
+            ], verberg_leeg=True)
+
+    water = g.water[(g.water["datum"] >= str(van)) & (g.water["datum"] <= str(tot))].dropna(subset=["liter_per_m2"])
+    with st.expander("💧 Watergift per vak"):
+        if water.empty:
+            st.caption("Geen watergift in deze periode.")
+        else:
+            water = water.assign(
+                Tuin=water["tuin_id"].map(lambda t: _tuinnaam_van.get(int(t), "?")),
+                Afd=[afdeling.get((int(t), int(v))) for t, v in zip(water["tuin_id"], water["vaknummer"])],
+                sorteer=[_tv_volgorde(int(t), afdeling.get((int(t), int(v))), int(v))
+                         for t, v in zip(water["tuin_id"], water["vaknummer"])],
+            )
+            if periode_naam == "Week":
+                water["Dag"] = pd.to_datetime(water["datum"]).dt.strftime("%d-%m")
+                tabel = water.pivot_table(index=["sorteer", "Tuin", "Afd", "vaknummer"], columns="Dag",
+                                          values="liter_per_m2", aggfunc="sum")
+                tabel["Totaal"] = tabel.sum(axis=1)
+            else:
+                tabel = water.groupby(["sorteer", "Tuin", "Afd", "vaknummer"]).agg(
+                    Totaal=("liter_per_m2", "sum"), Dagen=("datum", "nunique"))
+            tabel = tabel.sort_index().reset_index().drop(columns="sorteer").rename(
+                columns={"Afd": "Afd.", "vaknummer": "Vak"})
+            st.dataframe(tabel, hide_index=True, use_container_width=True, column_config={
+                **{k: getalkolom(k, 1) for k in tabel.columns if k not in ("Tuin", "Afd.", "Vak", "Dagen")},
+                "Afd.": getalkolom("Afd.", 0), "Vak": getalkolom("Vak", 0),
+            })
+            st.caption("Liter per m² vak; bij een week per dag, anders het totaal en het aantal dagen met data.")
+
+
+with tab_tuinvgl:
+    st.subheader("⚖️ Tuinvergelijking", help=(
+        "Wat er in een periode in de kas gebeurde: tuin 1 naast tuin 3 en het totaal, alles per m². Het totaal "
+        "is gewogen naar m² (niet het gemiddelde van twee tuinen). Een kengetal zonder data toont –."))
+    _tv_laatste_priva = laatste_priva_ophaling()
+    if _tv_laatste_priva:
+        st.caption(f"Klimaat, watergift en energie bijgewerkt tot {format_datum(_tv_laatste_priva.date())} "
+                   f"{_tv_laatste_priva:%H:%M}.")
+    _tv_vandaag = date.today()
+    _tv_g = _tv_gegevens(vakstatus_dataversie())
+    _tv_tuinen = [(t["naam"], t["id"]) for t in sorted(TUINEN, key=lambda t: t["nummer"])]
+
+    _tv_k1, _tv_k2, _tv_k3 = st.columns([1.3, 1.2, 1.6])
+    _tv_periode = _tv_k1.segmented_control("Periode", list(perioden.PERIODEN), default="Week", key="tv_periode") \
+        or "Week"
+    _tv_sleutel_key = f"tv_sleutel_{_tv_periode}"
+    if _tv_sleutel_key not in st.session_state:
+        st.session_state[_tv_sleutel_key] = perioden.laatste_volledige(_tv_periode, _tv_vandaag)
+    _tv_huidig = perioden.periode_sleutel(_tv_vandaag, _tv_periode)[0]
+
+    def _tv_blader(stappen, sleutel_key=_tv_sleutel_key, periode=_tv_periode):
+        st.session_state[sleutel_key] = perioden.verschuif(st.session_state[sleutel_key], periode, stappen)
+
+    with _tv_k2:
+        st.markdown('<div style="font-size:14px;margin-bottom:0.3rem">Welke</div>', unsafe_allow_html=True)
+        _tv_b1, _tv_lbl, _tv_b2 = st.columns([1, 3, 1], vertical_alignment="center")
+        _tv_b1.button("◀", key="tv_terug", on_click=_tv_blader, args=(-1,), help="Vorige periode")
+        _tv_sleutel = st.session_state[_tv_sleutel_key]
+        _tv_lbl.markdown(f"**{perioden.periode_label(_tv_sleutel, _tv_periode)}**")
+        _tv_b2.button("▶", key="tv_verder", on_click=_tv_blader, args=(1,), help="Volgende periode",
+                      disabled=_tv_sleutel >= _tv_huidig)
+    _tv_vergelijk = _tv_k3.radio("Vergelijk met", ["vorige periode", "zelfde periode vorig jaar"], index=1,
+                                 horizontal=True, key="tv_vergelijk")
+    _tv_soort = "vorige" if _tv_vergelijk == "vorige periode" else "vorig_jaar"
+
+    _tv_van, _tv_tot, _tv_loopt = perioden.venster(_tv_sleutel, _tv_periode, _tv_vandaag)
+    _tv_v_van, _tv_v_tot, _tv_v_label = perioden.vergelijk_venster(_tv_sleutel, _tv_periode, _tv_soort, _tv_vandaag)
+    _tv_nu, _tv_n, _tv_bron = tuinvgl.tabelwaarden(_tv_g, _tv_tuinen, _tv_van, _tv_tot)
+    _tv_toen, _, _tv_bron_toen = tuinvgl.tabelwaarden(_tv_g, _tv_tuinen, _tv_v_van, _tv_v_tot)
+    st.caption(
+        f"{format_datum(_tv_van)} t/m {format_datum(_tv_tot)}" + (" (loopt nog, t/m gisteren)" if _tv_loopt else "")
+        + f". Kleine regel = verschil met {_tv_v_label}"
+        + (f" ({format_datum(_tv_v_van)} t/m {format_datum(_tv_v_tot)})" if _tv_loopt else "")
+        + "; – als er toen geen data was. Groen = beter, rood = slechter, grijs = neutraal; lichtgroen vak = "
+          "beste tuin. n = aantal dagen of teelten met data."
+    )
+
+    def _tv_verloop(k, sleutel=_tv_sleutel, periode=_tv_periode):
+        rijen = []
+        for stap in range(-11, 1):
+            s = perioden.verschuif(sleutel, periode, stap)
+            van, tot, _ = perioden.venster(s, periode, _tv_vandaag)
+            if tot < van:
+                continue
+            w, n, _ = tuinvgl.tabelwaarden(_tv_g, _tv_tuinen, van, tot)
+            for naam, _ in _tv_tuinen:
+                rijen.append({"Periode": perioden.periode_label(s, periode), "Tuin": naam,
+                              "Waarde": w[naam].get(k.sleutel), "n": n[naam].get(k.sleutel, 0)})
+        return verloop_frame(rijen)
+
+    vergelijkingstabel.toon(TV_KENGETALLEN, [n for n, _ in _tv_tuinen] + ["Totaal"], _tv_nu, _tv_toen, _tv_n,
+                            sleutel="tv_verloop", verloop=_tv_verloop,
+                            verloop_titel=f"Verloop over 12 {'weken' if _tv_periode == 'Week' else 'perioden'}",
+                            bron=_tv_bron, bron_toen=_tv_bron_toen)
+
+    # Trend geoogste stelen (uit de emmers), de laatste 12 perioden t/m de gekozen.
+    st.write("**Geoogste stelen per periode**")
+    _tv_eenheid = st.radio("Eenheid", ["Totaal", "Per bezette m²"], horizontal=True, key="tv_stelen_eenheid",
+                           label_visibility="collapsed")
+    _tv_trend = []
+    for _tv_stap in range(-11, 1):
+        _tv_s = perioden.verschuif(_tv_sleutel, _tv_periode, _tv_stap)
+        _tv_pv, _tv_pt, _ = perioden.venster(_tv_s, _tv_periode, _tv_vandaag)
+        if _tv_pt < _tv_pv:
+            continue
+        for _tv_naam, _tv_id in _tv_tuinen:
+            _tv_delen = tuinvgl.onderdelen(_tv_g, _tv_id, _tv_pv, _tv_pt).get("stelen_m2")
+            if _tv_delen:
+                _tv_trend.append({
+                    "Periode": perioden.periode_label(_tv_s, _tv_periode), "Tuin": _tv_naam,
+                    "Waarde": _tv_delen[0] if _tv_eenheid == "Totaal" else tuinvgl.waarde(_tv_delen, "stelen_m2"),
+                    "n": _tv_delen[2]})
+    if not _tv_trend:
+        st.caption("Nog geen emmers geregistreerd in deze perioden.")
+    else:
+        _tv_df = pd.DataFrame(_tv_trend)
+        _tv_enc = dict(
+            x=alt.X("Periode:O", sort=list(dict.fromkeys(_tv_df["Periode"])), title=None,
+                    axis=alt.Axis(labelAngle=-40 if _tv_periode == "Week" else 0)),
+            y=alt.Y("Waarde:Q", title="Geoogste stelen" if _tv_eenheid == "Totaal" else "Stelen per bezette m²"),
+            color=alt.Color("Tuin:N", title=None, legend=alt.Legend(orient="top")),
+            tooltip=["Periode", "Tuin", alt.Tooltip("Waarde:Q", format=",.0f" if _tv_eenheid == "Totaal" else ",.1f"),
+                     alt.Tooltip("n:Q", title="teelten")],
+        )
+        if _tv_eenheid != "Totaal":
+            _tv_enc["xOffset"] = alt.XOffset("Tuin:N")
+        st.altair_chart(alt.Chart(_tv_df).mark_bar().encode(**_tv_enc).properties(height=240),
+                        use_container_width=True)
+        st.caption("Uit de emmers (× 100 stelen): tuin 1 sinds 04-06-26, tuin 3 sinds 14-08-26. Totaal gestapeld; "
+                   "per bezette m² naast elkaar.")
+
+    _tv_uitklappers(_tv_g, _tv_van, _tv_tot, _tv_periode)
 
 # --- BEIDE TUINEN: het gecombineerde overzicht ---
 #
