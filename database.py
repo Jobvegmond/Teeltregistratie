@@ -321,9 +321,8 @@ def init_db():
             )
         """)
 
-        # Losse app-instellingen (sleutel/waarde). Bijv. 'planning_besteld_tot':
-        # concept-planningen met startdatum t/m die datum staan vast (planten
-        # besteld) en worden door plan_x_weken_vooruit niet meer aangepast.
+        # Losse app-instellingen (sleutel/waarde), bijv. de ontvangers van de
+        # stekmail ('stek_leverancier_email', 'stek_leverancier_cc').
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS app_instelling (
                 sleutel TEXT PRIMARY KEY,
@@ -651,14 +650,6 @@ def get_of_maak_teeltvak(vaknummer, naam=None, tuin_id=None):
             conn.commit()
 
     return teeltvak_id
-
-
-def get_alle_teeltvakken():
-    """Geeft een lijst van (id, naam, vaknummer) van alle teeltvakken terug."""
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT id, naam, vaknummer FROM teeltvakken ORDER BY vaknummer, naam")
-        return cursor.fetchall()
 
 
 # --- TEELTEN ---
@@ -2341,25 +2332,6 @@ def set_instelling(sleutel, waarde, gebruiker=None):
                   f"{sleutel} = {waarde}" if waarde is not None else f"{sleutel} gewist")
 
 
-def get_planning_besteld_tot():
-    """
-    Datum (date) t/m wanneer de planten besteld zijn: concept-planningen met
-    startdatum t/m deze datum staan vast. Geeft None als er niets is ingesteld.
-    """
-    waarde = get_instelling("planning_besteld_tot")
-    if not waarde:
-        return None
-    try:
-        return datetime.strptime(waarde, "%Y-%m-%d").date()
-    except ValueError:
-        return None
-
-
-def set_planning_besteld_tot(datum, gebruiker=None):
-    set_instelling("planning_besteld_tot",
-                   datum.isoformat() if datum else None, gebruiker=gebruiker)
-
-
 def get_planning_weekdoelen(tuin_id=None):
     """
     Handmatig ingevulde jaarplanning per plantweek. Geeft
@@ -2964,44 +2936,6 @@ def _planresultaat(weekdoelen, geen_geschiedenis, vak1_waarschuwingen=None, tuin
             weekdoel_waarschuwingen.append((week, doel, aantal))
 
     return resultaten, weekdoel_waarschuwingen, vak1_waarschuwingen or []
-
-
-def get_lege_vakken_per_week(aantal_weken=12):
-    """
-    Telt per week, vanaf de huidige week, hoeveel vakken geen actieve
-    (werkelijke) teelt hebben lopen — dus hoeveel grond er leeg ligt.
-    Kijkt alleen naar echte teelten, niet naar concept-planningen. Geeft
-    een lijst van tuples (jaar, week, aantal_leeg, [vaknummers]) terug.
-    """
-    vandaag = date.today()
-    start_week = vandaag - timedelta(days=vandaag.weekday())
-
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT v.vaknummer, t.datum_teelt_start, t.datum_oogst
-            FROM teelten t
-            JOIN teeltvakken v ON t.teeltvak_id = v.id
-        """)
-        rijen = cursor.fetchall()
-
-    resultaat = []
-    for i in range(aantal_weken):
-        week_start = start_week + timedelta(weeks=i)
-        week_eind = week_start + timedelta(days=6)
-
-        bezet = set()
-        for vak, start, oogst in rijen:
-            start_datum = datetime.strptime(start, "%Y-%m-%d").date()
-            oogst_datum = datetime.strptime(oogst, "%Y-%m-%d").date() if oogst else None
-            if start_datum <= week_eind and (oogst_datum is None or oogst_datum >= week_start):
-                bezet.add(vak)
-
-        leeg = sorted(set(range(1, 40)) - bezet)
-        jaar, week, _ = week_start.isocalendar()
-        resultaat.append((jaar, week, len(leeg), leeg))
-
-    return resultaat
 
 
 def get_strokenplanning(weken_terug=8, tuin_id=None):
