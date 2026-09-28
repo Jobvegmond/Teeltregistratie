@@ -2112,6 +2112,33 @@ def get_vergelijking_data():
             "energie": energie, "gas": gas, "water": water}
 
 
+def get_teeltvergelijking_data():
+    """
+    Alle teelten van alle tuinen voor de Teeltvergelijking: de kengetallen per
+    teelt (get_teeltkengetallen, één query per tuin) aangevuld met tuin_id,
+    Florgib-datum, stekbeoordeling en de Florgib-datum uit teelt_historie
+    (florgib_historie) voor teelten waarbij die in de app ontbreekt.
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM tuinen ORDER BY nummer")
+        tuin_ids = [r[0] for r in cursor.fetchall()]
+        extra = _df(cursor, """
+            SELECT t.id, t.datum_half, s.beoordeling, s.wortel, s.plantmaat, s.uniformiteit,
+                   h.florgib_datum AS florgib_historie
+            FROM teelten t
+            LEFT JOIN stekbeoordelingen s ON s.teelt_id = t.id
+            LEFT JOIN teelt_historie h ON h.teelt_id = t.id
+        """)
+    per_id = {int(r["id"]): r for r in extra.to_dict("records")}
+    teelten = []
+    for tuin_id in tuin_ids:
+        for k in get_teeltkengetallen(tuin_id):
+            teelten.append({**k, **{s: v for s, v in per_id.get(k["id"], {}).items() if s != "id"},
+                            "tuin_id": tuin_id})
+    return teelten
+
+
 def get_teelthistorie_data():
     """
     De leerdata van het teeltmodel in twee query's: teelt_historie (met tuin_id)
