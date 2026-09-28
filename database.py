@@ -8,7 +8,7 @@ import pandas as pd
 import psycopg2
 from psycopg2 import pool as psycopg2_pool
 
-from config import LICHTLIJN_BASIS, LICHTLIJN_FACTOR
+from config import GAS_CALORISCHE_WAARDE_MJ_PER_M3, LICHTLIJN_BASIS, LICHTLIJN_FACTOR  # noqa: F401
 from logic.lichtlijn import t_ideaal
 from utils.format import fmt_verschil
 
@@ -793,7 +793,7 @@ def markeer_teelt_afgerond(teelt_id, datum_oogst, gebruiker=None):
         )
         conn.commit()
 
-    log_wijziging(gebruiker, "gewijzigd", "teelt", teelt_id, f"Teelt afgerond op {datum_oogst}")
+    log_wijziging(gebruiker, "gewijzigd", "teelt", teelt_id, f"Vak afgerond op {datum_oogst}")
 
 
 def get_alle_teelten_voor_selectie(tuin_id=None):
@@ -956,9 +956,9 @@ def delete_teelt(teelt_id, gebruiker=None):
         conn.commit()
 
     if teelt:
-        omschrijving = f"Teelt verwijderd: vak {teelt['vaknummer']}, code {teelt['code'] or '-'}"
+        omschrijving = f"Vak verwijderd: vak {teelt['vaknummer']}, code {teelt['code'] or '-'}"
     else:
-        omschrijving = "Teelt verwijderd"
+        omschrijving = "Vak verwijderd"
     log_wijziging(gebruiker, "verwijderd", "teelt", teelt_id, omschrijving)
 
 
@@ -1514,10 +1514,9 @@ ENERGIE_EENHEID_NAAR_MJ = 1000  # ruwe waarde staat in GJ
 # Pulsteller-index: idx_1 = 2 is de hoofdwarmte (GJ/dag, energiedata_dag),
 # idx_1 = 1 is de gasketel (gasdata_dag) — dat kanaal heeft een gasmeter als
 # pulsgever en levert dus m3/dag, geen GJ (correctie van Job, sept 2026).
-# Calorische waarde: bovenwaarde Groningen-gas, geen rendementscorrectie.
+# Calorische waarde: GAS_CALORISCHE_WAARDE_MJ_PER_M3 in config.py.
 PULSTELLER_IDX_WARMTE = 2
 PULSTELLER_IDX_GAS = 1
-GAS_CALORISCHE_WAARDE_MJ_PER_M3 = 31.65
 
 # Waar warmte en gas per tuin in de export staan: (label, type_1, idx_1) en
 # de factor naar MJ. Tuin 1 heeft een andere installatie dan tuin 3: de

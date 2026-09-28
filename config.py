@@ -10,6 +10,11 @@ rekenmodules in logic/ en het scherm lezen ze hieruit.
 LICHTLIJN_BASIS = 11.7
 LICHTLIJN_FACTOR = 0.0072
 
+# --- ENERGIE ---
+# Calorische waarde van aardgas (bovenwaarde Groningen-gas, geen rendementscorrectie),
+# om m³ gas om te rekenen naar MJ.
+GAS_CALORISCHE_WAARDE_MJ_PER_M3 = 31.65
+
 # --- AFDELINGEN ---
 # Volgorde waarin de afdelingen overal getoond worden (teeltvolgorde), per
 # tuinnummer. Een afdeling die hier niet staat komt er achteraan.

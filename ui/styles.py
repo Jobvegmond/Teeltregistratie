@@ -20,10 +20,11 @@ table.vt {
     width: 100%; border-collapse: separate; border-spacing: 0; table-layout: fixed;
     font-variant-numeric: tabular-nums;
 }
-table.vt col.vt-col-onderwerp { width: 220px; }
+table.vt col.vt-col-onderwerp { width: 200px; }
 table.vt th, table.vt td {
-    padding: 5px 16px; text-align: right; vertical-align: top;
+    padding: 5px 14px; text-align: right; vertical-align: top;
     border-bottom: 1px solid rgba(128, 128, 128, 0.18);
+    overflow-wrap: anywhere;
 }
 table.vt thead th {
     position: sticky; top: 3.75rem; z-index: 2; background: var(--vt-bg);
@@ -35,25 +36,27 @@ table.vt th:first-child, table.vt td:first-child {
 }
 table.vt thead th:first-child { z-index: 3; }
 table.vt tbody tr:nth-child(even of .vt-rij) td { background-image: linear-gradient(rgba(128, 128, 128, 0.035), rgba(128, 128, 128, 0.035)); }
-table.vt td.vt-onderwerp { font-size: 14px; cursor: help; padding-top: 7px; }
+table.vt td.vt-onderwerp { font-size: 14px; cursor: help; padding-top: 7px; overflow-wrap: normal; }
 table.vt td.vt-onderwerp .vt-i { font-size: 11px; opacity: 0.45; margin-left: 4px; }
-table.vt .vt-waarde { font-size: 15.5px; font-weight: 600; line-height: 1.15; white-space: nowrap; }
-table.vt .vt-verschil { font-size: 12px; line-height: 1.1; margin-top: 2px; white-space: nowrap; }
-table.vt .vt-n { opacity: 0.55; margin-left: 6px; }
+table.vt .vt-waarde { font-size: 15.5px; font-weight: 600; line-height: 1.2; }
+table.vt .vt-toelichting { font-size: 12px; line-height: 1.15; opacity: 0.6; margin-top: 1px; }
+table.vt .vt-vergelijk { font-size: 12px; line-height: 1.15; margin-top: 2px; }
+table.vt .vt-vergelijk-tekst { opacity: 0.6; }
+table.vt .vt-waarschuwing { font-size: 12px; margin-left: 4px; color: #c98a00; font-weight: 400; }
+table.vt sup.vt-noot-teken { font-size: 10px; font-weight: 400; opacity: 0.55; margin-left: 3px; }
 table.vt th.vt-totaal, table.vt td.vt-totaal {
     border-left: 1px solid rgba(128, 128, 128, 0.35);
     background-image: linear-gradient(rgba(128, 128, 128, 0.06), rgba(128, 128, 128, 0.06));
 }
 table.vt td.vt-beste { background-image: linear-gradient(rgba(46, 160, 67, 0.13), rgba(46, 160, 67, 0.13)); }
 table.vt tr.vt-groep td {
-    padding: 16px 16px 4px; font-size: 11px; font-weight: 700; letter-spacing: 0.07em;
+    padding: 16px 14px 4px; font-size: 11px; font-weight: 700; letter-spacing: 0.07em;
     text-transform: uppercase; opacity: 0.6; border-bottom: none; background: none;
 }
 .vt-beter { color: #2e9a44; }
 .vt-slechter { color: #d64541; }
 .vt-neutraal, .vt-leeg { opacity: 0.55; }
 .vt-noot { font-size: 12px; opacity: 0.7; margin: 2px 0 6px; }
-.vt-noot sup, table.vt sup { font-size: 10px; margin-left: 1px; }
 """
 
 

@@ -49,54 +49,78 @@ def gegevens(emmers_vanaf="2026-09-01"):
 TUINEN = [("Tuin 1", 1), ("Tuin 3", 3)]
 
 
+def uitkomst(g=None, van=VAN, tot=TOT):
+    u = tv.tabelwaarden(g or gegevens(), TUINEN, van, tot)
+    return u["waarden"], u["n"], u
+
+
 class TestTuinvergelijking(unittest.TestCase):
-    def test_bezetting_en_geplant(self):
-        w, n, _ = tv.tabelwaarden(gegevens(), TUINEN, VAN, TOT)
+    def test_bezetting(self):
+        w, n, _ = uitkomst()
         # Tuin 1: vak 1 7 dagen + vak 2 4 dagen = 11 × 800 m² van 7 × 1600 m²
         self.assertAlmostEqual(w["Tuin 1"]["bezetting"], 11 * 800 / (7 * 1600) * 100)
         # Tuin 3: vak 1 geoogst op 25-09, dus 5 dagen × 500 m² van 7 × 1000 m²
         self.assertAlmostEqual(w["Tuin 3"]["bezetting"], 5 * 500 / 7000 * 100)
         # Totaal gewogen naar m²: (8800 + 2500) / (7 × 2600)
         self.assertAlmostEqual(w["Totaal"]["bezetting"], (8800 + 2500) / (7 * 2600) * 100)
-        self.assertEqual((w["Tuin 1"]["geplant"], n["Tuin 1"]["geplant"]), (800.0, 1))
+
+    def test_geplant_in_planten_met_vakken(self):
+        w, n, u = uitkomst()
+        self.assertEqual(w["Tuin 1"]["geplant"], 1000.0)
+        self.assertEqual((n["Tuin 1"]["geplant"], u["verwacht"]["Tuin 1"]["geplant"]), (1, 1))
         self.assertEqual(w["Tuin 3"]["geplant"], 0.0)
-        self.assertEqual((w["Totaal"]["geplant"], n["Totaal"]["geplant"]), (800.0, 1))   # som, geen gemiddelde
+        self.assertEqual(w["Totaal"]["geplant"], 1000.0)                  # som, geen gemiddelde
 
     def test_uitval_gewogen_naar_m2(self):
-        w, n, _ = tv.tabelwaarden(gegevens(), TUINEN, VAN, TOT)
+        w, n, u = uitkomst()
         self.assertAlmostEqual(w["Tuin 1"]["uitval"], 10.0)
         self.assertAlmostEqual(w["Tuin 3"]["uitval"], 20.0)
         self.assertAlmostEqual(w["Totaal"]["uitval"], (10 * 800 + 20 * 500) / 1300)
-        self.assertEqual(n["Totaal"]["uitval"], 2)
+        self.assertEqual((n["Totaal"]["uitval"], u["verwacht"]["Totaal"]["uitval"]), (2, 2))
 
     def test_klimaat_gewogen_naar_afdeling_m2(self):
-        w, n, _ = tv.tabelwaarden(gegevens(), TUINEN, VAN, TOT)
+        w, n, u = uitkomst()
         self.assertAlmostEqual(w["Tuin 3"]["temp"], 19.5)
         # Tuin 1 afd. 1 (1600 m², 20 °C) en tuin 3 (2 × 500 m², 19 en 20 °C)
         self.assertAlmostEqual(w["Totaal"]["temp"], (20 * 1600 + 19 * 500 + 20 * 500) / 2600)
         self.assertAlmostEqual(w["Tuin 1"]["afwijking"], 20.0 - t_ideaal(1000.0))
-        self.assertEqual(n["Totaal"]["temp"], 7)                  # dagen, niet opgeteld
-        self.assertNotIn("temp_dag", w["Tuin 3"])                 # geen data → ontbreekt, geen 0
+        self.assertEqual((n["Totaal"]["temp"], u["verwacht"]["Totaal"]["temp"]), (7, 7))   # dagen, niet opgeteld
+        self.assertNotIn("temp_dag", w["Tuin 3"])                         # geen data → ontbreekt, geen 0
 
     def test_energie_per_m2_kas_en_totaal_op_een_tuin(self):
-        w, _, _ = tv.tabelwaarden(gegevens(), TUINEN, VAN, TOT)
+        w, _, u = uitkomst()
         self.assertAlmostEqual(w["Tuin 1"]["warmte"], 7 * 1600 / 1600)
         self.assertNotIn("warmte", w["Tuin 3"])
-        self.assertAlmostEqual(w["Totaal"]["warmte"], 7.0)        # alleen tuin 1 draagt bij
+        self.assertAlmostEqual(w["Totaal"]["warmte"], 7.0)                # alleen tuin 1 draagt bij
+        self.assertEqual(u["bron"]["warmte"], frozenset({"Tuin 1"}))
         self.assertAlmostEqual(w["Tuin 3"]["gas"], 700 / 1000)
         self.assertAlmostEqual(w["Tuin 3"]["water"], 4 * 500 / 1000)
+        self.assertNotIn("energie", w["Tuin 1"])                          # warmte zonder gas: geen totaal
 
-    def test_stelen_alleen_als_emmerregistratie_al_liep(self):
-        w, n, _ = tv.tabelwaarden(gegevens(), TUINEN, VAN, TOT)
-        # 8 emmers in de week = 800 stelen, gemiddeld 11×800/7 m² bezet
-        self.assertAlmostEqual(w["Tuin 1"]["stelen_m2"], 800 / (8800 / 7))
-        self.assertNotIn("stelen_m2", w["Tuin 3"])                # tuin 3 registreerde nog geen emmers
-        w, _, _ = tv.tabelwaarden(gegevens(emmers_vanaf="2026-09-23"), TUINEN, VAN, TOT)
-        self.assertNotIn("stelen_m2", w["Tuin 1"])                # registratie begon midden in de week
+    def test_energie_totaal_warmte_plus_gas(self):
+        g = gegevens()
+        g.gas = pd.concat([g.gas, pd.DataFrame([{"tuin_id": 1, "datum": "2026-09-21", "gas_m3": 10.0}])])
+        w, n, _ = uitkomst(g)
+        self.assertAlmostEqual(w["Tuin 1"]["energie"], (1600 + 10 * tv.GAS_CALORISCHE_WAARDE_MJ_PER_M3) / 1600)
+        self.assertEqual(n["Tuin 1"]["energie"], 1)
+
+    def test_geoogst_alleen_als_emmerregistratie_al_liep(self):
+        w, n, u = uitkomst()
+        self.assertEqual((w["Tuin 1"]["geoogst"], n["Tuin 1"]["geoogst"]), (800.0, 1))
+        self.assertNotIn("geoogst", w["Tuin 3"])                          # tuin 3 registreerde nog geen emmers
+        self.assertEqual(u["ontbreekt"]["Tuin 3"]["geoogst"], "Nog geen emmers geregistreerd")
+        w, _, u = uitkomst(gegevens(emmers_vanaf="2026-09-23"))
+        self.assertNotIn("geoogst", w["Tuin 1"])                          # registratie begon midden in de week
+        self.assertEqual(u["ontbreekt"]["Tuin 1"]["geoogst"], "Emmers geregistreerd sinds 23-09-26")
+
+    def test_uitleg_bij_ontbrekende_registratie(self):
+        _, _, u = uitkomst(van=date(2026, 10, 5), tot=date(2026, 10, 11))
+        self.assertEqual(u["ontbreekt"]["Tuin 1"]["warmte"], "Warmte geregistreerd t/m 27-09-26")
+        self.assertEqual(u["ontbreekt"]["Tuin 3"]["warmte"], "Geen warmte geregistreerd")
 
     def test_bezetting_pas_vanaf_eerste_teelt(self):
         # Tuin 1 begon op 01-08: in juli–augustus telt alleen augustus mee.
-        w, n, _ = tv.tabelwaarden(gegevens(), TUINEN, date(2026, 7, 1), date(2026, 8, 31))
+        w, n, _ = uitkomst(van=date(2026, 7, 1), tot=date(2026, 8, 31))
         self.assertEqual(n["Tuin 1"]["bezetting"], 31)
         self.assertAlmostEqual(w["Tuin 1"]["bezetting"], 50.0)   # vak 1 van de 2 bezet
 
@@ -104,15 +128,15 @@ class TestTuinvergelijking(unittest.TestCase):
         g = gegevens()
         g.water = pd.concat([g.water, pd.DataFrame(
             [{"tuin_id": 1, "vaknummer": 1, "datum": f"2026-09-{d}", "liter_per_m2": 2.0} for d in range(21, 28)])])
-        w, n, bron = tv.tabelwaarden(g, TUINEN, VAN, TOT)
+        w, n, u = uitkomst(g)
         # Tuin 1 heeft 7 dagen water, tuin 3 maar 1: het totaal rust alleen op tuin 1.
-        self.assertEqual(bron["water"], frozenset({"Tuin 1"}))
+        self.assertEqual(u["bron"]["water"], frozenset({"Tuin 1"}))
         self.assertAlmostEqual(w["Totaal"]["water"], w["Tuin 1"]["water"])
 
     def test_tuin_bestond_nog_niet(self):
-        w, _, _ = tv.tabelwaarden(gegevens(), TUINEN, date(2025, 9, 22), date(2025, 9, 28))
+        w, _, u = uitkomst(van=date(2025, 9, 22), tot=date(2025, 9, 28))
         self.assertNotIn("bezetting", w["Tuin 1"])
-        self.assertNotIn("geplant", w["Tuin 1"])
+        self.assertEqual(u["ontbreekt"]["Tuin 1"]["geplant"], "In de app sinds 01-08-26")
 
 
 if __name__ == "__main__":

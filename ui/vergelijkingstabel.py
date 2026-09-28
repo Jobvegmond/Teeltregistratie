@@ -1,14 +1,19 @@
 """
 De vergelijkingstabel: rijen = kengetallen (gegroepeerd), kolommen = de tuinen
-en het totaal. In elke cel de waarde en daaronder klein het verschil met de
-vergelijking, gekleurd naar betekenis (logic/kengetallen.RICHTING). Onder de
-tabel knopjes die per kengetal het verloop over de laatste perioden openen.
+en het totaal. Per cel:
+- de waarde, met ⚠ als er minder data is dan verwacht en ⏳ als er een
+  prognose of een lopende teelt in zit;
+- eventueel een toelichting op een eigen kleine regel ("3 vakken");
+- de vergelijkingswaarde met label ("2025: 16,8 °C"), met een groen/rood
+  pijltje waar "beter" vastligt (logic/kengetallen.RICHTING).
+Het verschil en de dekking ("5 van 7 dagen") staan in de tooltip van de cel.
+Onder de tabel knopjes die per kengetal het verloop openen.
 
 Gebruikt door de Tuinvergelijking en de Teeltvergelijking; de opmaak staat in
 ui/styles.py.
 """
 import html
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable, Optional
 
 import altair as alt
@@ -19,6 +24,7 @@ from logic import kengetallen as kg
 from utils.format import LEEG, fmt_getal, fmt_verschil
 
 TOTAAL = "Totaal"
+NOOTTEKENS = "†‡§¶"
 
 
 @dataclass(frozen=True)
@@ -30,12 +36,36 @@ class Kengetal:
     decimalen: int = 0
     uitleg: str = ""
     teken: bool = False                 # waarde altijd met + of − (bijv. afwijking lichtlijn)
-    n_eenheid: Optional[str] = None     # "d", "teelten": toon n in de verschilregel
+    n_eenheid: Optional[str] = None     # "dagen", "vakken": waar n over gaat (tooltip, ⚠)
     formaat: Optional[Callable] = None  # eigen weergave: formaat(waarde, n) → tekst
-    verschil: bool = True               # False: geen verschilregel (bijv. een datum)
+    verschil: bool = True               # False: tekstwaarde (bijv. een datumbereik), geen pijltje/verloop
 
 
-def _waarde_tekst(k, waarde, n):
+@dataclass
+class Tabeldata:
+    """
+    Alles wat de tabel per cel nodig heeft, steeds als {kolom: {sleutel: …}}.
+    - nu / toen: de waarden (toen = de vergelijking, of None)
+    - n / n_toen: aantal datapunten; verwacht: hoeveel het er hadden moeten zijn (⚠ bij minder)
+    - bron / bron_toen: {sleutel: tuinen die in het totaal meetellen}
+    - markering: {kolom: {sleutels}} met een prognose of lopende teelt (⏳)
+    - toelichting: kleine regel onder de waarde; ontbreekt: tooltip bij "–"
+    - label_toen: label van de vergelijking ("2025", "wk 38", "wk 33 '25")
+    """
+    nu: dict
+    toen: Optional[dict] = None
+    n: dict = field(default_factory=dict)
+    n_toen: dict = field(default_factory=dict)
+    verwacht: dict = field(default_factory=dict)
+    bron: Optional[dict] = None
+    bron_toen: Optional[dict] = None
+    markering: dict = field(default_factory=dict)
+    toelichting: dict = field(default_factory=dict)
+    ontbreekt: dict = field(default_factory=dict)
+    label_toen: str = ""
+
+
+def waarde_tekst(k, waarde, n=None):
     if k.formaat:
         return k.formaat(waarde, n)
     if waarde is None:
@@ -43,39 +73,42 @@ def _waarde_tekst(k, waarde, n):
     return fmt_verschil(waarde, k.decimalen, k.eenheid) if k.teken else fmt_getal(waarde, k.decimalen, k.eenheid)
 
 
-def _verschil_html(k, waarde, vorig, n):
-    """De kleine regel onder de waarde: pijl + verschil, gekleurd naar betekenis, en eventueel n."""
-    stukken = []
-    if k.verschil:
-        verschil = waarde - vorig if waarde is not None and vorig is not None else None
-        klasse = kg.verschil_klasse(verschil, kg.RICHTING.get(k.sleutel, 0), k.decimalen)
-        if verschil is None:
-            stukken.append(f'<span class="vt-leeg">{LEEG}</span>')
-        else:
-            afgerond = round(verschil, k.decimalen)
-            pijl = "↑ " if afgerond > 0 else "↓ " if afgerond < 0 else ""
-            stukken.append(f'<span class="vt-{klasse}">{pijl}{fmt_verschil(verschil, k.decimalen, k.eenheid)}</span>')
-    if k.n_eenheid and n:
-        stukken.append(f'<span class="vt-n">n {fmt_getal(n)}{" " + k.n_eenheid if k.n_eenheid else ""}</span>')
-    return f'<div class="vt-verschil">{"".join(stukken) or "&nbsp;"}</div>'
+def _vergelijk_html(k, waarde, vorig, n_vorig, label):
+    """De kleine regel: label + vergelijkingswaarde, met een gekleurd pijltje waar beter vastligt."""
+    if vorig is None or not label:
+        return ""
+    pijl, klasse = "", "neutraal"
+    richting = kg.RICHTING.get(k.sleutel, 0)
+    if k.verschil and waarde is not None and richting:
+        afgerond = round(waarde - vorig, k.decimalen)
+        klasse = kg.verschil_klasse(waarde - vorig, richting, k.decimalen)
+        pijl = "▲ " if afgerond > 0 else "▼ " if afgerond < 0 else ""
+    return (f'<div class="vt-vergelijk"><span class="vt-{klasse}">{pijl}</span>'
+            f'<span class="vt-vergelijk-tekst">{html.escape(label)}: {waarde_tekst(k, vorig, n_vorig)}</span></div>')
 
 
-def tabel_html(kengetallen, kolommen, nu, toen=None, n=None, bron=None, bron_toen=None, markering=None):
+def _tooltip(k, waarde, vorig, n, verwacht, ontbreekt, label):
+    delen = []
+    if waarde is None:
+        delen.append(ontbreekt or "Geen data")
+    if k.verschil and waarde is not None and vorig is not None:
+        delen.append(f"Verschil met {label}: {fmt_verschil(waarde - vorig, k.decimalen, k.eenheid)}")
+    if k.n_eenheid and n is not None and waarde is not None:
+        delen.append(f"{fmt_getal(n)} van {fmt_getal(verwacht)} {k.n_eenheid} met data" if verwacht
+                     else f"{fmt_getal(n)} {k.n_eenheid}")
+    return " · ".join(delen)
+
+
+def tabel_html(kengetallen, kolommen, d):
     """
-    De tabel als HTML.
-    - kolommen: bijv. ["Tuin 1", "Tuin 3", "Totaal"]; "Totaal" is het gewogen totaal.
-    - nu / toen: {kolom: {sleutel: waarde}} (toen = de vergelijking, of None)
-    - n: {kolom: {sleutel: aantal}} (optioneel)
-    - bron / bron_toen: {sleutel: tuinen die in het totaal meetellen}; zonder
-      bron: de tuinen met een waarde
-    - markering: {kolom: {sleutels}} waarin een prognose zit (⏳ achter de waarde)
-    Een kengetal zonder waarde toont "–". Rust het totaal op één tuin, dan een
-    voetnoot; een verschil bij het totaal alleen als toen dezelfde tuinen bijdroegen.
+    De tabel als HTML. kolommen: bijv. ["Tuin 1", "Tuin 3", "Totaal"]; d: Tabeldata.
+    Een kengetal zonder waarde toont "–" (reden in de tooltip). Rust het totaal
+    op één tuin, dan een voetnoot (†); het totaal wordt alleen vergeleken als
+    toen dezelfde tuinen bijdroegen.
     """
     tuinen = [k for k in kolommen if k != TOTAAL]
-    nu_tuinen = {t: nu.get(t, {}) for t in tuinen}
-    toen_tuinen = {t: (toen or {}).get(t, {}) for t in tuinen}
-    n = n or {}
+    nu_tuinen = {t: d.nu.get(t, {}) for t in tuinen}
+    toen_tuinen = {t: (d.toen or {}).get(t, {}) for t in tuinen}
     voetnoten = {}
     rijen, groep = [], None
     for k in kengetallen:
@@ -86,46 +119,56 @@ def tabel_html(kengetallen, kolommen, nu, toen=None, n=None, bron=None, bron_toe
         winnaar = kg.beste({t: nu_tuinen[t].get(k.sleutel) for t in tuinen}, richting, k.decimalen)
         cellen = []
         for kolom in kolommen:
-            waarde = nu.get(kolom, {}).get(k.sleutel)
-            aantal = n.get(kolom, {}).get(k.sleutel)
+            def haal(bron_dict):
+                return bron_dict.get(kolom, {}).get(k.sleutel)
+
+            waarde, n, verwacht = haal(d.nu), haal(d.n), haal(d.verwacht)
             noot = ""
             if kolom == TOTAAL:
-                mee = bron.get(k.sleutel, frozenset()) if bron is not None else kg.bijdragers(nu_tuinen, k.sleutel)
+                mee = (d.bron or {}).get(k.sleutel) if d.bron is not None else kg.bijdragers(nu_tuinen, k.sleutel)
+                mee = mee or frozenset()
                 if waarde is not None and k.verschil and len(mee) == 1 and len(tuinen) > 1:
-                    noot = f"<sup>{voetnoten.setdefault(next(iter(mee)), len(voetnoten) + 1)}</sup>"
-                if bron is not None:
-                    vergelijkbaar = toen is not None and bool(mee) and mee == (bron_toen or {}).get(k.sleutel)
+                    teken = voetnoten.setdefault(next(iter(mee)), NOOTTEKENS[len(voetnoten) % len(NOOTTEKENS)])
+                    noot = f'<sup class="vt-noot-teken">{teken}</sup>'
+                if d.bron is not None:
+                    vergelijkbaar = d.toen is not None and bool(mee) and mee == (d.bron_toen or {}).get(k.sleutel)
                 else:
-                    vergelijkbaar = toen is not None and kg.totaal_vergelijkbaar(
+                    vergelijkbaar = d.toen is not None and kg.totaal_vergelijkbaar(
                         nu_tuinen, toen_tuinen, k.sleutel, {t: True for t in tuinen})
-                vorig = toen.get(kolom, {}).get(k.sleutel) if vergelijkbaar else None
+                vorig = haal(d.toen) if vergelijkbaar else None
             else:
-                vorig = (toen or {}).get(kolom, {}).get(k.sleutel)
+                vorig = haal(d.toen or {})
+            onvolledig = (waarde is not None and verwacht is not None and n is not None and n < verwacht)
+            markering = " ⏳" if k.sleutel in d.markering.get(kolom, ()) and waarde is not None else ""
+            toelichting = haal(d.toelichting)
+            titel = _tooltip(k, waarde, vorig, n, verwacht, haal(d.ontbreekt), d.label_toen)
             klassen = " ".join(c for c in ("vt-totaal" if kolom == TOTAAL else "",
                                            "vt-beste" if kolom == winnaar else "") if c)
             cellen.append(
-                f'<td class="{klassen}"><div class="vt-waarde">{_waarde_tekst(k, waarde, aantal)}{noot}'
-                f'{" ⏳" if k.sleutel in (markering or {}).get(kolom, ()) and waarde is not None else ""}</div>'
-                f"{_verschil_html(k, waarde, vorig, aantal)}</td>"
+                f'<td class="{klassen}" title="{html.escape(titel)}">'
+                f'<div class="vt-waarde">{waarde_tekst(k, waarde, n)}'
+                f'{"<span class=vt-waarschuwing>⚠</span>" if onvolledig else ""}{markering}{noot}</div>'
+                + (f'<div class="vt-toelichting">{html.escape(toelichting)}</div>' if toelichting else "")
+                + _vergelijk_html(k, waarde, vorig, haal(d.n_toen), d.label_toen)
+                + "</td>"
             )
         rijen.append(f'<tr class="vt-rij"><td class="vt-onderwerp" title="{html.escape(k.uitleg)}">'
                      f'{html.escape(k.label)}<span class="vt-i">ⓘ</span></td>{"".join(cellen)}</tr>')
     kop = "".join(f'<th class="{"vt-totaal" if k == TOTAAL else ""}">{html.escape(k)}</th>' for k in kolommen)
     kolgroep = '<colgroup><col class="vt-col-onderwerp">' + "<col>" * len(kolommen) + "</colgroup>"
-    noten = " · ".join(f"<sup>{nr}</sup> alleen {html.escape(t)}" for t, nr in voetnoten.items())
+    noten = " · ".join(f"{teken} alleen {html.escape(t)}" for t, teken in voetnoten.items())
     return (f'<div class="vt-wrap"><table class="vt">{kolgroep}<thead><tr><th></th>{kop}</tr></thead>'
             f'<tbody>{"".join(rijen)}</tbody></table>'
             + (f'<div class="vt-noot">{noten}</div>' if noten else "") + "</div>")
 
 
-def toon(kengetallen, kolommen, nu, toen=None, n=None, sleutel="vt", verloop=None, verloop_titel="Verloop",
-         bron=None, bron_toen=None, markering=None):
+def toon(kengetallen, kolommen, d, sleutel="vt", verloop=None, verloop_titel="Verloop"):
     """
     Tekent de tabel en, als `verloop` gegeven is, eronder knopjes per kengetal.
     verloop(kengetal) → DataFrame met Periode, Tuin, Waarde, n (in volgorde);
     een klik opent een venster met per tuin een lijn en n per periode.
     """
-    st.markdown(tabel_html(kengetallen, kolommen, nu, toen, n, bron, bron_toen, markering), unsafe_allow_html=True)
+    st.markdown(tabel_html(kengetallen, kolommen, d), unsafe_allow_html=True)
     if verloop is None:
         return
     # Een verloop alleen voor getallen (niet voor bijv. een datumbereik).

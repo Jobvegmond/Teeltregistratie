@@ -83,6 +83,26 @@ def vergelijk_venster(sleutel, periode_naam, soort, vandaag):
     vergelijk je een halve week met een hele.
     """
     van, tot, _ = venster(sleutel, periode_naam, vandaag)
-    ander = verschuif(sleutel, periode_naam, -1) if soort == "vorige" else (sleutel[0] - 1,) + tuple(sleutel[1:])
+    ander = vergelijk_sleutel(sleutel, periode_naam, soort)
     v_van, v_eind = periode_grenzen(ander, periode_naam)
     return v_van, min(v_eind, v_van + (tot - van)), periode_label(ander, periode_naam)
+
+
+def vergelijk_sleutel(sleutel, periode_naam, soort):
+    """De vergelijkingsperiode: "vorige" = de periode ervoor, "vorig_jaar" = dezelfde een jaar eerder."""
+    return verschuif(sleutel, periode_naam, -1) if soort == "vorige" else (sleutel[0] - 1,) + tuple(sleutel[1:])
+
+
+def kort_label(sleutel, periode_naam, soort):
+    """
+    Kort label van de vergelijkingsperiode voor de kleine regel: bij vorig jaar
+    het jaartal ("2025"), anders de periode zelf ("wk 38", "aug", "K2", "2025").
+    """
+    ander = vergelijk_sleutel(sleutel, periode_naam, soort)
+    if soort != "vorige" or periode_naam == "Jaar":
+        return str(ander[0])
+    if periode_naam == "Week":
+        return f"wk {ander[1]}"
+    if periode_naam == "Maand":
+        return MAANDNAMEN_KORT[ander[1] - 1]
+    return f"K{ander[1]}"
