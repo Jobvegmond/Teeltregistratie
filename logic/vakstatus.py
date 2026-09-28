@@ -26,14 +26,14 @@ Prognose-oogst
 from datetime import date, datetime, timedelta
 
 from config import (  # noqa: F401  (drempels ook bereikbaar als vs.NAAM voor het scherm)
-    KLIMAAT_MIN_DAGEN, KLIMAAT_TEMP_MARGE, KLIMAAT_VENSTER_DAGEN, LENGTE_ORANJE_PCT, LENGTE_ROOD_PCT,
+    FLORGIB_ACHTERSTAND_DAGEN, LENGTE_ORANJE_PCT, LENGTE_ROOD_PCT, MELDING_C_DREMPEL, MELDING_GRENS_MARGE_DAGEN,
     MAX_AANDACHTSPUNTEN, MAX_PROGNOSE_DAGEN, MIN_REFERENTIES, OOGST_ROOD_DAGEN, REF_WEEKVENSTER,
     REF_WEEKVENSTER_BREED, STEK_CIJFER_GRENS, STEK_GOED, STEK_RECENT_DAGEN, WATER_DROOG_DAGEN,
 )
-from utils.format import fmt_getal, fmt_kort, fmt_verschil
+from utils.format import fmt_kort, fmt_verschil
 
 # Volgorde = ernst in de lijst aandachtspunten (laag getal eerst).
-ERNST = {"rood": 1, "klimaat": 2, "data": 3, "water": 3, "oogst": 4, "stek": 5, "oranje": 6}
+ERNST = {"correctie": 1, "florgib": 2, "oogst": 3, "water": 4, "data": 5, "stek": 6}
 
 REFERENTIE_NIVEAUS = {
     "eigen": f"plantweek ±{REF_WEEKVENSTER}, eigen tuin",
@@ -221,20 +221,6 @@ def beoordeel_teelt(teelt, kandidaten, vandaag, plan_oogst):
 
 # --- AANDACHTSPUNTEN ---
 
-def klimaat_afwijking(dagen, ideaal):
-    """
-    `dagen`: lijst (datum, temp_24h, lichtsom) van één afdeling. Kijkt naar de
-    laatste KLIMAAT_VENSTER_DAGEN dagen met data en telt hoe vaak de
-    etmaaltemperatuur meer dan KLIMAAT_TEMP_MARGE boven of onder ideaal(lichtsom)
-    lag. Geeft (boven, onder, aantal dagen).
-    """
-    bruikbaar = sorted((d for d in dagen if _getal(d[1]) is not None and _getal(d[2]) is not None),
-                       key=lambda d: als_datum(d[0]))[-KLIMAAT_VENSTER_DAGEN:]
-    boven = sum(1 for _, temp, licht in bruikbaar if temp - ideaal(licht) > KLIMAAT_TEMP_MARGE)
-    onder = sum(1 for _, temp, licht in bruikbaar if ideaal(licht) - temp > KLIMAAT_TEMP_MARGE)
-    return boven, onder, len(bruikbaar)
-
-
 def dagen_zonder_water(start, laatste_gift, horizon):
     """
     Dagen sinds de laatste gift (of sinds planten als er nog geen gift was),
@@ -310,75 +296,65 @@ def stek_afwijkingen(teelt):
     return uit
 
 
-def aandachtspunten(statussen, klimaat_per_afdeling, water_laatste, water_horizon, vandaag, ideaal,
-                    ideaal_tekst="", afdeling_volgorde=None):
-    """
-    Maximaal MAX_AANDACHTSPUNTEN meldingen, ernstigste eerst. Elke melding is
-    een dict met ernst, tekst, soort ("vak"/"afdeling"/"import") en sleutel
-    (vaknummer, afdeling of None).
+def _c_tekst(c):
+    return fmt_verschil(c, 1, "°C")
 
-    - statussen: beoordeel_teelt-resultaten van de lopende teelten van één tuin
-    - klimaat_per_afdeling: {afdeling: [(datum, temp_24h, lichtsom), ...]}
+
+def aandachtspunten(statussen, water_laatste, water_horizon, vandaag):
+    """
+    Maximaal MAX_AANDACHTSPUNTEN meldingen, belangrijkste eerst. Elke melding
+    is een dict met ernst, tekst, soort ("vak"/"import") en sleutel
+    (vaknummer of None).
+
+    - statussen: beoordeel_teelt-resultaten van de lopende teelten van één
+      tuin, met onder "stook" de uitkomst van TeeltPrognose.beoordeel (of None)
     - water_laatste: {vaknummer: datum laatste gift}; water_horizon: laatste
       dag met watergift in deze tuin
-    - afdeling_volgorde: teeltvolgorde van de afdelingen (config), voor
-      klimaatmeldingen met gelijke ernst
+
+    Volgorde: correctie c (grootste |c| eerst, vanaf MELDING_C_DREMPEL; op de grens
+    alleen als de oogst dan meer dan MELDING_GRENS_MARGE_DAGEN van plan ligt),
+    oogstrijp zonder oogst, Florgib-achterstand, watergift, datafouten, stek.
+    Vakken met dezelfde uitkomst (zelfde afdeling en plantdag) worden één regel.
     """
     punten = []
+    correctie, rijp, florgib = {}, {}, {}
     for s in statussen:
-        t, vak = s["teelt"], s["teelt"]["vaknummer"]
-        wk_leeftijd = f"wk {s['plantweek']}, {s['leeftijd']} d"
-        ernstig_achter = s["afwijking_pct"] is not None and s["afwijking_pct"] <= -LENGTE_ROOD_PCT
-        if s["kleur"] in ("rood", "oranje") and s["afwijking_pct"] is not None:
-            if s["kleur"] == "oranje" or ernstig_achter:
-                punten.append({
-                    "ernst": ERNST["rood" if ernstig_achter else "oranje"], "gewicht": -abs(s["afwijking_pct"]),
-                    "tekst": f"Vak {vak}: lengte {fmt_verschil(s['afwijking_pct'], 0, '%')} t.o.v. verwacht "
-                             f"({wk_leeftijd})",
-                    "soort": "vak", "sleutel": vak,
-                })
-        # De prognose volgt uit de lengte: staat de lengte al als rood in de
-        # lijst, dan geen tweede rode regel voor hetzelfde vak.
-        if not ernstig_achter and s["prognose_dagen"] is not None and s["prognose_dagen"] > OOGST_ROOD_DAGEN:
-            punten.append({
-                "ernst": ERNST["rood"], "gewicht": -s["prognose_dagen"],
-                "tekst": f"Vak {vak}: prognose-oogst {s['prognose_dagen']} dagen na plan "
-                         f"(wk {s['prognose'].isocalendar()[1]})",
-                "soort": "vak", "sleutel": vak,
-            })
-        verwacht = s["prognose"] or s["plan"]
-        if verwacht and not _getal(t.get("emmers")):
-            maandag = vandaag - timedelta(days=vandaag.weekday())
-            if maandag <= verwacht <= maandag + timedelta(days=6):
-                punten.append({"ernst": ERNST["oogst"], "gewicht": 0, "soort": "vak", "sleutel": vak,
-                               "tekst": f"Vak {vak}: oogst verwacht deze week, nog geen oogst geregistreerd"})
-            elif verwacht < maandag:
-                punten.append({"ernst": ERNST["oogst"], "gewicht": -(vandaag - verwacht).days,
-                               "soort": "vak", "sleutel": vak,
-                               "tekst": f"Vak {vak}: oogst was verwacht op {verwacht:%d-%m}, "
-                                        "nog geen oogst geregistreerd"})
+        vak, st = s["teelt"]["vaknummer"], s.get("stook")
+        # Op de grens en toch maar een paar dagen van plan: binnen de onzekerheid van het model.
+        klein = (st and st["begrensd"] and st["prognose_bij_c"] and s["plan"]
+                 and abs((st["prognose_bij_c"] - s["plan"]).days) <= MELDING_GRENS_MARGE_DAGEN)
+        if st and st["c"] is not None and abs(st["c"]) >= MELDING_C_DREMPEL and not klein:
+            sleutel = (s["teelt"]["afdeling"], round(st["c"], 1), st["begrensd"], s["plan"], st["prognose_bij_c"])
+            correctie.setdefault(sleutel, []).append(vak)
+        if st and st["oogstrijp"] and not _getal(s["teelt"].get("emmers")):
+            rijp.setdefault(s["plan"], []).append(vak)
+        verwacht = st and st["florgib_verwacht"]
+        if s["florgib"] is None and verwacht and (vandaag - verwacht).days > FLORGIB_ACHTERSTAND_DAGEN:
+            florgib.setdefault(verwacht, []).append(vak)
         if s.get("florgib_fout"):
             punten.append({"ernst": ERNST["data"], "gewicht": 0, "soort": "vak", "sleutel": vak,
                            "tekst": f"Vak {vak}: Florgib-datum {s['florgib_fout']:%d-%m} ligt vóór het planten "
                                     f"({s['start']:%d-%m}); controleer de registratie"})
 
-    punten += watergift_meldingen(statussen, water_laatste, water_horizon, vandaag)
+    for (_, c, begrensd, plan, prognose), vakken in correctie.items():
+        if begrensd and c > 0:
+            tekst = f"haalt plan {plan:%d-%m} niet, ook niet bij {_c_tekst(c)} (prog. {prognose:%d-%m})"
+        elif begrensd:
+            tekst = f"te vroeg, ook bij {_c_tekst(c)} (prog. {prognose:%d-%m}, plan {plan:%d-%m})"
+        else:
+            tekst = f"{_c_tekst(c)} t.o.v. de lichtlijn voor plan {plan:%d-%m}"
+        punten.append({"ernst": ERNST["correctie"], "gewicht": -abs(c), "soort": "vak", "sleutel": min(vakken),
+                       "tekst": f"{vakken_tekst(vakken)}: {tekst}"})
+    for plan, vakken in rijp.items():
+        punten.append({"ernst": ERNST["oogst"], "gewicht": 0, "soort": "vak", "sleutel": min(vakken),
+                       "tekst": f"{vakken_tekst(vakken)}: volgens het model oogstrijp"
+                                + (f" (plan {plan:%d-%m})" if plan else "") + ", nog geen oogst geregistreerd"})
+    for verwacht, vakken in florgib.items():
+        punten.append({"ernst": ERNST["florgib"], "gewicht": -(vandaag - verwacht).days, "soort": "vak",
+                       "sleutel": min(vakken),
+                       "tekst": f"{vakken_tekst(vakken)}: Florgib verwacht {verwacht:%d-%m}, nog niet geregistreerd"})
 
-    volgorde = list(afdeling_volgorde) if afdeling_volgorde else sorted(klimaat_per_afdeling)
-    volgorde += [a for a in sorted(klimaat_per_afdeling) if a not in volgorde]
-    for positie, afdeling in enumerate(a for a in volgorde if a in klimaat_per_afdeling):
-        dagen = klimaat_per_afdeling[afdeling]
-        boven, onder, aantal = klimaat_afwijking(dagen, ideaal)
-        for telling, richting in ((boven, "boven"), (onder, "onder")):
-            if telling >= KLIMAAT_MIN_DAGEN:
-                # Bij gelijke ernst in teeltvolgorde (positie als fractie achter het gewicht).
-                punten.append({
-                    "ernst": ERNST["klimaat"], "gewicht": -telling + positie / 100,
-                    "soort": "afdeling", "sleutel": afdeling,
-                    "tekst": f"Afd. {afdeling}: {telling} van de laatste {aantal} dagen > "
-                             f"{fmt_getal(KLIMAAT_TEMP_MARGE, 0)} °C {richting} ideaal"
-                             + (f" ({ideaal_tekst})" if ideaal_tekst else ""),
-                })
+    punten += watergift_meldingen(statussen, water_laatste, water_horizon, vandaag)
 
     # Stek: gebundeld per plantweek en kenmerk ("Stek wk 39: vak 3 en 4 wortel 'Matig'").
     stek = {}

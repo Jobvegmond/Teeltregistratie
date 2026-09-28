@@ -8,6 +8,8 @@ import pandas as pd
 import psycopg2
 from psycopg2 import pool as psycopg2_pool
 
+from config import LICHTLIJN_BASIS, LICHTLIJN_FACTOR
+from logic.lichtlijn import t_ideaal
 from utils.format import fmt_verschil
 
 
@@ -371,6 +373,47 @@ def init_db():
                 uniformiteit TEXT,
                 beoordeling INTEGER,
                 opmerking TEXT
+            )
+        """)
+
+        # Historie voor het teeltmodel: één regel per afgeronde teelt (uit de
+        # oude Excel-registratie en/of de app), met de weekwaarden van klimaat
+        # erbij. Uniek per tuin, plantjaar, plantweek en vak, zodat opnieuw
+        # importeren bijwerkt in plaats van verdubbelt. Zie
+        # importeer_teelt_historie.py. Datums als tekst (JJJJ-MM-DD), zoals in teelten.
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS teelt_historie (
+                id SERIAL PRIMARY KEY,
+                tuin_id INTEGER NOT NULL,
+                vaknummer INTEGER NOT NULL,
+                afdeling INTEGER,
+                code TEXT,
+                plantjaar INTEGER NOT NULL,
+                plantweek INTEGER NOT NULL,
+                startdatum TEXT NOT NULL,
+                start_precisie TEXT NOT NULL,
+                oogstdatum TEXT NOT NULL,
+                oogst_precisie TEXT NOT NULL,
+                teeltduur_dagen INTEGER NOT NULL,
+                florgib_datum TEXT,
+                florgib_bron TEXT,
+                lengte_eind REAL,
+                oogstgewicht REAL,
+                teelt_id INTEGER REFERENCES teelten (id) ON DELETE SET NULL,
+                bron TEXT NOT NULL,
+                bijgewerkt_op TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                UNIQUE (tuin_id, plantjaar, plantweek, vaknummer)
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS teelt_historie_week (
+                historie_id INTEGER NOT NULL REFERENCES teelt_historie (id) ON DELETE CASCADE,
+                isojaar INTEGER NOT NULL,
+                isoweek INTEGER NOT NULL,
+                etmaal_temp REAL,
+                lichtsom_binnen REAL,
+                bron TEXT NOT NULL,
+                PRIMARY KEY (historie_id, isojaar, isoweek)
             )
         """)
 
@@ -1239,21 +1282,12 @@ KLIMAAT_STRALING_LABELS = ["Sum_24h_CalculatedRadiation"]
 KLIMAAT_GELDIGE_AFDELINGEN = {1, 2, 3, 4}
 
 # Vuistregel licht/temperatuur (Job): bij een hogere lichtsom hoort een
-# hogere etmaaltemperatuur, in een vaste verhouding. Buiten die
-# verhouding wordt er relatief te warm of te koud gestookt t.o.v. het licht.
-LICHT_TEMP_FACTOR = 0.0072
-LICHT_TEMP_BASIS = 11.7
-
-
-def ideale_etmaaltemperatuur(lichtsom):
-    """
-    Streefwaarde voor de etmaaltemperatuur (°C) op basis van de lichtsom:
-    LICHT_TEMP_FACTOR x lichtsom + LICHT_TEMP_BASIS. Werkt ook op een
-    pandas Series (voor grafieken). Geeft None terug bij lichtsom=None.
-    """
-    if lichtsom is None:
-        return None
-    return LICHT_TEMP_FACTOR * lichtsom + LICHT_TEMP_BASIS
+# hogere etmaaltemperatuur, in een vaste verhouding (de lichtlijn). De getallen
+# staan in config.py en de formule in logic/lichtlijn.py; deze namen blijven
+# voor de bestaande schermen.
+LICHT_TEMP_FACTOR = LICHTLIJN_FACTOR
+LICHT_TEMP_BASIS = LICHTLIJN_BASIS
+ideale_etmaaltemperatuur = t_ideaal
 
 
 def afdeling_van_vaknummer(vaknummer):
@@ -2006,6 +2040,26 @@ def get_vakstatus_data(dagen_klimaat=150):
     for kolom in ("lengte_half", "lengte_eind", "oogstgewicht"):
         teelten[kolom] = teelten[kolom].map(meting)
     return {"vakken": vakken, "teelten": teelten, "klimaat": klimaat, "water": water, "concepten": concepten}
+
+
+def get_teelthistorie_data():
+    """
+    De leerdata van het teeltmodel in twee query's: teelt_historie (met tuin_id)
+    en teelt_historie_week (klimaat per ISO-week per teelt). Gevuld door
+    importeer_teelt_historie.py; leeg als die nog niet gedraaid heeft.
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        historie = _df(cursor, """
+            SELECT id, tuin_id, vaknummer, afdeling, plantjaar, plantweek, startdatum, oogstdatum,
+                   oogst_precisie, teeltduur_dagen, florgib_datum, lengte_eind, oogstgewicht, teelt_id
+            FROM teelt_historie
+        """)
+        weken = _df(cursor, """
+            SELECT historie_id, isojaar, isoweek, etmaal_temp, lichtsom_binnen
+            FROM teelt_historie_week
+        """)
+    return historie, weken
 
 
 def laatste_priva_ophaling():

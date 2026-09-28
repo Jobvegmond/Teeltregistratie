@@ -36,3 +36,11 @@ STEK_RECENT_DAGEN = 21      # stekmeldingen alleen voor teelten die korter staan
 STEK_GOED = {"Goed"}        # wortel/plantmaat/uniformiteit anders → melding
 STEK_CIJFER_GRENS = 6       # stekcijfer ≤ 6 → melding
 MAX_AANDACHTSPUNTEN = 8
+
+# --- NU: STOOKADVIES (correctie c op de lichtlijn) ---
+C_GRENZEN = (-2.0, 3.0)         # c niet verder dan dit; daarbuiten: prognose op de grens
+OP_KOERS_MARGE = 0.2            # |c| kleiner dan dit: "op koers"
+MELDING_C_DREMPEL = 0.3         # meldingen alleen bij |c| vanaf dit
+MELDING_GRENS_MARGE_DAGEN = 2   # c op de grens: geen melding als de oogst dan hooguit zoveel dagen van plan ligt
+FLORGIB_ACHTERSTAND_DAGEN = 3   # melding als de verwachte Florgib zoveel dagen voorbij is
+AFWIJKING_VENSTER_DAGEN = 14    # "huidige stooklijn" = gemiddelde afwijking van de afdeling over zoveel dagen

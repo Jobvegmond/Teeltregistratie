@@ -326,8 +326,25 @@ def bouw_dataset():
             fg = None
         bron_fg = None if fg is None else ("app" if fg == fg_db else "overview" if fg == fg_ov else "aantekeningen")
 
+        # Weekwaarden voor de historietabel: Excel waar dat er is, anders het
+        # weekgemiddelde uit de dagwaarden van de afdeling (database).
+        weken = {}
+        w = start - timedelta(days=start.weekday())
+        while w <= oogst:
+            jw = w.isocalendar()[:2]
+            if ex is not None and jw in ex["T"] and jw in ex["L"]:
+                weken[jw] = (ex["T"][jw], ex["L"][jw], "excel")
+            else:
+                dagwaarden = [klimaat.get((tuin, afd), {}).get(w + timedelta(days=i)) for i in range(7)]
+                dagwaarden = [x for x in dagwaarden if x]
+                if dagwaarden:
+                    weken[jw] = (float(np.mean([x[0] for x in dagwaarden])), float(np.mean([x[1] for x in dagwaarden])),
+                                 "database")
+            w += timedelta(days=7)
+
         teelten.append({
             "tuin": tuin, "jaar": jaar, "plantweek": week, "vak": vak, "afdeling": afd,
+            "start_precisie": start_precisie, "teelt_id": int(r.id) if r is not None else None, "weken": weken,
             "code": ex["code"] if ex else None, "start": start, "oogst": oogst, "precisie": precisie,
             "florgib": fg, "florgib_bron": bron_fg, "gewicht": _getal(r.gewicht) if r is not None else None,
             "lengte": _getal(r.lengte) if r is not None else None,
