@@ -1510,13 +1510,13 @@ with tab_meer:
 # aandachtspunten erboven. Het rekenwerk staat in logic/vakstatus.py; hier
 # alleen ophalen (één keer, gecachet) en tekenen.
 
-# Kleur van een vakblok = de benodigde correctie c op de lichtlijn om op de
-# plandatum te oogsten (logic/teeltprognose.c_klasse): blauw = kan kouder,
-# neutraal = op koers, oranje → rood = warmer nodig. De kleuren staan in de CSS
-# (.st-key-nu_vak_<klasse>_*) en in de legenda.
+# Kleur van een vakblok = de prognose t.o.v. plan in dagen bij de huidige
+# stooklijn (logic/teeltprognose.dagen_klasse), schaal −7 … +7: blauw = te
+# vroeg, neutraal = op schema, oranje → rood = te laat. De kleuren staan in de
+# CSS (.st-key-nu_vak_<klasse>_*) en in de legenda.
 NU_KLASSEN = ("b3", "b2", "b1", "n", "o1", "o2", "r1", "r2")
-NU_STATUS_KORT = {"b3": "ruim vóór", "b2": "vóór", "b1": "iets vóór", "n": "op koers", "o1": "iets achter",
-                  "o2": "achter", "r1": "ruim achter", "r2": "ruim achter", "rijp": "oogstrijp",
+NU_STATUS_KORT = {"b3": "ruim te vroeg", "b2": "te vroeg", "b1": "iets te vroeg", "n": "op schema",
+                  "o1": "iets te laat", "o2": "te laat", "r1": "ruim te laat", "r2": "ruim te laat", "rijp": "oogstrijp",
                   "grijs": "geen prognose", "leeg": "leeg"}
 NU_PUNT_ICOON = {1: "🌡️", 2: "🧪", 3: "✂️", 4: "💧", 5: "⚠️", 6: "🌱"}
 _NU_PER_RUN = {}   # één keer rekenen per scriptrun (Nu én Beide tuinen gebruiken het)
@@ -1601,7 +1601,7 @@ def _nu_tuin(data, model, stook, afwijking, tuin, vandaag):
         u = s["stook"] = stook.get(int(s["teelt"]["id"]))
         s["prognose"] = u["prognose"] if u else None
         s["prognose_dagen"] = (u["prognose"] - s["plan"]).days if u and u["prognose"] and s["plan"] else None
-        s["klasse"] = "grijs" if not u else ("rijp" if u["oogstrijp"] else tp.c_klasse(u["c"]))
+        s["klasse"] = "grijs" if not u else ("rijp" if u["oogstrijp"] else tp.dagen_klasse(s["prognose_dagen"]))
         s["florgib_achter"] = bool(u and s["florgib"] is None and u["florgib_verwacht"]
                                    and (vandaag - u["florgib_verwacht"]).days > FLORGIB_ACHTERSTAND_DAGEN)
 
@@ -2115,7 +2115,9 @@ with tab_nu:
         "Correctie = de vaste afwijking van de lichtlijn vanaf vandaag waarmee de oogst precies op de plandatum "
         f"valt (tussen {fmt_verschil(C_GRENZEN[0], 0)} en {fmt_verschil(C_GRENZEN[1], 0)} °C). "
         f"Binnen ±{fmt_kort(OP_KOERS_MARGE)} °C: op koers. Meldingen vanaf ±{fmt_kort(MELDING_C_DREMPEL)} °C.\n\n"
-        "Stookadvies per afdeling = de correctie per vak, gewogen naar het aantal stelen."
+        "Stookadvies per afdeling = de correctie per vak, gewogen naar het aantal stelen.\n\n"
+        "Kleur = prognose t.o.v. plan in dagen: ±1 d op schema, daarna stappen van 2 dagen tot 6 d te vroeg "
+        "(donkerblauw) of 7 d te laat (donkerrood)."
     )
     _nu_kop, _nu_keuze_kolom = st.columns([3, 2])
     _nu_kop.subheader("🧭 Nu", help=_nu_uitleg)
@@ -2136,10 +2138,10 @@ with tab_nu:
                       _nu_vandaag, _nu_gegevens)
     st.markdown(
         '<div class="nu-legenda"><span class="nu-schaal">'
-        f"<em>{fmt_verschil(C_GRENZEN[0], 0)} °C</em>"
+        "<em>−7 d</em>"
         + "".join(f'<i class="{k}"></i>' for k in NU_KLASSEN)
-        + f"<em>{fmt_verschil(C_GRENZEN[1], 0)} °C</em></span>"
-        "<span>correctie t.o.v. de lichtlijn voor de plandatum (blauw: kan kouder, rood: warmer nodig)</span>"
+        + "<em>+7 d</em></span>"
+        "<span>prognose t.o.v. plan bij de huidige stooklijn (blauw: te vroeg, rood: te laat)</span>"
         '<span><i class="rijp"></i>oogstrijp</span><span><i class="grijs"></i>geen prognose</span>'
         '<span><i class="leeg"></i>leeg</span>'
         f'<span><i class="fa"></i>Florgib &gt; {FLORGIB_ACHTERSTAND_DAGEN} d over tijd</span>'

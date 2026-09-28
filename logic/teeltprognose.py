@@ -251,15 +251,18 @@ def op_koers(c):
     return c is not None and abs(c) < OP_KOERS_MARGE
 
 
-def c_klasse(c, begrensd=False):
-    """Kleurklasse voor het vakblok: blauw bij negatieve c, neutraal rond 0, oranje→rood bij positieve c."""
-    if c is None:
+def dagen_klasse(dagen):
+    """
+    Kleurklasse voor het vakblok uit de prognose t.o.v. plan in dagen (bij de
+    huidige stooklijn): blauw = te vroeg, neutraal = op schema, oranje → rood =
+    te laat. Schaal −7 … +7: ±1 is op schema, daarna stappen van 2 dagen, en
+    vanaf 6 dagen te vroeg of 7 dagen te laat de donkerste kleur.
+    """
+    if dagen is None:
         return "grijs"
-    if abs(c) < OP_KOERS_MARGE:
-        return "n"
-    grenzen = [(-1.5, "b3"), (-0.75, "b2"), (0, "b1"), (0.75, "o1"), (1.5, "o2"), (2.25, "r1")]
+    grenzen = [(-6, "b3"), (-4, "b2"), (-2, "b1"), (1, "n"), (3, "o1"), (5, "o2"), (6, "r1")]
     for grens, klasse in grenzen:
-        if c < grens:
+        if dagen <= grens:
             return klasse
     return "r2"
 

@@ -111,13 +111,9 @@ class TestAfdeling(unittest.TestCase):
         self.assertEqual(tp.afdelingsadvies([{"vak": 1, "c": None, "stelen": 10}]), (None, None))
 
     def test_kleurklasse(self):
-        self.assertEqual(tp.c_klasse(None), "grijs")
-        self.assertEqual(tp.c_klasse(0.1), "n")
-        self.assertEqual(tp.c_klasse(-0.1), "n")
-        self.assertEqual(tp.c_klasse(0.5), "o1")
-        self.assertEqual(tp.c_klasse(2.9), "r2")
-        self.assertEqual(tp.c_klasse(-0.5), "b1")
-        self.assertEqual(tp.c_klasse(-2.0), "b3")
+        verwacht = {None: "grijs", -9: "b3", -6: "b3", -5: "b2", -4: "b2", -3: "b1", -2: "b1", -1: "n", 0: "n",
+                    1: "n", 2: "o1", 3: "o1", 4: "o2", 5: "o2", 6: "r1", 7: "r2", 12: "r2"}
+        self.assertEqual({d: tp.dagen_klasse(d) for d in verwacht}, verwacht)
 
 
 class TestLeerset(unittest.TestCase):
