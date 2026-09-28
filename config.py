@@ -3,6 +3,13 @@ Instelbare waarden van de teeltregistratie, op één plek. Pas hier aan; de
 rekenmodules in logic/ en het scherm lezen ze hieruit.
 """
 
+# --- LICHTLIJN (stookregel) ---
+# Ideale etmaaltemperatuur bij de lichtsom BINNEN van die dag (J/cm² per dag):
+# T_ideaal = LICHTLIJN_BASIS + LICHTLIJN_FACTOR × lichtsom. Eén plek, gebruikt
+# door logic/lichtlijn.py (en via daar door de app).
+LICHTLIJN_BASIS = 11.7
+LICHTLIJN_FACTOR = 0.0072
+
 # --- AFDELINGEN ---
 # Volgorde waarin de afdelingen overal getoond worden (teeltvolgorde), per
 # tuinnummer. Een afdeling die hier niet staat komt er achteraan.
