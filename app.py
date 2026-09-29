@@ -86,6 +86,9 @@ from database import (
     STEK_STANDAARD_RAS,
     get_vakstatus_data,
     get_teelthistorie_data,
+    schrijf_prognose_log,
+    get_prognose_log,
+    get_oogst_emmers,
     get_vergelijking_data,
     get_teeltvergelijking_data,
     warmte_per_bezette_m2,
@@ -95,6 +98,7 @@ from logic import vakstatus as vs
 from logic import kengetallen as kg
 from logic import perioden
 from logic import planning_editor
+from logic import prognoselog
 from logic import tuinvergelijking as tuinvgl
 from logic import teeltvergelijking as teeltvgl
 from logic import teeltprognose as tp
@@ -1266,14 +1270,36 @@ def _nu_model(versie, dag):
     teelten die daar nog niet in staan. Leert zo mee met elke nieuwe oogst.
     None als er (nog) geen historie is.
     """
-    data = _nu_data(versie, dag)
     historie, weken = get_teelthistorie_data()
-    klimaat = tp.klimaat_per_afdeling(data["klimaat"])
-    leerset = tp.bouw_leerset(historie, weken, data["teelten"], klimaat,
-                              lambda start: bereken_verwachte_oogstdatum(start)[1])
-    if len(leerset) < 20:
-        return None
-    return tp.TeeltPrognose().fit(leerset, tp.weeklicht(weken, data["klimaat"]))
+    return prognoselog.bouw_model(_nu_data(versie, dag), historie, weken, _plandatum)
+
+
+def _plandatum(start):
+    return bereken_verwachte_oogstdatum(start)[1]
+
+
+@st.cache_resource
+def _prognose_gelogd():
+    """Dagen waarop deze server het prognoselogboek al heeft bijgewerkt."""
+    return set()
+
+
+def _prognose_loggen(vandaag, data, model, stook, afwijking):
+    """
+    Terugval voor de dagelijkse taak (prognose_loggen.py): de eerste run van de
+    dag legt de prognose van alle lopende vakken vast. Een vak dat vandaag al
+    gelogd is, blijft staan (ON CONFLICT DO NOTHING).
+    """
+    gelogd = _prognose_gelogd()
+    if not model or vandaag in gelogd:
+        return
+    gelogd.add(vandaag)
+    try:
+        schrijf_prognose_log(prognoselog.logregels(data["teelten"], stook, afwijking, vandaag,
+                                                   prognoselog.modelversie(model)))
+    except Exception as fout:  # het logboek mag de app nooit tegenhouden
+        gelogd.discard(vandaag)
+        print(f"Prognoselogboek niet bijgewerkt: {fout}")
 
 
 def _nu_alles(vandaag):
@@ -1285,21 +1311,9 @@ def _nu_alles(vandaag):
     if "alles" not in _NU_PER_RUN:
         versie = vakstatus_dataversie()
         data, model = _nu_data(versie, str(vandaag)), _nu_model(versie, str(vandaag))
-        klimaat = tp.klimaat_per_afdeling(data["klimaat"])
-        afwijking = {k: tp.afwijking_afdeling(d, vandaag) for k, d in klimaat.items()}
-        stook = {}
-        for t in data["teelten"].itertuples() if model else []:
-            start = vs.als_datum(t.datum_teelt_start)
-            if vs.als_datum(t.datum_oogst) or start > vandaag or vs._getal(t.afdeling) is None:
-                continue
-            sleutel = (int(t.tuin_id), int(t.afdeling))
-            reeks = tp.dagreeks(start, (vandaag - start).days, klimaat.get(sleutel, {}))
-            if reeks is None:
-                continue
-            half = vs.als_datum(t.datum_half)
-            stook[int(t.id)] = model.beoordeel(
-                int(t.tuin_id), start, vandaag, bereken_verwachte_oogstdatum(start)[1], *reeks,
-                afwijking.get(sleutel), half if half and half > start else None)
+        stook, afwijking = prognoselog.stand_lopende_teelten(
+            data["teelten"], tp.klimaat_per_afdeling(data["klimaat"]), model, vandaag, _plandatum)
+        _prognose_loggen(vandaag, data, model, stook, afwijking)
         _NU_PER_RUN["alles"] = (data, model, stook, afwijking)
     return _NU_PER_RUN["alles"]
 
@@ -3356,9 +3370,99 @@ def _pagina_log_1():
         st.info("Nog geen logregels.")
 
 # --- PROGNOSEKWALITEIT (onder Meer) ---
+PK_HORIZON_LABEL = {28: "28 d vooraf", 14: "14 d vooraf", 7: "7 d vooraf", prognoselog.FLORGIB: "Na Florgib"}
+PK_KOLOMMEN = [
+    ("Moment", "Moment", "tekst", None, "medium"),
+    ("n", "n", "getal", "%d", "small"),
+    ("Gem. fout (d)", "Gem. fout (d)", "getal", "%.1f", "small"),
+    ("MAE (d)", "MAE (d)", "getal", "%.1f", "small"),
+    ("Binnen ±2 d", "Binnen ±2 d (%)", "getal", "%d", "small"),
+]
+
+
+@st.cache_data(ttl=600, show_spinner="Prognoselogboek ophalen…")
+def _pk_gegevens(versie, dag):
+    """(log, oogsten) van de geoogste vakken; `versie` en `dag` zijn alleen cachesleutels."""
+    log = get_prognose_log()
+    oogsten = {teelt_id: prognoselog.werkelijke_oogst(emmers, datum_oogst)
+               for teelt_id, (emmers, datum_oogst) in get_oogst_emmers({r["teelt_id"] for r in log}).items()}
+    return log, oogsten
+
+
+def _pk_tabel(kwaliteit, tuin_id):
+    rijen = []
+    for horizon, label in PK_HORIZON_LABEL.items():
+        k = kwaliteit.get((tuin_id, horizon))
+        rijen.append({"Moment": label, "n": k["n"] if k else None,
+                      "Gem. fout (d)": round(k["gemiddeld"], 1) + 0.0 if k else None,  # geen "-0,0" "MAE (d)": k["mae"] if k else None,
+                      "Binnen ±2 d": round(k["binnen_pct"]) if k else None})
+    toon_tabel(pd.DataFrame(rijen), PK_KOLOMMEN)
+
+
 def _pagina_prognosekwaliteit():
-    st.subheader("Prognosekwaliteit")
-    st.info("Nog te weinig data (n = 0).")
+    st.subheader("Prognosekwaliteit", help=(
+        "Elke dag legt de app per lopend vak de oogstprognose van het teeltmodel vast. Na de oogst "
+        "vergelijkt deze pagina die met de werkelijke oogst: de dag waarop de helft van de emmers binnen "
+        "was (zonder emmers de oogstdatum). Fout = werkelijk − voorspeld in dagen: positief = later "
+        "geoogst dan voorspeld. MAE = gemiddelde fout zonder teken."))
+    vandaag = date.today()
+    log, oogsten = _pk_gegevens(vakstatus_dataversie(), str(vandaag))
+    rijen = prognoselog.fouten(log, oogsten)
+    n = prognoselog.aantal_vakken(rijen)
+    if n < prognoselog.MIN_VAKKEN:
+        st.info(f"Nog te weinig data (n = {n}): er zijn minstens {prognoselog.MIN_VAKKEN} geoogste vakken "
+                "met een prognoselogboek nodig. Het logboek loopt sinds de invoering elke dag mee.")
+        return
+
+    tuinen = [t for t in sorted(TUINEN, key=lambda t: t["nummer"])
+              if TUIN_WEERGAVE == "beide" or t["nummer"] == TUIN_WEERGAVE]
+    for titel, veld in (("Prognose teeltmodel", "fout_prognose"), ("Plandatum", "fout_plan")):
+        st.write(f"**{titel}**")
+        kwaliteit = prognoselog.kwaliteit(rijen, veld)
+        for kolom, tuin in zip(st.columns(len(tuinen)), tuinen):
+            with kolom:
+                st.caption(tuin["naam"])
+                _pk_tabel(kwaliteit, tuin["id"])
+
+    st.write("**Fout naar dagen vóór de oogst**")
+    per_dag = pd.DataFrame(prognoselog.fout_per_dag(log, oogsten))
+    if not per_dag.empty:
+        per_dag = per_dag[per_dag["tuin_id"].isin([t["id"] for t in tuinen])]
+        per_dag["Tuin"] = per_dag["tuin_id"].map(_tuinnaam_van)
+        per_dag = (per_dag.groupby(["Tuin", "dagen_voor_oogst"])["fout"]
+                   .agg(fout="mean", mae=lambda x: x.abs().mean()).reset_index())
+    basis = alt.Chart(per_dag).encode(
+        x=alt.X("dagen_voor_oogst:Q", title="Dagen vóór de oogst", scale=alt.Scale(reverse=True)),
+        color=alt.Color("Tuin:N", legend=alt.Legend(title=None, orient="top")))
+    grafiek = (basis.mark_line().encode(
+                   y=alt.Y("fout:Q", title="Gem. fout (d)"),
+                   tooltip=[alt.Tooltip("Tuin:N"), alt.Tooltip("dagen_voor_oogst:Q", title="Dagen vóór oogst"),
+                            alt.Tooltip("fout:Q", title="Gem. fout (d)", format=".1f"),
+                            alt.Tooltip("mae:Q", title="MAE (d)", format=".1f")])
+               + alt.Chart(pd.DataFrame({"y": [0]})).mark_rule(strokeDash=[3, 3], color="#8a8a80").encode(y="y:Q"))
+    toon_grafiek(grafiek, per_dag, "Nog geen logregels van geoogste vakken.")
+
+    st.write("**Grootste missers**")
+    missers = prognoselog.grootste_missers([r for r in rijen if r["tuin_id"] in {t["id"] for t in tuinen}])
+    tabel = pd.DataFrame([{
+        "Tuin": _tuinnaam_van.get(m["tuin_id"], "?"), "Vak": m["vaknummer"], "Code": m["code"],
+        "Eerste emmer": format_datum(m["eerste_emmer"]) if m["eerste_emmer"] else None,
+        "Oogst (50 %)": format_datum(m["werkelijk"]),
+        **{f"Fout {h} d": m["fouten"].get(h) for h in prognoselog.HORIZONS},
+        "Fout Florgib": m["fouten"].get(prognoselog.FLORGIB),
+    } for m in missers])
+    kolommen = ([("Tuin", "Tuin", "tekst", None, "small"), ("Vak", "Vak", "getal", "%d", "small"),
+                 ("Code", "Code", "tekst", None, "small"), ("Eerste emmer", "Eerste emmer", "datum", None, "small"),
+                 ("Oogst (50 %)", "Oogst (50 %)", "datum", None, "small")]
+                + [(k, k, "getal", "%d", "small") for k in tabel.columns if k.startswith("Fout")])
+    keuze = toon_tabel(tabel, kolommen, vast=("Tuin", "Vak", "Code"), sleutel="pk_missers")
+    st.caption("Klik op een regel voor het vak. Fout = werkelijk − voorspeld, in dagen.")
+    gekozen = keuze.selection.rows if keuze else []
+    if gekozen and gekozen != st.session_state.get("pk_missers_open"):
+        st.session_state["pk_missers_open"] = gekozen
+        _tl_detail_venster(missers[gekozen[0]]["teelt_id"], _tl_vakken(vakstatus_dataversie(), vandaag), vandaag)
+    elif not gekozen:
+        st.session_state["pk_missers_open"] = None
 
 
 # --- HOE DIT WERKT (onder Meer) ---

@@ -561,6 +561,10 @@ def init_db():
             code = genereer_teelt_code(datum_start, vaknummer)
             cursor.execute("UPDATE teelten SET code = %s WHERE id = %s", (code, teelt_id))
 
+        # Prognoselogboek: per lopend vak per dag wat het teeltmodel voorspelde
+        # (logic/prognoselog.py). Nooit bijwerken: de eerste regel van een dag blijft.
+        cursor.execute(PROGNOSE_LOG_TABEL)
+
         conn.commit()
 
 
@@ -1817,6 +1821,78 @@ def get_teeltvergelijking_data():
             teelten.append({**k, **{s: v for s, v in per_id.get(k["id"], {}).items() if s != "id"},
                             "tuin_id": tuin_id})
     return teelten
+
+
+PROGNOSE_LOG_TABEL = """
+    CREATE TABLE IF NOT EXISTS prognose_log (
+        id SERIAL PRIMARY KEY,
+        datum DATE NOT NULL,
+        teelt_id INTEGER REFERENCES teelten (id) ON DELETE CASCADE,
+        tuin_id INTEGER, afdeling INTEGER, vaknummer INTEGER, code TEXT,
+        leeftijd_d INTEGER,
+        fase TEXT,
+        gedaan REAL,
+        plan_oogst DATE, prognose_oogst DATE,
+        correctie_c REAL, c_begrensd BOOLEAN,
+        stooklijn REAL, stooklijn_bron TEXT,
+        modelversie TEXT,
+        aangemaakt_op TIMESTAMPTZ DEFAULT now(),
+        UNIQUE (datum, teelt_id)
+    )
+"""
+PROGNOSE_LOG_KOLOMMEN = ("datum", "teelt_id", "tuin_id", "afdeling", "vaknummer", "code", "leeftijd_d", "fase",
+                         "gedaan", "plan_oogst", "prognose_oogst", "correctie_c", "c_begrensd", "stooklijn",
+                         "stooklijn_bron", "modelversie")
+PROGNOSE_LOG_INSERT = (
+    f"INSERT INTO prognose_log ({', '.join(PROGNOSE_LOG_KOLOMMEN)}) "
+    f"VALUES ({', '.join(f'%({k})s' for k in PROGNOSE_LOG_KOLOMMEN)}) "
+    "ON CONFLICT (datum, teelt_id) DO NOTHING"
+)
+
+
+def schrijf_prognose_log(regels):
+    """Logregels (logic/prognoselog.logregels) wegschrijven; een vak dat vandaag al gelogd is, blijft zoals het was.
+    Geeft het aantal nieuwe regels."""
+    if not regels:
+        return 0
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        nieuw = 0
+        for regel in regels:
+            cursor.execute(PROGNOSE_LOG_INSERT, regel)
+            nieuw += cursor.rowcount
+        conn.commit()
+    return nieuw
+
+
+def get_prognose_log():
+    """Alle logregels van vakken die inmiddels geoogst zijn, als dicts (voor Prognosekwaliteit)."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(f"""
+            SELECT {', '.join('p.' + k for k in PROGNOSE_LOG_KOLOMMEN)}
+            FROM prognose_log p JOIN teelten t ON t.id = p.teelt_id
+            WHERE t.datum_oogst IS NOT NULL AND t.datum_oogst <> ''
+            ORDER BY p.teelt_id, p.datum
+        """)
+        return [dict(zip(PROGNOSE_LOG_KOLOMMEN, r)) for r in cursor.fetchall()]
+
+
+def get_oogst_emmers(teelt_ids):
+    """{teelt_id: ({datum: emmers}, datum_oogst)} voor de gegeven teelten."""
+    if not teelt_ids:
+        return {}
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, datum_oogst FROM teelten WHERE id = ANY(%s)", (list(teelt_ids),))
+        uit = {int(i): ({}, oogst) for i, oogst in cursor.fetchall()}
+        cursor.execute("""
+            SELECT teelt_id, datum, SUM(aantal_emmers) FROM oogstregistraties
+            WHERE teelt_id = ANY(%s) GROUP BY teelt_id, datum
+        """, (list(teelt_ids),))
+        for teelt_id, datum, emmers in cursor.fetchall():
+            uit[int(teelt_id)][0][datum] = float(emmers or 0)
+    return uit
 
 
 def get_teelthistorie_data():
