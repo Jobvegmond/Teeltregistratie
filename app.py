@@ -2087,7 +2087,9 @@ TV_KENGETALLEN = [
              "Positief = warmer gestookt dan de lichtlijn.", teken=True, n_eenheid="dagen"),
     Kengetal("warmte", "Warmte", "Energie & water", "MJ/m²", 1,
              "Geleverde warmte in de periode gedeeld door de m² kas (de hele kas wordt verwarmd). Tuin 3: "
-             "Pulsteller; tuin 1: warmtewisselaar (sinds 09-01-26).", n_eenheid="dagen"),
+             "Pulsteller; tuin 1: warmtewisselaar (sinds 09-01-26). De warmtelevering is half september 2026 "
+             "gestopt; sindsdien stoken de ketels op gas (zie Gas en Energie totaal), dus warmte 0 is dan juist.",
+             n_eenheid="dagen"),
     Kengetal("gas", "Gas", "Energie & water", "m³/m²", 2, "Gasverbruik (Pulsteller 1) gedeeld door de m² kas.",
              n_eenheid="dagen"),
     Kengetal("energie", "Energie totaal", "Energie & water", "MJ/m²", 1,
