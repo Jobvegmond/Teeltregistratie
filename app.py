@@ -3355,68 +3355,75 @@ def _pagina_log_1():
     else:
         st.info("Nog geen logregels.")
 
-# --- EXTRA INFO ---
+# --- PROGNOSEKWALITEIT (onder Meer) ---
+def _pagina_prognosekwaliteit():
+    st.subheader("Prognosekwaliteit")
+    st.info("Nog te weinig data (n = 0).")
+
+
+# --- HOE DIT WERKT (onder Meer) ---
 def _pagina_help_1():
     st.write("""
-    **Een vak starten**
-    - Dat gaat via het tabblad 🗓️ Planning: klik bij het concept van dat vak op ✅. Het vak
-      krijgt dan een code (jaar + plantweek + vaknummer) en staat daarna als lopend in de app.
-    - Het aantal planten staat al klaar per vak, op basis van de vaste basiswaarde bij 60 stelen
-      per m² en de plantdichtheid die bij die plantweek hoort. Je kunt het altijd aanpassen.
+    **Begrippen**
+    - **Vak**: één vak in de kas met één teeltronde. Elke ronde krijgt een eigen code:
+      jaar + plantweek + vaknummer. Hetzelfde vak komt dus meerdere keren voor, één keer per ronde.
+    - **Teelt**: alle vakken uit één plantweek (van één of beide tuinen).
+    - **Florgib**: de lengtemeting halverwege de teelt; die stuurt de prognose bij.
+    - Datums staan als dd-mm-jj met het ISO-weeknummer; lijsten lopen van laag naar hoog.
 
-    **Florgib lengte**
-    - Kies één of meer vakken, vul de datum en de lengte in; die geldt dan voor alle gekozen
-      vakken.
+    **Tuinkeuze**
+    - Bovenaan kies je tuin 1, tuin 3 of Beide. Bij Beide tonen de overzichten beide tuinen;
+      registratie, Planning, Stek en import werken dan op de werk-tuin die je in de zijbalk kiest.
 
-    **Oogst**
-    - Tabblad 🪣 Emmers: per oogstmoment het aantal emmers (100 stelen per emmer). Vink
+    **Registratie (zijbalk)**
+    - *Florgib lengte*: kies één of meer vakken, vul datum en lengte in; die geldt voor alle
+      gekozen vakken.
+    - *Oogst › Emmers*: per oogstmoment het aantal emmers (100 stelen per emmer). Vink
       "Vak afronden" aan bij de laatste emmers.
-    - Tabblad 📏 Lengte en gewicht: voor vakken die nog niet zijn afgerond.
-    - Rijpheid loopt van 1 (rauw) tot 4 (rijp); zet de slider op één punt voor een enkel stadium
-      of laat een bereik staan.
-    - Emmers van een **afgerond** vak corrigeer je bij Wijzigen of verwijderen; daar staat
-      dezelfde emmers-editor.
+    - *Oogst › Lengte en gewicht*: voor vakken die nog niet zijn afgerond. Rijpheid loopt van
+      1 (rauw) tot 4 (rijp).
+    - *Wijzigen of verwijderen*: emmers van een afgerond vak corrigeren, of het ras omzetten
+      (elk vak begint als Cameron; een nieuw ras typ je bij "Ander ras").
 
-    **Ras**
-    - Elk vak begint als Cameron. Is een vak met een ander ras geplant, kies het vak dan bij
-      Wijzigen of verwijderen en zet het ras om. Nieuwe rassen typ je zelf in bij "Ander ras".
-
-    **Tuinvergelijking**
-    - Tabblad ⚖️ Tuinvergelijking: wat er in een week (of maand, kwartaal, jaar) in de kas gebeurde,
-      tuin 1 naast tuin 3 en het totaal, alles per m². De kleine regel onder een getal is de
-      waarde van de vorige periode of dezelfde periode vorig jaar; het pijltje zegt of het nu
-      beter (groen) of slechter (rood) is. Het verschil staat in de tooltip.
-
-    **Teeltvergelijking**
-    - Tabblad 🌿 Teeltvergelijking: een teelt = alle vakken uit één plantweek. Bovenaan per tuin
-      samengevat, daaronder de vakken naast elkaar. Klik op een vak voor klimaat, water, groei
-      en stek.
+    **Teeltoverzicht** (startpagina)
+    - De vakkenmatrix per afdeling, in teeltvolgorde. De kleur van een vak is de prognose:
+      aantal dagen te vroeg (−7) of te laat (+7) ten opzichte van de geplande oogst.
+      Klik op een vak voor klimaat, water, groei en stek; klik op de afdelingsnaam voor het
+      stookadvies van die afdeling.
+    - Daaronder het vakkenregister: Lopend, Te starten (bevestigde vakken die nog moeten
+      beginnen) en Afgerond, met filters op tuin, afdeling, plantweek, ras en zoeken.
+      Uitval staat alleen bij afgeronde vakken. Klik op een regel voor het vak.
 
     **Planning**
-    - Tabblad 🗓️ Planning plant vooruit vanaf waar de huidige teelt van elk vak en de bestaande
-      concept-planning gebleven zijn, op basis van de jaarplanning die je zelf invult onder
-      "Jaarplanning: vakken per week" (aantal poot-eenheden per week voor de vak 2-39-cyclus, en
-      een aparte aanvinkkolom voor vak 1). Een week zonder ingevuld aantal blijft leeg — de app
-      vult niets automatisch aan. Klik op "Plan opnieuw met deze aantallen" om te (her)plannen.
-    - Vak 19 en 20 worden altijd samen (als één eenheid) gepland; vak 1 loopt op een eigen ritme,
-      los van de vak 2-39-cyclus, en telt niet mee in dat wekelijkse aantal.
-    - Een concept-planning is nog geen gestart vak: pas nadat je 'm bevestigt (✅) wordt er een
-      teeltregistratie met een eigen code aangemaakt. Met 🗑️ verwijder je een concept weer.
-    - Elke tuin heeft zijn eigen planning: je ziet en bevestigt alleen de concepten van de tuin
-      die bovenaan gekozen is. Automatisch plannen kent voorlopig alleen het ritme van tuin 3;
-      op tuin 1 plan je per vak met "Eén vak handmatig plannen".
+    - Bovenaan de Gantt en de vooruitblik (wat de komende weken te planten en te oogsten staat).
+    - Daaronder de concept-planningen als één tabel, standaard de komende 8 weken ("Alles tonen"
+      voor de rest). Pas een startdatum aan, vink ✅ aan om een vak te starten (met het aantal
+      planten uit de tabel) of 🗑️ om een concept te verwijderen, en klik op "Wijzigingen opslaan".
+      Een concept is nog geen gestart vak; pas na ✅ krijgt het een code.
+    - *Jaarplanning: vakken per week*: het aantal poot-eenheden per week voor de vak 2-39-cyclus,
+      plus een aparte kolom voor vak 1. Een week zonder aantal blijft leeg; klik op "Plan opnieuw
+      met deze aantallen" om te (her)plannen. Vak 19 en 20 worden samen gepland; vak 1 loopt op
+      een eigen ritme.
+    - Elke tuin heeft een eigen planning. Automatisch plannen kent voorlopig alleen het ritme van
+      tuin 3; op tuin 1 plan je per vak met "Eén vak handmatig plannen".
 
-    **Weeknummers**
-    - Elke datum toont het ISO-weeknummer (1-53)
-    - Handig voor overzicht en teeltplanning
+    **Stek**
+    - Per pootweek het geleverde stek per vak (bakjes, beoordeling); de uitval rekent de app
+      zelf uit (bakjes × 600 stekken). De beoordeling vul je één keer voor de hele week in.
 
-    **Teeltduur**
-    - Dit wordt automatisch berekend als start- en oogstdatum beide ingevuld zijn
-    - Toont het aantal dagen van planten tot oogsten
+    **Teeltvergelijking**
+    - Per teelt (plantweek): bovenaan per tuin samengevat, daaronder de vakken naast elkaar.
+      Vergelijking met vorig jaar gebeurt op dezelfde teeltdag.
 
-    **Meerdere teeltrondes per vak**
-    - Je kunt hetzelfde vak meerdere keren gebruiken (bijv. lente, zomer, herfst)
-    - Elke ronde is een apart record met eigen gegevens
+    **Tuin vergelijking**
+    - Wat er in een week (of maand, kwartaal, jaar) in de kas gebeurde: tuin 1 naast tuin 3 en
+      het totaal, per m². De kleine regel onder een getal is de vorige periode of dezelfde periode
+      vorig jaar; het pijltje zegt of het beter (groen) of slechter (rood) is.
+
+    **Meer**
+    - *Data importeren*: klimaat- en energiedata uit de Priva-export.
+    - *Prognosekwaliteit*: hoe goed de oogstprognose en de plandatum achteraf klopten.
+    - *Logboek*: elke wijziging, met wie en wanneer.
     """)
 
 # --- NAVIGATIE ---
@@ -3447,10 +3454,13 @@ def pagina_tuinvergelijking():
 
 
 def pagina_meer():
-    """Weinig gebruikt: import, logboek en uitleg als subtabbladen."""
-    tab_import, tab_log, tab_help = st.tabs(["Data importeren", "Logboek", "Hoe dit werkt"])
+    """Weinig gebruikt: import, prognosekwaliteit, logboek en uitleg als subtabbladen."""
+    tab_import, tab_prognose, tab_log, tab_help = st.tabs(
+        ["Data importeren", "Prognosekwaliteit", "Logboek", "Hoe dit werkt"])
     with tab_import:
         _pagina_import_1()
+    with tab_prognose:
+        _pagina_prognosekwaliteit()
     with tab_log:
         _pagina_log_1()
     with tab_help:
