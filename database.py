@@ -50,18 +50,6 @@ def get_weeknummer(datum):
     return datum.isocalendar()[1]
 
 
-def get_teeltduur(datum_start, datum_einde):
-    """Berekent het aantal dagen tussen twee datums."""
-    if isinstance(datum_start, str):
-        datum_start = datetime.strptime(datum_start, "%Y-%m-%d").date()
-    if isinstance(datum_einde, str):
-        datum_einde = datetime.strptime(datum_einde, "%Y-%m-%d").date()
-
-    if datum_einde and datum_start:
-        return (datum_einde - datum_start).days
-    return None
-
-
 def format_datum(datum):
     """
     Zet een datum om naar weergaveformaat dd-mm-jj (bijv. '27-08-26').
@@ -1030,21 +1018,6 @@ def verwijder_oogstregistratie(registratie_id, gebruiker=None):
     log_wijziging(gebruiker, "verwijderd", "oogstregistratie", registratie_id, omschrijving)
 
 
-def get_totaal_emmers_per_teelt(tuin_id=None):
-    """Geeft een dict {teelt_id: totaal_aantal_emmers} terug voor de teelten van een tuin."""
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT o.teelt_id, SUM(o.aantal_emmers)
-            FROM oogstregistraties o
-            JOIN teelten t ON t.id = o.teelt_id
-            JOIN teeltvakken v ON v.id = t.teeltvak_id
-            WHERE v.tuin_id = %s
-            GROUP BY o.teelt_id
-        """, (_tuin_of_standaard(tuin_id),))
-        return {teelt_id: totaal for teelt_id, totaal in cursor.fetchall()}
-
-
 # --- GEBRUIKERS (INLOG) ---
 
 def get_gebruikers_credentials():
@@ -1112,97 +1085,6 @@ def get_alle_gebruikers():
         cursor = conn.cursor()
         cursor.execute("SELECT username, naam, email FROM gebruikers ORDER BY username")
         return cursor.fetchall()
-
-
-def get_overzicht_dataframe(tuin_id=None):
-    """
-    Geeft alle teelten terug inclusief teeltvaknaam, code, weeknummers,
-    teeltduur, geoogste emmers en uitvalpercentage.
-    """
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT
-                t.id,
-                t.code,
-                v.naam,
-                t.aantal_planten,
-                t.datum_teelt_start,
-                t.datum_half,
-                t.lengte_half,
-                t.florgib_gram,
-                t.datum_oogst,
-                t.lengte_eind,
-                t.oogstgewicht,
-                t.rijpheid,
-                t.uitval_pct
-            FROM teelten t
-            JOIN teeltvakken v ON t.teeltvak_id = v.id
-            WHERE v.tuin_id = %s
-            ORDER BY (t.code IS NULL), t.code
-        """, (_tuin_of_standaard(tuin_id),))
-        teelt_rijen = cursor.fetchall()
-
-    totaal_emmers_per_teelt = get_totaal_emmers_per_teelt()
-    vandaag_iso = str(date.today())
-
-    rijen_uitgebreid = []
-    for row in teelt_rijen:
-        (teelt_id, code, naam, aantal_planten, start, half_datum, half_lengte,
-         florgib_gram, oogst_datum, eind_lengte, gewicht, rijpheid, uitval_gemeten) = row
-
-        start_week = get_weeknummer(start) if start else "-"
-        teeltduur = get_teeltduur(start, oogst_datum) if (start and oogst_datum) else "-"
-
-        totaal_emmers = totaal_emmers_per_teelt.get(teelt_id)
-        totaal_stelen = totaal_emmers * 100 if totaal_emmers else "-"
-
-        # Zijn er emmers geteld, dan is dat de bron; anders het percentage dat
-        # bij de teelt zelf is vastgelegd (zoals bij de oude registratie van tuin 1).
-        if aantal_planten and totaal_emmers:
-            uitval_pct = f"{(aantal_planten - totaal_emmers * 100) / aantal_planten * 100:.2f}"
-        elif uitval_gemeten is not None:
-            uitval_pct = f"{uitval_gemeten:.2f}"
-        else:
-            uitval_pct = "-"
-
-        if oogst_datum:
-            status = "Afgerond"
-        elif start and start > vandaag_iso:
-            status = "Nog te starten"
-        else:
-            status = "Lopend"
-
-        rijen_uitgebreid.append((
-            teelt_id,
-            str(start) if start else "",  # verborgen sorteersleutel (ISO)
-            naam,
-            start_week,
-            status,
-            get_weeknummer(half_datum) if half_datum else "-",
-            half_lengte if half_lengte else "-",
-            florgib_gram if florgib_gram else "-",
-            get_weeknummer(oogst_datum) if oogst_datum else "-",
-            teeltduur,
-            eind_lengte if eind_lengte else "-",
-            round(gewicht) if gewicht else "-",
-            rijpheid if rijpheid else "-",
-            uitval_pct,
-            aantal_planten if aantal_planten else "-",
-            totaal_emmers if totaal_emmers else "-",
-            totaal_stelen,
-            code if code else "-",
-            format_datum(start) if start else "-",
-            format_datum(half_datum) if half_datum else "-",
-            format_datum(oogst_datum) if oogst_datum else "-",
-        ))
-
-    kolommen = ["ID", "_startdatum_iso", "Teeltvak", "Startweek", "Status",
-                "Week Halverwege", "Lengte Half (cm)", "Florgib (g)", "Oogstweek", "Teeltduur (dagen)",
-                "Oogstlengte (cm)", "Oogstgewicht (gram)", "Rijpheid", "Uitval (%)",
-                "Aantal Planten", "Aantal Emmers", "Aantal Stelen", "Code",
-                "Startdatum", "Datum Halverwege", "Oogstdatum"]
-    return kolommen, rijen_uitgebreid
 
 
 # --- KLIMAATDATA (KLIMAATCOMPUTER-CSV) ---

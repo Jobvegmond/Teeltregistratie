@@ -104,7 +104,9 @@ def teelt(k, m2, prognose=None, florgib_historie=None):
         "fase1": (half - start).days if half else None,
         "fase2": (eind - half).days if eind and half else None,
         "teeltduur": (eind - start).days if eind else None,
-        "stelen_m2": stelen / m2 if stelen and m2 else None, "uitval": uitval,
+        "stelen_m2": stelen / m2 if stelen and m2 else None,
+        # Uitval pas als het vak afgerond is: tijdens het oogsten lijkt een vak anders bijna helemaal uitgevallen.
+        "uitval": uitval if oogst else None,
         "lengte": lengte, "gewicht": _getal(k.get("oogstgewicht")), "lengte_fg": lengte_fg,
         "lengtefactor": lengte / lengte_fg if lengte and lengte_fg else None,
         "stek": _getal(k.get("beoordeling")),
