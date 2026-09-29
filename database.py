@@ -565,6 +565,21 @@ def init_db():
         # (logic/prognoselog.py). Nooit bijwerken: de eerste regel van een dag blijft.
         cursor.execute(PROGNOSE_LOG_TABEL)
 
+        # Opmerkingen per vak (teelt), bijv. een afwijking in de groei.
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS opmerkingen (
+                id SERIAL PRIMARY KEY,
+                teelt_id INTEGER NOT NULL REFERENCES teelten (id) ON DELETE CASCADE,
+                datum TEXT NOT NULL,
+                categorie TEXT,
+                tekst TEXT NOT NULL,
+                gebruiker TEXT,
+                aangemaakt_op TIMESTAMPTZ DEFAULT now(),
+                gewijzigd_op TIMESTAMPTZ
+            )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS opmerkingen_teelt ON opmerkingen (teelt_id)")
+
         conn.commit()
 
 
@@ -1821,6 +1836,59 @@ def get_teeltvergelijking_data():
             teelten.append({**k, **{s: v for s, v in per_id.get(k["id"], {}).items() if s != "id"},
                             "tuin_id": tuin_id})
     return teelten
+
+
+def voeg_opmerking_toe(teelt_ids, datum, categorie, tekst, gebruiker=None):
+    """Dezelfde opmerking bij elk van de gegeven vakken (één regel per vak)."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        for teelt_id in teelt_ids:
+            cursor.execute("""
+                INSERT INTO opmerkingen (teelt_id, datum, categorie, tekst, gebruiker)
+                VALUES (%s, %s, %s, %s, %s)
+            """, (teelt_id, str(datum), categorie, tekst, gebruiker))
+        conn.commit()
+    for teelt_id in teelt_ids:
+        log_wijziging(gebruiker, "aangemaakt", "opmerking", teelt_id,
+                      f"Opmerking {format_datum(datum)} ({categorie}): {tekst[:80]}")
+
+
+def get_opmerkingen(teelt_id):
+    """Opmerkingen van één vak, oud naar nieuw, als dicts."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, datum, categorie, tekst, gebruiker, gewijzigd_op
+            FROM opmerkingen WHERE teelt_id = %s ORDER BY datum, id
+        """, (teelt_id,))
+        kolommen = ("id", "datum", "categorie", "tekst", "gebruiker", "gewijzigd_op")
+        return [dict(zip(kolommen, r)) for r in cursor.fetchall()]
+
+
+def wijzig_opmerking(opmerking_id, datum, categorie, tekst, gebruiker=None):
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE opmerkingen SET datum = %s, categorie = %s, tekst = %s, gewijzigd_op = now()
+            WHERE id = %s RETURNING teelt_id
+        """, (str(datum), categorie, tekst, opmerking_id))
+        rij = cursor.fetchone()
+        conn.commit()
+    if rij:
+        log_wijziging(gebruiker, "gewijzigd", "opmerking", rij[0],
+                      f"Opmerking {format_datum(datum)} ({categorie}): {tekst[:80]}")
+
+
+def verwijder_opmerking(opmerking_id, gebruiker=None):
+    """Verwijdert precies één opmerking (op id)."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM opmerkingen WHERE id = %s RETURNING teelt_id, datum, tekst", (opmerking_id,))
+        rij = cursor.fetchone()
+        conn.commit()
+    if rij:
+        log_wijziging(gebruiker, "verwijderd", "opmerking", rij[0],
+                      f"Opmerking {format_datum(rij[1])} verwijderd: {rij[2][:80]}")
 
 
 PROGNOSE_LOG_TABEL = """

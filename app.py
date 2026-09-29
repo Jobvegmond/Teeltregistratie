@@ -89,6 +89,10 @@ from database import (
     schrijf_prognose_log,
     get_prognose_log,
     get_oogst_emmers,
+    voeg_opmerking_toe,
+    get_opmerkingen,
+    wijzig_opmerking,
+    verwijder_opmerking,
     get_vergelijking_data,
     get_teeltvergelijking_data,
     warmte_per_bezette_m2,
@@ -108,7 +112,7 @@ from ui import styles, vergelijkingstabel
 from ui.vergelijkingstabel import Kengetal, verloop_frame
 from config import (
     AFDELING_VOLGORDE, AFWIJKING_VENSTER_DAGEN, C_GRENZEN, FLORGIB_ACHTERSTAND_DAGEN,
-    OP_KOERS_MARGE,
+    OP_KOERS_MARGE, OPMERKING_CATEGORIEEN,
 )
 
 # --- PAGINA-INSTELLINGEN ---
@@ -922,13 +926,13 @@ def toon_oogstregistraties_beheer(teelt_id, teelt_info):
 # een lopende teelt.
 st.sidebar.header("Registratie")
 
-FLORGIB, OOGST, WIJZIGEN = "Florgib lengte", "Oogst", "Wijzigen of verwijderen"
-actie = st.sidebar.radio("Wat wil je doen?", [FLORGIB, OOGST, WIJZIGEN])
+FLORGIB, OOGST, OPMERKING, WIJZIGEN = "Florgib lengte", "Oogst", "Opmerking", "Wijzigen of verwijderen"
+actie = st.sidebar.radio("Wat wil je doen?", [FLORGIB, OOGST, OPMERKING, WIJZIGEN])
 
 # Elke actie krijgt een eigen plek in de zijbalk; de plekken van de andere twee
 # blijven leeg. Streamlit ruimt namelijk alleen op wat het opnieuw tekent: zonder
 # die vaste plekken bleven de velden van de vorige keuze er grijs onder staan.
-_paneel = {naam: st.sidebar.empty() for naam in (FLORGIB, OOGST, WIJZIGEN)}
+_paneel = {naam: st.sidebar.empty() for naam in (FLORGIB, OOGST, OPMERKING, WIJZIGEN)}
 with _paneel[actie].container():
 
     # --- ACTIE 2: HALVERWEGE VOOR MEERDERE VAKKEN ---
@@ -1093,6 +1097,36 @@ with _paneel[actie].container():
                 st.info("Geen lopende vakken.")
 
     # --- ACTIE 4: WIJZIGEN / VERWIJDEREN ---
+    elif actie == OPMERKING:
+        # Een opmerking bij één of meer lopende vakken, bijv. een afwijking in de
+        # groei. Terug te zien (en te wijzigen) in de vakpopup.
+        lopende_opm = get_lopende_teelten()
+        if not lopende_opm:
+            st.info("Geen lopende vakken.")
+        else:
+            keuzes_opm = {label: teelt_id for teelt_id, label in lopende_opm}
+            if st.session_state.get("opmerking_melding"):
+                st.success(st.session_state.pop("opmerking_melding"))
+            # Nieuwe sleutel na elke opslag: dan is het formulier weer leeg, maar
+            # bij een waarschuwing blijft de getypte tekst staan.
+            with st.form(f"opmerking_form_{st.session_state.get('opmerking_versie', 0)}"):
+                labels_opm = st.multiselect("Vakken", list(keuzes_opm))
+                datum_opm = st.date_input("Datum", format="DD-MM-YYYY")
+                categorie_opm = st.selectbox("Categorie", OPMERKING_CATEGORIEEN)
+                tekst_opm = st.text_area("Opmerking", placeholder="Bijv. vak 12 blijft achter in lengte, bladpunten geel")
+                if st.form_submit_button("Opslaan"):
+                    if not labels_opm:
+                        st.warning("Kies minstens één vak.")
+                    elif not tekst_opm.strip():
+                        st.warning("Schrijf een opmerking.")
+                    else:
+                        voeg_opmerking_toe([keuzes_opm[l] for l in labels_opm], datum_opm, categorie_opm,
+                                           tekst_opm.strip(), gebruiker=huidige_gebruiker())
+                        st.session_state["opmerking_melding"] = (
+                            f"Opmerking opgeslagen bij {len(labels_opm)} {'vak' if len(labels_opm) == 1 else 'vakken'}.")
+                        st.session_state["opmerking_versie"] = st.session_state.get("opmerking_versie", 0) + 1
+                        st.rerun()
+
     elif actie == WIJZIGEN:
 
         alle_teelten = get_alle_teelten_voor_selectie()
@@ -1539,6 +1573,37 @@ def _nu_klimaat_doel(s, klimaat):
                   "die kalenderweek, tot de plandatum." if u and u["c"] is not None else ""))
 
 
+def toon_opmerkingen(teelt_id):
+    """Opmerkingen van één vak in de vakpopup, oud naar nieuw, elk te wijzigen of te verwijderen."""
+    opmerkingen = get_opmerkingen(teelt_id)
+    st.write(f"**Opmerkingen** ({len(opmerkingen)})" if opmerkingen else "**Opmerkingen**")
+    if not opmerkingen:
+        st.caption("Nog geen opmerkingen. Voeg er een toe via Opmerking in de zijbalk.")
+        return
+    for o in opmerkingen:
+        with st.container(border=True):
+            kop, knop = st.columns([5, 1], vertical_alignment="center")
+            kop.caption(f"{format_datum(o['datum'])} · {o['categorie'] or 'Overig'} · {o['gebruiker'] or '-'}"
+                        + (" · gewijzigd" if o["gewijzigd_op"] else ""))
+            st.write(o["tekst"])
+            with knop.popover("Wijzigen"):
+                with st.form(f"opm_wijzig_{o['id']}"):
+                    datum = st.date_input("Datum", vs.als_datum(o["datum"]), format="DD-MM-YYYY")
+                    categorie = st.selectbox(
+                        "Categorie", OPMERKING_CATEGORIEEN,
+                        index=OPMERKING_CATEGORIEEN.index(o["categorie"]) if o["categorie"] in OPMERKING_CATEGORIEEN
+                        else len(OPMERKING_CATEGORIEEN) - 1)
+                    tekst = st.text_area("Opmerking", o["tekst"])
+                    weg = st.checkbox("Deze opmerking verwijderen")
+                    if st.form_submit_button("Opslaan"):
+                        if weg:
+                            verwijder_opmerking(o["id"], gebruiker=huidige_gebruiker())
+                        elif tekst.strip() and (str(datum), categorie, tekst.strip()) != (
+                                str(vs.als_datum(o["datum"])), o["categorie"], o["tekst"]):
+                            wijzig_opmerking(o["id"], datum, categorie, tekst.strip(), gebruiker=huidige_gebruiker())
+                        st.rerun(scope="fragment")
+
+
 def teelt_detail(s, klimaat, water, model=None):
     """
     De hele teelt van één vak: tijdlijn, voortgang (lopend), klimaat tegen de
@@ -1675,6 +1740,7 @@ def _nu_vak_venster(info, vak, vandaag, data):
         water = data["water"]
         water = water[(water["tuin_id"] == tuin["id"]) & (water["vaknummer"] == vak)
                       & (water["datum"] >= str(s["start"]))]
+        toon_opmerkingen(int(t["id"]))
         teelt_detail(s, klimaat, [{"datum": r.datum, "liter": r.liter_per_m2} for r in water.itertuples()], model)
 
         st.write("**Vergelijking**")
@@ -2281,6 +2347,7 @@ def _tl_detail_venster(teelt_id, vakken, vandaag):
             columns=["datum", "temp_24h", "rv_24h", "lichtsom", "temp_dag", "temp_nacht", "rv_dag", "rv_nacht"])
         water = [{"datum": d, "liter": liter}
                  for d, liter in get_watergift_dagen_voor_periode(t["vaknummer"], str(start), str(eind), t["tuin_id"])]
+        toon_opmerkingen(teelt_id)
         teelt_detail(s, klimaat, water, model)
 
     _venster()

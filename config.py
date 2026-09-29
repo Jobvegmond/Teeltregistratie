@@ -37,3 +37,6 @@ C_GRENZEN = (-2.0, 3.0)         # c niet verder dan dit; daarbuiten: prognose op
 OP_KOERS_MARGE = 0.2            # |c| kleiner dan dit: "op koers"
 FLORGIB_ACHTERSTAND_DAGEN = 3   # gestippelde rand als de verwachte Florgib zoveel dagen voorbij is
 AFWIJKING_VENSTER_DAGEN = 14    # "huidige stooklijn" = gemiddelde afwijking van de afdeling over zoveel dagen
+
+# --- OPMERKINGEN PER VAK ---
+OPMERKING_CATEGORIEEN = ("Groei", "Ziekte/plagen", "Water", "Klimaat", "Overig")
