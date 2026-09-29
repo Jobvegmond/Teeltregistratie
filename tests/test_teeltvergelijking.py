@@ -52,6 +52,13 @@ class TestVak(unittest.TestCase):
         self.assertEqual(t["teeltduur"], 65)
         self.assertAlmostEqual(t["water"], 2.0 * 27)                 # 01-09 t/m 27-09
 
+    def test_uitval_alleen_bij_afgeronde_vakken(self):
+        # Vak 11 wordt nog geoogst: 90 van de 100 emmers staan er nog niet in, dat is geen 99 % uitval.
+        lopend = vak(regel(8, 3, 11, "2026-08-10", aantal_planten=10000, uitval_pct=99.4))
+        self.assertIsNone(lopend["uitval"])
+        afgerond = vak(regel(9, 3, 11, "2026-08-10", oogst="2026-09-28", aantal_planten=10000, uitval_pct=4.0))
+        self.assertAlmostEqual(afgerond["uitval"], 4.0)
+
     def test_teeltdag_kapt_venster_af(self):
         t = vak(regel(3, 3, 5, "2025-08-04", oogst="2025-09-23"), teeltdag=20)
         self.assertEqual(t["venster_eind"], date(2025, 8, 24))

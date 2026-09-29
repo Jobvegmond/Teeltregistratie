@@ -10,7 +10,6 @@ from psycopg2 import pool as psycopg2_pool
 
 from config import GAS_CALORISCHE_WAARDE_MJ_PER_M3, LICHTLIJN_BASIS, LICHTLIJN_FACTOR  # noqa: F401
 from logic.lichtlijn import t_ideaal
-from utils.format import fmt_verschil
 
 
 def _laad_dotenv():
@@ -49,18 +48,6 @@ def get_weeknummer(datum):
     if isinstance(datum, str):
         datum = datetime.strptime(datum, "%Y-%m-%d").date()
     return datum.isocalendar()[1]
-
-
-def get_teeltduur(datum_start, datum_einde):
-    """Berekent het aantal dagen tussen twee datums."""
-    if isinstance(datum_start, str):
-        datum_start = datetime.strptime(datum_start, "%Y-%m-%d").date()
-    if isinstance(datum_einde, str):
-        datum_einde = datetime.strptime(datum_einde, "%Y-%m-%d").date()
-
-    if datum_einde and datum_start:
-        return (datum_einde - datum_start).days
-    return None
 
 
 def format_datum(datum):
@@ -574,6 +561,10 @@ def init_db():
             code = genereer_teelt_code(datum_start, vaknummer)
             cursor.execute("UPDATE teelten SET code = %s WHERE id = %s", (code, teelt_id))
 
+        # Prognoselogboek: per lopend vak per dag wat het teeltmodel voorspelde
+        # (logic/prognoselog.py). Nooit bijwerken: de eerste regel van een dag blijft.
+        cursor.execute(PROGNOSE_LOG_TABEL)
+
         conn.commit()
 
 
@@ -1031,21 +1022,6 @@ def verwijder_oogstregistratie(registratie_id, gebruiker=None):
     log_wijziging(gebruiker, "verwijderd", "oogstregistratie", registratie_id, omschrijving)
 
 
-def get_totaal_emmers_per_teelt(tuin_id=None):
-    """Geeft een dict {teelt_id: totaal_aantal_emmers} terug voor de teelten van een tuin."""
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT o.teelt_id, SUM(o.aantal_emmers)
-            FROM oogstregistraties o
-            JOIN teelten t ON t.id = o.teelt_id
-            JOIN teeltvakken v ON v.id = t.teeltvak_id
-            WHERE v.tuin_id = %s
-            GROUP BY o.teelt_id
-        """, (_tuin_of_standaard(tuin_id),))
-        return {teelt_id: totaal for teelt_id, totaal in cursor.fetchall()}
-
-
 # --- GEBRUIKERS (INLOG) ---
 
 def get_gebruikers_credentials():
@@ -1113,97 +1089,6 @@ def get_alle_gebruikers():
         cursor = conn.cursor()
         cursor.execute("SELECT username, naam, email FROM gebruikers ORDER BY username")
         return cursor.fetchall()
-
-
-def get_overzicht_dataframe(tuin_id=None):
-    """
-    Geeft alle teelten terug inclusief teeltvaknaam, code, weeknummers,
-    teeltduur, geoogste emmers en uitvalpercentage.
-    """
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT
-                t.id,
-                t.code,
-                v.naam,
-                t.aantal_planten,
-                t.datum_teelt_start,
-                t.datum_half,
-                t.lengte_half,
-                t.florgib_gram,
-                t.datum_oogst,
-                t.lengte_eind,
-                t.oogstgewicht,
-                t.rijpheid,
-                t.uitval_pct
-            FROM teelten t
-            JOIN teeltvakken v ON t.teeltvak_id = v.id
-            WHERE v.tuin_id = %s
-            ORDER BY (t.code IS NULL), t.code
-        """, (_tuin_of_standaard(tuin_id),))
-        teelt_rijen = cursor.fetchall()
-
-    totaal_emmers_per_teelt = get_totaal_emmers_per_teelt()
-    vandaag_iso = str(date.today())
-
-    rijen_uitgebreid = []
-    for row in teelt_rijen:
-        (teelt_id, code, naam, aantal_planten, start, half_datum, half_lengte,
-         florgib_gram, oogst_datum, eind_lengte, gewicht, rijpheid, uitval_gemeten) = row
-
-        start_week = get_weeknummer(start) if start else "-"
-        teeltduur = get_teeltduur(start, oogst_datum) if (start and oogst_datum) else "-"
-
-        totaal_emmers = totaal_emmers_per_teelt.get(teelt_id)
-        totaal_stelen = totaal_emmers * 100 if totaal_emmers else "-"
-
-        # Zijn er emmers geteld, dan is dat de bron; anders het percentage dat
-        # bij de teelt zelf is vastgelegd (zoals bij de oude registratie van tuin 1).
-        if aantal_planten and totaal_emmers:
-            uitval_pct = f"{(aantal_planten - totaal_emmers * 100) / aantal_planten * 100:.2f}"
-        elif uitval_gemeten is not None:
-            uitval_pct = f"{uitval_gemeten:.2f}"
-        else:
-            uitval_pct = "-"
-
-        if oogst_datum:
-            status = "Afgerond"
-        elif start and start > vandaag_iso:
-            status = "Nog te starten"
-        else:
-            status = "Lopend"
-
-        rijen_uitgebreid.append((
-            teelt_id,
-            str(start) if start else "",  # verborgen sorteersleutel (ISO)
-            naam,
-            start_week,
-            status,
-            get_weeknummer(half_datum) if half_datum else "-",
-            half_lengte if half_lengte else "-",
-            florgib_gram if florgib_gram else "-",
-            get_weeknummer(oogst_datum) if oogst_datum else "-",
-            teeltduur,
-            eind_lengte if eind_lengte else "-",
-            round(gewicht) if gewicht else "-",
-            rijpheid if rijpheid else "-",
-            uitval_pct,
-            aantal_planten if aantal_planten else "-",
-            totaal_emmers if totaal_emmers else "-",
-            totaal_stelen,
-            code if code else "-",
-            format_datum(start) if start else "-",
-            format_datum(half_datum) if half_datum else "-",
-            format_datum(oogst_datum) if oogst_datum else "-",
-        ))
-
-    kolommen = ["ID", "_startdatum_iso", "Teeltvak", "Startweek", "Status",
-                "Week Halverwege", "Lengte Half (cm)", "Florgib (g)", "Oogstweek", "Teeltduur (dagen)",
-                "Oogstlengte (cm)", "Oogstgewicht (gram)", "Rijpheid", "Uitval (%)",
-                "Aantal Planten", "Aantal Emmers", "Aantal Stelen", "Code",
-                "Startdatum", "Datum Halverwege", "Oogstdatum"]
-    return kolommen, rijen_uitgebreid
 
 
 # --- KLIMAATDATA (KLIMAATCOMPUTER-CSV) ---
@@ -1539,28 +1424,6 @@ VAK_OPPERVLAKTE_SMAL = 275
 VAKKEN_SMAL = {19, 20}
 
 
-def oppervlakte_van_vaknummer(vaknummer, tuin_id=None):
-    """
-    Kasoppervlak (m2) van een vak binnen een tuin. Komt uit de tabel; staat het
-    daar nog niet, dan uit de vaste maten van die tuin. Op tuin 3 is een vak
-    550 m2 (vak 19 en 20 de helft), op tuin 1 883,2 m2 (vak 1 de helft).
-    """
-    if vaknummer is None:
-        return None
-    vaknummer = int(vaknummer)
-    tuin_id = _tuin_of_standaard(tuin_id)
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT oppervlakte_m2 FROM teeltvakken WHERE tuin_id = %s AND vaknummer = %s",
-            (tuin_id, vaknummer),
-        )
-        rij = cursor.fetchone()
-    if rij and rij[0]:
-        return float(rij[0])
-    return standaard_oppervlakte_van_vak(vaknummer, tuin_id)
-
-
 def standaard_oppervlakte_van_vak(vaknummer, tuin_id=None):
     """De vaste maat van een vak volgens de indeling van die tuin."""
     if vaknummer is None:
@@ -1693,62 +1556,6 @@ def verwerk_energie_csv(bestand, gebruiker=None, tuin_id=None):
         f"(nog niet afgerond), {len(gas)} dagen gasverbruik verwerkt"
     )
     return len(warmte), overgeslagen, len(gas)
-
-
-def get_energiedata_dagen_voor_periode(datum_start, datum_eind, tuin_id=None):
-    """Losse dagregels (datum, warmte_mj_totaal, warmte_mj_per_m2) voor grafieken."""
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT datum, warmte_mj_totaal, warmte_mj_per_m2
-            FROM energiedata_dag
-            WHERE tuin_id = %s AND datum BETWEEN %s AND %s
-            ORDER BY datum
-        """, (_tuin_of_standaard(tuin_id), str(datum_start), str(datum_eind)))
-        return cursor.fetchall()
-
-
-def get_energiedata_dekking(tuin_id=None):
-    """(eerste_datum, laatste_datum, aantal_dagen, ontbrekende_dagen) of None."""
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT MIN(datum), MAX(datum), COUNT(*) FROM energiedata_dag WHERE tuin_id = %s",
-                       (_tuin_of_standaard(tuin_id),))
-        rij = cursor.fetchone()
-
-    if not rij or rij[0] is None:
-        return None
-    eerste_d = datetime.strptime(str(rij[0]), "%Y-%m-%d").date()
-    laatste_d = datetime.strptime(str(rij[1]), "%Y-%m-%d").date()
-    verwacht = (laatste_d - eerste_d).days + 1
-    ontbrekend = max(verwacht - rij[2], 0)
-    return (str(rij[0]), str(rij[1]), rij[2], ontbrekend)
-
-
-def get_gasdata_dagen_voor_periode(datum_start, datum_eind, tuin_id=None):
-    """Losse dagregels (datum, gas_m3_totaal, gas_mj_totaal, gas_mj_per_m2) voor grafieken."""
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT datum, gas_m3_totaal, gas_mj_totaal, gas_mj_per_m2
-            FROM gasdata_dag
-            WHERE tuin_id = %s AND datum BETWEEN %s AND %s
-            ORDER BY datum
-        """, (_tuin_of_standaard(tuin_id), str(datum_start), str(datum_eind)))
-        return cursor.fetchall()
-
-
-def get_gasdata_dekking(tuin_id=None):
-    """(eerste_datum, laatste_datum, aantal_dagen) of None."""
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT MIN(datum), MAX(datum), COUNT(*) FROM gasdata_dag WHERE tuin_id = %s",
-                       (_tuin_of_standaard(tuin_id),))
-        rij = cursor.fetchone()
-
-    if not rij or rij[0] is None:
-        return None
-    return (str(rij[0]), str(rij[1]), rij[2])
 
 
 def warmte_per_bezette_m2(tuin_id=None):
@@ -2016,6 +1823,78 @@ def get_teeltvergelijking_data():
     return teelten
 
 
+PROGNOSE_LOG_TABEL = """
+    CREATE TABLE IF NOT EXISTS prognose_log (
+        id SERIAL PRIMARY KEY,
+        datum DATE NOT NULL,
+        teelt_id INTEGER REFERENCES teelten (id) ON DELETE CASCADE,
+        tuin_id INTEGER, afdeling INTEGER, vaknummer INTEGER, code TEXT,
+        leeftijd_d INTEGER,
+        fase TEXT,
+        gedaan REAL,
+        plan_oogst DATE, prognose_oogst DATE,
+        correctie_c REAL, c_begrensd BOOLEAN,
+        stooklijn REAL, stooklijn_bron TEXT,
+        modelversie TEXT,
+        aangemaakt_op TIMESTAMPTZ DEFAULT now(),
+        UNIQUE (datum, teelt_id)
+    )
+"""
+PROGNOSE_LOG_KOLOMMEN = ("datum", "teelt_id", "tuin_id", "afdeling", "vaknummer", "code", "leeftijd_d", "fase",
+                         "gedaan", "plan_oogst", "prognose_oogst", "correctie_c", "c_begrensd", "stooklijn",
+                         "stooklijn_bron", "modelversie")
+PROGNOSE_LOG_INSERT = (
+    f"INSERT INTO prognose_log ({', '.join(PROGNOSE_LOG_KOLOMMEN)}) "
+    f"VALUES ({', '.join(f'%({k})s' for k in PROGNOSE_LOG_KOLOMMEN)}) "
+    "ON CONFLICT (datum, teelt_id) DO NOTHING"
+)
+
+
+def schrijf_prognose_log(regels):
+    """Logregels (logic/prognoselog.logregels) wegschrijven; een vak dat vandaag al gelogd is, blijft zoals het was.
+    Geeft het aantal nieuwe regels."""
+    if not regels:
+        return 0
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        nieuw = 0
+        for regel in regels:
+            cursor.execute(PROGNOSE_LOG_INSERT, regel)
+            nieuw += cursor.rowcount
+        conn.commit()
+    return nieuw
+
+
+def get_prognose_log():
+    """Alle logregels van vakken die inmiddels geoogst zijn, als dicts (voor Prognosekwaliteit)."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(f"""
+            SELECT {', '.join('p.' + k for k in PROGNOSE_LOG_KOLOMMEN)}
+            FROM prognose_log p JOIN teelten t ON t.id = p.teelt_id
+            WHERE t.datum_oogst IS NOT NULL AND t.datum_oogst <> ''
+            ORDER BY p.teelt_id, p.datum
+        """)
+        return [dict(zip(PROGNOSE_LOG_KOLOMMEN, r)) for r in cursor.fetchall()]
+
+
+def get_oogst_emmers(teelt_ids):
+    """{teelt_id: ({datum: emmers}, datum_oogst)} voor de gegeven teelten."""
+    if not teelt_ids:
+        return {}
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, datum_oogst FROM teelten WHERE id = ANY(%s)", (list(teelt_ids),))
+        uit = {int(i): ({}, oogst) for i, oogst in cursor.fetchall()}
+        cursor.execute("""
+            SELECT teelt_id, datum, SUM(aantal_emmers) FROM oogstregistraties
+            WHERE teelt_id = ANY(%s) GROUP BY teelt_id, datum
+        """, (list(teelt_ids),))
+        for teelt_id, datum, emmers in cursor.fetchall():
+            uit[int(teelt_id)][0][datum] = float(emmers or 0)
+    return uit
+
+
 def get_teelthistorie_data():
     """
     De leerdata van het teeltmodel in twee query's: teelt_historie (met tuin_id)
@@ -2078,104 +1957,6 @@ def get_klimaatdata_dekking(tuin_id=None):
         ontbrekend = max(verwacht - aantal, 0)
         resultaat.append((afdeling, str(eerste), str(laatste), aantal, ontbrekend))
     return resultaat
-
-
-def get_klimaat_overzicht_dataframe(tuin_id=None):
-    """
-    Koppelt de opgeslagen klimaatdata aan elke teelt (via het vak -> de afdeling
-    en de teeltperiode) en geeft kolommen + rijen terug voor weergave in het
-    dashboard. Teelten zonder overlappende klimaatdata worden overgeslagen.
-
-    Alles in één query: per teelt losse vragen stellen kostte bij ruim 200
-    teelten meer dan twintig seconden, en dat bij elke schermvernieuwing.
-    """
-    tuin_id = _tuin_of_standaard(tuin_id)
-    vandaag = str(date.today())
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            WITH basis AS (
-                SELECT t.id, t.code, v.naam, v.vaknummer, v.afdeling, v.tuin_id,
-                       v.oppervlakte_m2,
-                       t.datum_teelt_start AS start, t.datum_oogst,
-                       COALESCE(t.datum_oogst, %s) AS eind
-                FROM teelten t
-                JOIN teeltvakken v ON v.id = t.teeltvak_id
-                WHERE v.tuin_id = %s AND v.afdeling IS NOT NULL
-            )
-            SELECT b.code, b.naam, b.afdeling, b.start, b.datum_oogst, b.id,
-                   b.vaknummer, b.oppervlakte_m2,
-                   k.gem_temperatuur, k.gem_rv, k.gem_straling,
-                   w.liters
-            FROM basis b
-            LEFT JOIN LATERAL (
-                SELECT AVG(gem_temperatuur) AS gem_temperatuur, AVG(gem_rv) AS gem_rv,
-                       AVG(stralingssom_dag) AS gem_straling, COUNT(*) AS dagen
-                FROM klimaatdata_dag k
-                WHERE k.tuin_id = b.tuin_id AND k.afdeling = b.afdeling
-                  AND k.datum BETWEEN b.start AND b.eind
-            ) k ON TRUE
-            LEFT JOIN LATERAL (
-                SELECT SUM(liter_per_m2) AS liters
-                FROM watergift_dag w
-                WHERE w.tuin_id = b.tuin_id AND w.vaknummer = b.vaknummer
-                  AND w.datum BETWEEN b.start AND b.eind
-            ) w ON TRUE
-            WHERE k.dagen > 0
-            ORDER BY (b.code IS NULL), b.code
-        """, (vandaag, tuin_id))
-        teelt_rijen = cursor.fetchall()
-
-    warmte_per_dag = warmte_per_bezette_m2(tuin_id)
-    rijen = []
-    standaard_maat = {}
-    for (code, naam, afdeling, start, oogst, teelt_id, vaknummer, oppervlakte,
-         gem_temperatuur, gem_rv, gem_straling, liters) in teelt_rijen:
-        mj_per_m2, _ = warmte_over_periode(warmte_per_dag, start, oogst or vandaag)
-        if not oppervlakte:
-            if vaknummer not in standaard_maat:
-                standaard_maat[vaknummer] = standaard_oppervlakte_van_vak(vaknummer, tuin_id)
-            oppervlakte = standaard_maat[vaknummer]
-        gem_temperatuur = float(gem_temperatuur) if gem_temperatuur is not None else None
-        gem_straling = float(gem_straling) if gem_straling is not None else None
-
-        ideaal = ideale_etmaaltemperatuur(gem_straling)
-        if ideaal is not None and gem_temperatuur is not None:
-            verschil = gem_temperatuur - ideaal
-            if verschil > 0.3:
-                verschil_tekst = f"↑ {fmt_verschil(verschil, 1)}"
-            elif verschil < -0.3:
-                verschil_tekst = f"↓ {fmt_verschil(verschil, 1)}"
-            else:
-                verschil_tekst = f"≈ {fmt_verschil(verschil, 1)}"
-        else:
-            verschil_tekst = "-"
-
-        # De warmte per bezette m2 (alleen vakken met een teelt) maal het
-        # oppervlak van dit vak geeft de GJ die in die periode naar deze
-        # teelt gingen.
-        warmte_gj = (float(mj_per_m2) * oppervlakte / 1000) if (mj_per_m2 and oppervlakte) else None
-
-        rijen.append((
-            code if code else f"ID{teelt_id}",
-            naam,
-            afdeling,
-            format_datum(start),
-            format_datum(oogst) if oogst else "lopend",
-            round(gem_temperatuur, 1) if gem_temperatuur is not None else "-",
-            round(float(gem_rv), 1) if gem_rv is not None else "-",
-            round(gem_straling) if gem_straling is not None else "-",
-            round(ideaal, 1) if ideaal is not None else "-",
-            verschil_tekst,
-            round(float(liters), 1) if liters is not None else "-",
-            round(warmte_gj, 2) if warmte_gj is not None else "-",
-        ))
-
-    kolommen = ["Code", "Teeltvak", "Afdeling", "Startdatum", "Oogstdatum",
-                "Gem. temperatuur (°C)", "Gem. RV (%)", "Gem. stralingssom (per dag)",
-                "Ideale temp (°C)", "Verschil (°C)",
-                "Totaal water (l/m²)", "Totaal warmte (GJ)"]
-    return kolommen, rijen
 
 
 # --- PLANNING (TOEKOMSTIGE TEELTEN) ---

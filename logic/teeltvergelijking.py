@@ -11,7 +11,7 @@ tests/test_teeltvergelijking.py.
 - Lopende vakken tellen mee voor klimaat en input (gemarkeerd ⏳); resultaten
   die pas bij de oogst bekend zijn (stelen/m², uitval, lengte, gewicht,
   lengtefactor) alleen van afgeronde vakken.
-- Oogstdatum van een lopend vak = de prognose uit het Nu-model (⏳).
+- Oogstdatum van een lopend vak = de prognose uit het teeltmodel (⏳).
 - Florgib: de datum in de app, anders die uit teelt_historie (klimaatregistratie).
 - Warmte per vak alleen als (vrijwel) elke dag van het venster gemeten is.
 - Stelen: uit de emmers, anders geplant × (1 − vastgelegde uitval); anders onbekend.
@@ -104,7 +104,9 @@ def teelt(k, m2, prognose=None, florgib_historie=None):
         "fase1": (half - start).days if half else None,
         "fase2": (eind - half).days if eind and half else None,
         "teeltduur": (eind - start).days if eind else None,
-        "stelen_m2": stelen / m2 if stelen and m2 else None, "uitval": uitval,
+        "stelen_m2": stelen / m2 if stelen and m2 else None,
+        # Uitval pas als het vak afgerond is: tijdens het oogsten lijkt een vak anders bijna helemaal uitgevallen.
+        "uitval": uitval if oogst else None,
         "lengte": lengte, "gewicht": _getal(k.get("oogstgewicht")), "lengte_fg": lengte_fg,
         "lengtefactor": lengte / lengte_fg if lengte and lengte_fg else None,
         "stek": _getal(k.get("beoordeling")),
