@@ -77,7 +77,6 @@ from database import (
     get_vaknummers,
     get_standaard_tuin_van_gebruiker,
     zet_actieve_tuin,
-    stelen_bij_60_van_vak,
     STANDAARD_RAS,
     get_stek_voor_week,
     sla_stekbeoordeling_op,
@@ -95,6 +94,7 @@ from database import (
 from logic import vakstatus as vs
 from logic import kengetallen as kg
 from logic import perioden
+from logic import planning_editor
 from logic import tuinvergelijking as tuinvgl
 from logic import teeltvergelijking as teeltvgl
 from logic import teeltprognose as tp
@@ -826,18 +826,6 @@ def rijpheid_tekst_naar_bereik(tekst):
         return (waarde, waarde)
     except ValueError:
         return (1, 4)
-
-
-def bereken_aantal_stelen(vaknummer, stelen_per_m2, tuin_id=None):
-    """
-    Vooringevuld aantal stelen voor een vak bij de gekozen plantdichtheid
-    (40, 50 of 60 stelen per m²), herschaald vanaf de basiswaarde bij 60
-    stelen/m² van dat vak. Die basiswaarde staat per vak in de database
-    (halve vakken hebben er de helft van), zodat beide tuinen dezelfde
-    berekening gebruiken.
-    """
-    basis_60 = stelen_bij_60_van_vak(int(vaknummer), tuin_id) or 0
-    return round(basis_60 / 60 * stelen_per_m2)
 
 
 def standaard_dichtheid_voor_plantweek(week):
@@ -2635,6 +2623,8 @@ with tab_planning:
         toon_strokenplanning(stroken, get_vaknummers())
         st.markdown("---")
 
+    toon_vooruitblik(date.today())
+
     # Horizon voor de jaarplanning-tabel en het (her)plannen: een vol jaar vooruit.
     aantal_weken_vooruit = 52
 
@@ -2688,6 +2678,74 @@ with tab_planning:
     _cyclusvakken = [v for _rep, _vakken in _eenheden_tuin for v in _vakken] or [1]
     CYCLUS = f"{min(_cyclusvakken)}-{max(_cyclusvakken)}"
     KOLOM_VAKKEN = f"Vakken ({CYCLUS})"
+
+    st.markdown("---")
+    st.write("**Concept-planningen**")
+    if st.session_state.get("planning_melding"):
+        st.success(st.session_state.pop("planning_melding"))
+    planning_rijen = get_planning()  # gesorteerd op startdatum (dus per week), dan vaknummer
+    if not planning_rijen:
+        st.info("Nog geen concept-planningen.")
+    else:
+        alles_tonen = st.toggle("Alles tonen", key="planning_alles",
+                                help="Standaard alleen de concepten die in de komende 8 weken starten.")
+        grens = date.today() + timedelta(weeks=8)
+        stelen_60 = {v: g["stelen_bij_60"] for v, g in get_vakgegevens(TUIN_ID).items()}
+        origineel, regels = {}, []
+        for planning_id, vaknummer, start, duur, eind, _notitie in planning_rijen:
+            start_d = vs.als_datum(start)
+            if not alles_tonen and start_d > grens:
+                continue
+            jaar, week, _ = start_d.isocalendar()
+            planten = round((stelen_60.get(vaknummer) or 0) / 60 * standaard_dichtheid_voor_plantweek(week))
+            origineel[planning_id] = {"start": start_d, "planten": planten, "bevestigen": False, "verwijderen": False}
+            regels.append({"id": planning_id, "Week": f"wk {week} '{str(jaar)[2:]}", "Vak": vaknummer,
+                           "Startdatum": start_d, "Duur (wk)": duur, "Verwachte oogst": vs.als_datum(eind),
+                           "Planten": planten, "✅ Bevestigen": False, "🗑️ Verwijderen": False})
+        if not regels:
+            st.caption("Geen concepten in de komende 8 weken; zet 'Alles tonen' aan voor de rest.")
+        else:
+            # De editor krijgt na elke opslag een nieuwe sleutel, zodat de vinkjes weer leeg zijn.
+            versie = st.session_state.get("planning_editor_versie", 0)
+            bewerkt = st.data_editor(
+                pd.DataFrame(regels).set_index("id"), hide_index=True, use_container_width=True,
+                key=f"planning_editor_{versie}_{alles_tonen}", disabled=["Week", "Vak", "Duur (wk)", "Verwachte oogst"],
+                column_config={
+                    "Startdatum": st.column_config.DateColumn(format="DD-MM-YY", required=True),
+                    "Verwachte oogst": st.column_config.DateColumn(format="DD-MM-YY",
+                                                                   help="Volgt de oude startdatum tot je opslaat"),
+                    "Duur (wk)": getalkolom("Duur (wk)", 1),
+                    "Planten": st.column_config.NumberColumn(
+                        min_value=0, step=1, format="%d",
+                        help="Aantal planten bij bevestigen (standaard stelen/m² bij die plantweek)"),
+                    "✅ Bevestigen": st.column_config.CheckboxColumn(help="Omzetten naar een gestart vak"),
+                    "🗑️ Verwijderen": st.column_config.CheckboxColumn(help="Concept verwijderen"),
+                },
+            )
+            nieuw = {int(i): {"start": vs.als_datum(r["Startdatum"]), "planten": r["Planten"],
+                              "bevestigen": bool(r["✅ Bevestigen"]), "verwijderen": bool(r["🗑️ Verwijderen"])}
+                     for i, r in bewerkt.iterrows()}
+            plan = planning_editor.wijzigingen(origineel, nieuw)
+            kolom_knop, kolom_tekst = st.columns([1, 3], vertical_alignment="center")
+            if planning_editor.heeft_wijzigingen(plan):
+                kolom_tekst.caption(f"Nog niet opgeslagen: {planning_editor.samenvatting(plan)}.")
+            if kolom_knop.button("Wijzigingen opslaan", key="planning_opslaan", type="primary",
+                                 disabled=not planning_editor.heeft_wijzigingen(plan)):
+                gebruiker = huidige_gebruiker()
+                for planning_id, start in plan["gewijzigd"]:
+                    wijzig_planning(planning_id, start, gebruiker=gebruiker)
+                codes = []
+                for planning_id, planten in plan["bevestigd"]:
+                    resultaat = bevestig_planning(planning_id, planten, gebruiker=gebruiker)
+                    if resultaat:
+                        codes.append(resultaat[1])
+                for planning_id in plan["verwijderd"]:
+                    verwijder_planning(planning_id, gebruiker=gebruiker)
+                st.session_state["planning_melding"] = (
+                    f"Opgeslagen: {planning_editor.samenvatting(plan)}."
+                    + (f" Gestart: {', '.join(codes)}." if codes else ""))
+                st.session_state["planning_editor_versie"] = versie + 1
+                st.rerun()
 
     if True:
         st.markdown("---")
@@ -2791,62 +2849,6 @@ with tab_planning:
         voeg_planning_toe(int(plan_vaknummer), plan_startdatum, gebruiker=huidige_gebruiker())
         st.success(f"✅ Concept-planning toegevoegd voor vak {int(plan_vaknummer)}.")
         st.rerun()
-
-    st.markdown("---")
-    st.write("**Concept-planningen**")
-    planning_rijen = get_planning()  # al gesorteerd op startdatum (dus per week), dan vaknummer
-
-    if planning_rijen:
-        huidige_weeksleutel = None
-        for planning_id, vaknummer, start, duur, eind, notitie in planning_rijen:
-            start_d = datetime.strptime(start, "%Y-%m-%d").date()
-            weeksleutel = get_isojaar_week(start)
-            if weeksleutel != huidige_weeksleutel:
-                jaar_kop, week_kop = weeksleutel
-                st.markdown(f"**Week {week_kop} - {jaar_kop}**")
-                huidige_weeksleutel = weeksleutel
-
-            col1, col2, col2b, col3, col4, col5, col6, col7 = st.columns(
-                [0.8, 1.6, 0.6, 1, 1.6, 1.5, 0.8, 0.8]
-            )
-            col1.write(f"Vak {vaknummer}")
-            nieuwe_datum_plan = col2.date_input(
-                "Startdatum", value=start_d,
-                key=f"plan_datum_{planning_id}", format="DD-MM-YYYY", label_visibility="collapsed",
-            )
-            if col2b.button("💾", key=f"plan_datum_opslaan_{planning_id}", help="Startdatum aanpassen"):
-                wijzig_planning(planning_id, nieuwe_datum_plan, gebruiker=huidige_gebruiker())
-                st.rerun()
-            col3.write(fmt_kort(duur, 1, "wk"))
-            col4.write(format_datum(eind) if eind else "-")
-            dichtheid_plan = standaard_dichtheid_voor_plantweek(get_weeknummer(start))
-            aantal_planten_plan = col5.number_input(
-                "Aantal planten",
-                min_value=0, step=1, value=bereken_aantal_stelen(vaknummer, dichtheid_plan),
-                key=f"plan_aantal_{planning_id}",
-                label_visibility="collapsed",
-                help=f"Aantal planten bij bevestigen (standaard {dichtheid_plan} stelen/m² o.b.v. plantweek; pas aan indien nodig).",
-            )
-            if col6.button("✅", key=f"plan_bevestig_{planning_id}", help="Omzetten naar een echte teeltregistratie"):
-                resultaat = bevestig_planning(
-                    planning_id,
-                    aantal_planten_plan if aantal_planten_plan else None,
-                    gebruiker=huidige_gebruiker(),
-                )
-                if resultaat:
-                    teelt_id, code = resultaat
-                    st.success(f"✅ Vak {vaknummer} gestart - code **{code}** (ID {teelt_id}).")
-                st.rerun()
-            if col7.button("🗑️", key=f"plan_verwijder_{planning_id}", help="Concept-planning verwijderen"):
-                verwijder_planning(planning_id, gebruiker=huidige_gebruiker())
-                st.rerun()
-    else:
-        st.info("Nog geen concept-planningen.")
-
-
-with tab_planning:
-    st.markdown("---")
-    toon_vooruitblik(date.today())
 
 # --- STEK ---
 # Kolommen van het weekrapport, zoals de stekleverancier ze uit het oude
