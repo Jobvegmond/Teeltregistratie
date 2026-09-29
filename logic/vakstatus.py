@@ -1,6 +1,6 @@
 """
 Hoe staat elk teeltvak ervoor: verwachte lengte, prognose-oogst, kleur en
-aandachtspunten voor het scherm "Nu". Alleen rekenwerk, geen Streamlit en geen
+aandachtspunten voor de vakkenmatrix in Teeltoverzicht. Alleen rekenwerk, geen Streamlit en geen
 database: de app geeft de teelten (als dicts) en de plan-oogstfunctie mee, en
 tests/test_vakstatus.py test dit los.
 

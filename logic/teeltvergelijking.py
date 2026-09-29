@@ -11,7 +11,7 @@ tests/test_teeltvergelijking.py.
 - Lopende vakken tellen mee voor klimaat en input (gemarkeerd ⏳); resultaten
   die pas bij de oogst bekend zijn (stelen/m², uitval, lengte, gewicht,
   lengtefactor) alleen van afgeronde vakken.
-- Oogstdatum van een lopend vak = de prognose uit het Nu-model (⏳).
+- Oogstdatum van een lopend vak = de prognose uit het teeltmodel (⏳).
 - Florgib: de datum in de app, anders die uit teelt_historie (klimaatregistratie).
 - Warmte per vak alleen als (vrijwel) elke dag van het venster gemeten is.
 - Stelen: uit de emmers, anders geplant × (1 − vastgelegde uitval); anders onbekend.

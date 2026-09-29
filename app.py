@@ -1,5 +1,6 @@
 import html
 import io
+import time
 import json
 import math
 import os
@@ -38,7 +39,6 @@ from database import (
     get_gebruikers_credentials,
     verwerk_klimaat_csv,
     importeer_klimaat_uit_priva,
-    get_klimaat_overzicht_dataframe,
     get_klimaatdata_dagen_voor_periode,
     get_klimaatdata_dekking,
     laatste_priva_ophaling,
@@ -46,17 +46,11 @@ from database import (
     get_watergift_dekking,
     get_watergift_dagen_voor_periode,
     verwerk_energie_csv,
-    get_energiedata_dagen_voor_periode,
-    get_energiedata_dekking,
-    get_gasdata_dekking,
-    get_gasdata_dagen_voor_periode,
     GAS_CALORISCHE_WAARDE_MJ_PER_M3,
-    oppervlakte_van_tuin,
     get_vakgegevens,
     ideale_etmaaltemperatuur,
     LICHT_TEMP_FACTOR,
     LICHT_TEMP_BASIS,
-    get_alle_teelten_detail,
     get_isojaar_week,
     get_wijzigingenlog,
     get_planning,
@@ -119,6 +113,7 @@ from config import (
 # Moet de eerste Streamlit-aanroep zijn. Bepaalt o.a. de titel van het
 # browsertabblad.
 st.set_page_config(page_title="VEM teeltregistratie", page_icon="🌱", layout="wide")
+_VEM_T0 = time.perf_counter()  # laadtijd meten (zie het einde van dit bestand)
 
 # Alle Altair-grafieken in Nederlandse getalnotatie (komma, punt voor duizendtallen).
 zet_altair_nl()
@@ -593,187 +588,6 @@ def toon_kengetallen(items, titel=None):
         )
     kop = f'<div class="vem-kg-titel">{html.escape(titel)}</div>' if titel else ""
     st.markdown(f'{kop}<div class="vem-kg">{"".join(tegels)}</div>', unsafe_allow_html=True)
-
-
-# --- STATISTIEKEN: seizoensgecorrigeerde verbanden ---
-
-# Minimaal aantal teelten met beide waarden voordat een verband iets zegt.
-ANALYSE_MIN_N = 20
-# Minimaal aantal buren (eigen tuin, plantweek ±2) voor een eigen normaal;
-# anders telt de andere tuin mee.
-SEIZOEN_MIN_BUREN = 5
-
-# Groeifactoren eerst, dan het resultaat: in een verband is de eerste de
-# "oorzaak"-kant van de zin. Per kolom: (eenheid, eenheid bij 1, stap in de
-# zin, werkwoord, (woord bij hoger, woord bij lager), decimalen).
-ANALYSE_VARIABELEN = {
-    # Licht eerst: dat stuurt de kastemperatuur, niet andersom.
-    "Lichtsom (per dag)": ("J/cm² per dag", "J/cm² per dag", 100, "kregen", ("meer licht", "minder licht"), 0),
-    "Temperatuur (°C)": ("°C", "°C", 1, "waren", ("warmer", "kouder"), 1),
-    "Water (l/m²)": ("l/m²", "l/m²", 10, "kregen", ("meer water", "minder water"), 0),
-    "Teeltduur (dagen)": ("dagen", "dag", 1, "duurden", ("langer", "korter"), 1),
-    "Lengte (cm)": ("cm", "cm", 1, "waren", ("langer", "korter"), 1),
-    "Gewicht (g)": ("g", "g", 10, "waren", ("zwaarder", "lichter"), 0),
-    "Rijpheid": ("punt", "punt", 1, "waren", ("rijper", "minder rijp"), 1),
-}
-
-
-def seizoensafwijking(df, kolommen, venster=2, min_buren=SEIZOEN_MIN_BUREN):
-    """
-    Zet per teelt elke waarde om in de afwijking van het seizoensnormaal: de
-    waarde min het gemiddelde van de andere teelten met een plantweek binnen
-    ±`venster` weken (over alle jaren, over de jaargrens heen). Normaal uit de
-    eigen tuin (kolom tuin_id) als daar minstens `min_buren` teelten met een
-    waarde zijn, anders uit beide tuinen samen; met minder dan 3 buren blijft
-    de afwijking leeg. De teelt zelf telt niet mee in zijn eigen normaal.
-    """
-    uit = df.copy()
-    weken = df["plantweek"].to_numpy(dtype=float)
-    tuinen = df["tuin_id"].to_numpy()
-    afstand = np.abs(weken[:, None] - weken[None, :])
-    in_venster = np.minimum(afstand, 52 - afstand) <= venster
-    np.fill_diagonal(in_venster, False)
-    zelfde_tuin = tuinen[:, None] == tuinen[None, :]
-    for kolom in kolommen:
-        waarden = df[kolom].to_numpy(dtype=float)
-        heeft = ~np.isnan(waarden)
-        buren = in_venster & heeft[None, :]
-        eigen = buren & zelfde_tuin
-        kies = np.where((eigen.sum(axis=1) >= min_buren)[:, None], eigen, buren)
-        aantal = kies.sum(axis=1)
-        som = np.where(kies, np.nan_to_num(waarden)[None, :], 0.0).sum(axis=1)
-        normaal = np.divide(som, aantal, out=np.full(len(df), np.nan), where=aantal >= 3)
-        uit[kolom] = np.where(heeft, waarden - normaal, np.nan)
-    return uit
-
-
-def verband_zin(kol_a, kol_b, helling, r, n, seizoen):
-    """
-    Het verband in gewone woorden, bijv. "Teelten die 1 °C warmer waren dan
-    normaal voor hun plantweek, duurden gemiddeld 2,6 dagen korter dan normaal
-    (r = −0,62, n = 150)." `helling` is de verandering in kol_b per eenheid
-    kol_a (regressielijn).
-    """
-    eenheid_a, eenheid_a1, stap, werkwoord_a, (hoger_a, _), _ = ANALYSE_VARIABELEN[kol_a]
-    eenheid_b, eenheid_b1, _, werkwoord_b, (hoger_b, lager_b), decimalen_b = ANALYSE_VARIABELEN[kol_b]
-    effect = helling * stap
-    hoeveel = fmt_getal(abs(effect), decimalen_b)
-    oorzaak = f"{fmt_kort(stap)} {eenheid_a1 if stap == 1 else eenheid_a} {hoger_a}"
-    gevolg = f"{hoeveel} {eenheid_b1 if hoeveel == '1' else eenheid_b} {hoger_b if effect > 0 else lager_b}"
-    maat = f"(r = {fmt_verschil(r, 2)}, n = {n})"
-    if seizoen:
-        return (f"Vakken die {oorzaak} {werkwoord_a} dan normaal voor hun plantweek, "
-                f"{werkwoord_b} gemiddeld {gevolg} dan normaal {maat}.")
-    return (f"Vakken die {oorzaak} {werkwoord_a} dan andere vakken, "
-            f"{werkwoord_b} gemiddeld {gevolg} {maat}.")
-
-
-def klimaat_grafieken(dagen_records, toon_dagnacht=False, toon_trend=False, licht_max=2500):
-    """
-    Tekent twee grafieken uit dagrecords (dicts met datum, afdeling, temp_24h,
-    temp_dag, temp_nacht, rv_24h, rv_dag, rv_nacht, lichtsom):
-    1) temperatuur als lijn (linker-as, niet vanaf 0, gedeeld door alle
-       temperatuurlagen) gecombineerd met de lichtsom per dag als staaf
-       (rechter-as 0..licht_max, gemiddeld over de gekozen afdelingen);
-    2) relatieve luchtvochtigheid als lijn.
-    Met toon_trend loopt er een dik voortschrijdend 14-daags gemiddelde door de
-    temperatuur- en lichtsomlijn. De assen zijn temporeel, dus altijd
-    chronologisch. Per afdeling één kleur; dag/nacht/24h verschillen alleen in
-    helderheid, dikte en stippeling.
-    """
-    if not dagen_records:
-        st.info("Geen klimaatdata in deze periode.")
-        return
-
-    df = pd.DataFrame(dagen_records)
-    df["datum"] = pd.to_datetime(df["datum"])
-    df["Afdeling"] = "Afd. " + df["afdeling"].astype(str)
-    kleur = afdeling_kleur(df["Afdeling"].unique())
-    x_as = datum_as()
-
-    def _lang(prefix):
-        varianten = [(f"{prefix}_24h", "24h")]
-        if toon_dagnacht:
-            varianten += [(f"{prefix}_dag", "dag"), (f"{prefix}_nacht", "nacht")]
-        etiket = dict(varianten)
-        lang = df.melt(
-            id_vars=["datum", "Afdeling"], value_vars=list(etiket),
-            var_name="_v", value_name="waarde",
-        ).dropna(subset=["waarde"])
-        lang["Deel"] = lang["_v"].map(etiket)
-        return lang
-
-    temp_lang = _lang("temp")
-    licht = df.groupby("datum", as_index=False)["lichtsom"].mean().dropna(subset=["lichtsom"])
-    licht["ideaal"] = ideale_etmaaltemperatuur(licht["lichtsom"])
-
-    # Alle temperatuurlagen moeten dezelfde schaal delen (de lagen hebben elk
-    # een eigen y-as), dus één vast domein rond temperatuur én ideaal.
-    temp_domein = gedeeld_domein(temp_lang["waarde"], licht["ideaal"])
-
-    temp_lagen = []
-    if not licht.empty:
-        temp_lagen.append(alt.Chart(licht).mark_bar(color="#e7c98a", opacity=0.75).encode(
-            x=x_as,
-            y=alt.Y("lichtsom:Q", title="Lichtsom per dag",
-                    scale=alt.Scale(domain=[0, licht_max], clamp=True)),
-            tooltip=[alt.Tooltip("datum:T", title="datum", format="%d-%m-%y"),
-                     alt.Tooltip("lichtsom:Q", title="lichtsom", format=",.0f")],
-        ))
-    if not temp_lang.empty:
-        temp_lagen.append(alt.Chart(temp_lang).mark_line().encode(
-            x=x_as, y=y_as("waarde", "Temperatuur (°C)", temp_domein),
-            color=kleur,
-            tooltip=[alt.Tooltip("datum:T", title="datum", format="%d-%m-%y"),
-                     "Afdeling:N", "Deel:N", alt.Tooltip("waarde:Q", title="°C", format=".1f")],
-            **deel_encoding(toon_dagnacht),
-        ))
-    if not licht.empty:
-        temp_lagen.append(
-            alt.Chart(licht).mark_line(color="#c0392b", strokeWidth=3, strokeDash=[6, 3]).encode(
-                x=x_as, y=y_as("ideaal", None, temp_domein, axis=None),
-                tooltip=[alt.Tooltip("datum:T", title="datum", format="%d-%m-%y"),
-                         alt.Tooltip("ideaal:Q", title="ideale temp °C", format=".1f")],
-            )
-        )
-    if toon_trend and not temp_lang.empty:
-        temp_trend_df = (
-            df.groupby("datum", as_index=False)["temp_24h"].mean().dropna(subset=["temp_24h"])
-            .sort_values("datum")
-        )
-        temp_trend_df["trend"] = (
-            temp_trend_df["temp_24h"].rolling(14, center=True, min_periods=3).mean()
-        )
-        licht_trend = licht.sort_values("datum").copy()
-        licht_trend["trend"] = licht_trend["lichtsom"].rolling(14, center=True, min_periods=3).mean()
-        temp_lagen += [
-            alt.Chart(licht_trend).mark_line(color="#c79a3e", strokeWidth=3).encode(
-                x=x_as, y=alt.Y("trend:Q", scale=alt.Scale(domain=[0, licht_max], clamp=True), axis=None),
-            ),
-            alt.Chart(temp_trend_df).mark_line(color="#333", strokeWidth=3).encode(
-                x=x_as, y=y_as("trend", None, temp_domein, axis=None),
-                tooltip=[alt.Tooltip("datum:T", title="datum", format="%d-%m-%y"),
-                         alt.Tooltip("trend:Q", title="trend °C", format=".1f")],
-            ),
-        ]
-
-    st.caption(
-        "Temperatuur (lijn, links) + lichtsom per dag (staaf, gemiddeld over de afdelingen, rechts). "
-        f"Rode stippellijn = ideale temperatuur bij dat licht ({fmt_kort(LICHT_TEMP_FACTOR, 4)} x lichtsom + "
-        f"{fmt_kort(LICHT_TEMP_BASIS, 1)} °C) — temperatuurlijn erboven is relatief te warm, eronder te koud."
-        + (" Dikke effen lijn = 14-daags voortschrijdend gemiddelde." if toon_trend else "")
-        + (" Per afdeling: donker = 24h, licht = dag, gestippeld = nacht." if toon_dagnacht else "")
-    )
-    toon_grafiek(
-        alt.layer(*temp_lagen).resolve_scale(y="independent") if temp_lagen else None,
-        temp_lang, "Geen temperatuurdata in deze periode.", waardekolom="waarde",
-    )
-
-    st.caption("Relatieve luchtvochtigheid (%)")
-    lijngrafiek_per_afdeling(
-        _lang("rv"), "RV (%)", toon_dagnacht=toon_dagnacht, formaat=",.0f",
-        melding="Geen luchtvochtigheidsdata in deze periode.",
-    )
 
 
 def watergift_grafiek(records, melding="Nog geen watergift gekoppeld."):
@@ -1379,13 +1193,12 @@ with _paneel[actie].container():
 
 # --- HOOFDSCHERM: TABBLADEN ---
 styles.laad()
-tab_nu, tab_tuinvgl, tab_teeltvgl, tab_overzicht, tab_planning, tab_stek, tab_klimaat, tab_stats, tab_meer = st.tabs([
-    "🧭 Nu", "⚖️ Tuinvergelijking", "🌿 Teeltvergelijking", "📊 Teeltoverzicht", "🗓️ Planning", "🌱 Stek",
-    "🌡️ Klimaatdata", "📈 Statistieken", "ℹ️ Meer",
+tab_planning, tab_stek, tab_overzicht, tab_teeltvgl, tab_tuinvgl, tab_meer = st.tabs([
+    "Planning", "Stek", "Teeltoverzicht", "Teeltvergelijking", "Tuin vergelijking", "Meer",
 ])
-# Weinig gebruikt: logboek en uitleg als subtabbladen onder "Meer".
+# Weinig gebruikt: import, logboek en uitleg als subtabbladen onder "Meer".
 with tab_meer:
-    tab_log, tab_help = st.tabs(["🧾 Logboek", "ℹ️ Hoe dit werkt"])
+    tab_import, tab_log, tab_help = st.tabs(["Data importeren", "Logboek", "Hoe dit werkt"])
 
 # --- NU: hoe staat elk vak ervoor ---
 #
@@ -1687,7 +1500,7 @@ def teelt_detail(s, klimaat, water, model=None):
     """
     De hele teelt van één vak: tijdlijn, voortgang (lopend), klimaat tegen de
     lichtlijn, lichtsom, watergift per dag, groei en stek. Voor lopende teelten
-    (s["stook"] uit het Nu-model) en afgeronde (s["teelt"]["datum_oogst"]).
+    (s["stook"] uit het teeltmodel) en afgeronde (s["teelt"]["datum_oogst"]).
     - s: een vakstatus-dict (logic.vakstatus.beoordeel_teelt) met "stook" (of None)
     - klimaat: DataFrame met datum, temp_24h, lichtsom van de afdeling sinds planten
     - water: [{datum, liter}] van het vak sinds planten
@@ -2009,7 +1822,7 @@ def _nu_toon_tuin(info, vandaag, data):
                         _nu_vak_venster(info, vak, vandaag, data)
 
 
-with tab_nu:
+with tab_overzicht:
     _nu_vandaag = date.today()
     _nu_uitleg = (
         "Per vak: plantweek en leeftijd, de Florgib (geregistreerd of verwacht), de correctie op de lichtlijn "
@@ -2027,7 +1840,7 @@ with tab_nu:
         "(donkerblauw) of 7 d te laat (donkerrood)."
     )
     _nu_kop, _nu_keuze_kolom = st.columns([3, 2])
-    _nu_kop.subheader("🧭 Nu", help=_nu_uitleg)
+    _nu_kop.subheader("Teeltoverzicht", help=_nu_uitleg)
     _nu_opties = [t["nummer"] for t in TUINEN] + (["beide"] if len(TUINEN) > 1 else [])
     _nu_keuze = _nu_keuze_kolom.segmented_control(
         "Tuin", _nu_opties, default=TUIN_NUMMER, key="nu_tuin", label_visibility="collapsed",
@@ -2235,7 +2048,7 @@ def _tv_uitklappers(g, van, tot, periode_naam):
 
 
 with tab_tuinvgl:
-    st.subheader("⚖️ Tuinvergelijking", help=(
+    st.subheader("Tuin vergelijking", help=(
         "Wat er in een periode in de kas gebeurde: tuin 1 naast tuin 3 en het totaal, alles per m². Het totaal "
         "is gewogen naar m² (niet het gemiddelde van twee tuinen). Een kengetal zonder data toont – (waarom: "
         "beweeg over de cel)."))
@@ -2348,7 +2161,7 @@ TL_KENGETALLEN = [
              formaat=_tl_tekst, verschil=False),
     Kengetal("fase1", "Fase 1 (planten → Florgib)", "Teelt", "d", 0, "Dagen van planten tot de Florgib.",
              n_eenheid="vakken"),
-    Kengetal("oogst", "Oogst", "Teelt", uitleg="Eerste en laatste oogstdatum; ⏳ = met de prognose van het Nu-model "
+    Kengetal("oogst", "Oogst", "Teelt", uitleg="Eerste en laatste oogstdatum; ⏳ = met de prognose van het teeltmodel (Teeltoverzicht) "
              "voor lopende vakken.", formaat=_tl_tekst, verschil=False),
     Kengetal("fase2", "Fase 2 (Florgib → oogst)", "Teelt", "d", 0, "Dagen van de Florgib tot de oogst (⏳ = met prognose).",
              n_eenheid="vakken"),
@@ -2408,7 +2221,7 @@ def _tl_dagdata(versie):
 
 
 def _tl_vakken(versie, vandaag):
-    """Alle vakken (vaste gegevens) als dicts van logic.teeltvergelijking, met de prognose van het Nu-model."""
+    """Alle vakken (vaste gegevens) als dicts van logic.teeltvergelijking, met de prognose van het teeltmodel."""
     g = _tv_gegevens(versie)
     stook = _nu_alles(vandaag)[2]
     return [teeltvgl.teelt(k, g.vak_m2.get((k["tuin_id"], int(k["vaknummer"]))),
@@ -2418,7 +2231,7 @@ def _tl_vakken(versie, vandaag):
 
 
 def _tl_detail_venster(teelt_id, vakken, vandaag):
-    """Popup met één vak: dezelfde weergave als het vakvenster in Nu, ook voor afgeronde vakken."""
+    """Popup met één vak: dezelfde weergave als het vakvenster in Teeltoverzicht, ook voor afgeronde vakken."""
     data, model, stook, _ = _nu_alles(vandaag)
     alle = data["teelten"].to_dict("records")
     t = next((r for r in alle if r["id"] == teelt_id), None)
@@ -2516,7 +2329,7 @@ def _tl_vakkentabel(groep, vandaag):
 
 
 with tab_teeltvgl:
-    st.subheader("🌿 Teeltvergelijking", help=(
+    st.subheader("Teeltvergelijking", help=(
         "Een teelt = alle vakken uit één plantweek. Bovenaan per tuin samengevat (gewogen naar de m² van het vak), "
         "daaronder de vakken naast elkaar. De kleine regel is dezelfde plantweek vorig jaar."))
     _tl_vandaag = date.today()
@@ -2652,7 +2465,7 @@ def toon_vooruitblik(vandaag, n_weken=6):
     st.caption(
         f"In {eenheid.lower()}. Plant = concept-plantingen die week; oogst = lopende vakken en concepten "
         "waarvan de (verwachte) oogst in die week valt. Voor lopende vakken is dat de prognose van het "
-        "teeltmodel bij de huidige stooklijn (zoals in 🧭 Nu), voor concepten de plandatum. Een oogst die al "
+        "teeltmodel bij de huidige stooklijn (zoals in Teeltoverzicht), voor concepten de plandatum. Een oogst die al "
         "werd verwacht vóór deze week telt mee bij 'deze week', zodat die niet uit beeld verdwijnt. Stelen bij "
         "een concept zijn een schatting op de standaarddichtheid voor die plantweek."
     )
@@ -2685,7 +2498,6 @@ OVERZICHT_KOLOMMEN = [
 
 # --- OVERZICHT ---
 with tab_overzicht:
-    st.subheader("📊 Teeltoverzicht")
 
     if rijen:
         # Maak een DataFrame van de rijen (zonder de ID-kolom voor display)
@@ -2879,7 +2691,7 @@ with tab_overzicht:
 
 # --- PLANNING (TOEKOMSTIGE TEELTEN) ---
 with tab_planning:
-    st.subheader("🗓️ Planning")
+    st.subheader("Planning")
     with st.expander("Hoe lees ik dit?"):
         st.caption(
             "Concept-planning voor toekomstige teelten: plant vooruit vanaf waar de huidige teelt van "
@@ -3189,7 +3001,7 @@ def _stek_mailhtml(rapport, totaal_geplant):
 
 
 with tab_stek:
-    st.subheader("🌱 Stek")
+    st.subheader("Stek")
     stekweken = get_stekweken()
     if not stekweken:
         st.info("Er zijn nog geen vakken gestart.")
@@ -3427,238 +3239,97 @@ with tab_stek:
                 st.rerun()
 
 
-# --- KLIMAATDATA (KLIMAATCOMPUTER-CSV) ---
-with tab_klimaat:
-    st.subheader("🌡️ Klimaatdata")
+# --- DATA IMPORTEREN (onder Meer) ---
+with tab_import:
+    st.subheader("Data importeren")
+    col_imp_klimaat, col_imp_energie, col_imp_priva = st.columns(3)
 
-    with st.expander("📤 Data importeren"):
-        col_imp_klimaat, col_imp_energie, col_imp_priva = st.columns(3)
+    with col_imp_klimaat:
+        klimaat_csv = st.file_uploader(
+            "Klimaatcomputer-export (.csv)",
+            type=["csv"],
+            key="klimaat_csv_upload",
+            help="Dagexport met kolommen label, pcu, type_1, idx_1, type_2, idx_2, startdate, enddate, value.",
+        )
+        if klimaat_csv is not None:
+            try:
+                aantal_verwerkt, aantal_overgeslagen = verwerk_klimaat_csv(
+                    klimaat_csv, gebruiker=huidige_gebruiker(), tuin_id=TUIN_ID)
+                melding = f"✅ {aantal_verwerkt} afdeling-dagen verwerkt."
+                if aantal_overgeslagen:
+                    melding += f" {aantal_overgeslagen} overgeslagen (nog niet afgerond)."
+                st.success(melding)
+            except Exception as e:
+                st.error(f"❌ Kon de CSV niet verwerken: {e}")
 
-        with col_imp_klimaat:
-            klimaat_csv = st.file_uploader(
-                "Klimaatcomputer-export (.csv)",
-                type=["csv"],
-                key="klimaat_csv_upload",
-                help="Dagexport met kolommen label, pcu, type_1, idx_1, type_2, idx_2, startdate, enddate, value.",
-            )
-            if klimaat_csv is not None:
-                try:
-                    aantal_verwerkt, aantal_overgeslagen = verwerk_klimaat_csv(
-                        klimaat_csv, gebruiker=huidige_gebruiker(), tuin_id=TUIN_ID)
-                    melding = f"✅ {aantal_verwerkt} afdeling-dagen verwerkt."
-                    if aantal_overgeslagen:
-                        melding += f" {aantal_overgeslagen} overgeslagen (nog niet afgerond)."
-                    st.success(melding)
-                except Exception as e:
-                    st.error(f"❌ Kon de CSV niet verwerken: {e}")
-
-        with col_imp_energie:
-            energie_csv = st.file_uploader(
-                "Energiecomputer-export (.csv)",
-                type=["csv"],
-                key="energie_csv_upload",
-                help="Rapport Energie-export uit Priva, voor de tuin die bovenin gekozen is. Warmte: tuin 3 "
-                     "Pulsteller 2 (GJ), tuin 1 de warmtewisselaar (kWh, omgerekend). Gas: Pulsteller 1 (m³).",
-            )
-            if energie_csv is not None:
-                try:
-                    aantal_verwerkt_e, aantal_overgeslagen_e, aantal_gas_e = verwerk_energie_csv(
-                        energie_csv, gebruiker=huidige_gebruiker(), tuin_id=TUIN_ID
-                    )
-                    melding_e = f"✅ {aantal_verwerkt_e} dagen warmteverbruik verwerkt."
-                    if aantal_gas_e:
-                        melding_e += f" {aantal_gas_e} dagen gasverbruik verwerkt."
-                    if aantal_overgeslagen_e:
-                        melding_e += f" {aantal_overgeslagen_e} overgeslagen (nog niet afgerond)."
-                    st.success(melding_e)
-                except Exception as e:
-                    st.error(f"❌ Kon de CSV niet verwerken: {e}")
-
-        with col_imp_priva:
-            if os.environ.get("PRIVA_CLIENT_ID"):
-                st.caption(
-                    f"Of haal de laatste afgeronde dagen rechtstreeks uit Priva voor {TUIN_NAAM}: "
-                    "klimaat en watergift. Historische CSV-data blijft staan."
+    with col_imp_energie:
+        energie_csv = st.file_uploader(
+            "Energiecomputer-export (.csv)",
+            type=["csv"],
+            key="energie_csv_upload",
+            help="Rapport Energie-export uit Priva, voor de tuin die bovenin gekozen is. Warmte: tuin 3 "
+                 "Pulsteller 2 (GJ), tuin 1 de warmtewisselaar (kWh, omgerekend). Gas: Pulsteller 1 (m³).",
+        )
+        if energie_csv is not None:
+            try:
+                aantal_verwerkt_e, aantal_overgeslagen_e, aantal_gas_e = verwerk_energie_csv(
+                    energie_csv, gebruiker=huidige_gebruiker(), tuin_id=TUIN_ID
                 )
-                if st.button("📡 Haal laatste dagen op uit Priva"):
-                    try:
-                        aantal_k, _ = importeer_klimaat_uit_priva(
-                            gebruiker=huidige_gebruiker(), tuin_id=TUIN_ID)
-                        aantal_w, _ = importeer_watergift_uit_priva(
-                            gebruiker=huidige_gebruiker(), tuin_id=TUIN_ID)
-                        st.success(f"✅ {aantal_k} afdeling-dagen klimaat, {aantal_w} vak-dagen watergift opgehaald.")
-                    except Exception as e:
-                        st.error(f"❌ Kon niet uit Priva ophalen: {e}")
+                melding_e = f"✅ {aantal_verwerkt_e} dagen warmteverbruik verwerkt."
+                if aantal_gas_e:
+                    melding_e += f" {aantal_gas_e} dagen gasverbruik verwerkt."
+                if aantal_overgeslagen_e:
+                    melding_e += f" {aantal_overgeslagen_e} overgeslagen (nog niet afgerond)."
+                st.success(melding_e)
+            except Exception as e:
+                st.error(f"❌ Kon de CSV niet verwerken: {e}")
 
-                water_dekking = get_watergift_dekking()
-                if water_dekking:
-                    laatste_water = max(r[2] for r in water_dekking)
-                    st.caption(f"Watergift: {len(water_dekking)} vakken, tot {format_datum(laatste_water)}.")
+    with col_imp_priva:
+        if os.environ.get("PRIVA_CLIENT_ID"):
+            st.caption(
+                f"Of haal de laatste afgeronde dagen rechtstreeks uit Priva voor {TUIN_NAAM}: "
+                "klimaat en watergift. Historische CSV-data blijft staan."
+            )
+            if st.button("📡 Haal laatste dagen op uit Priva"):
+                try:
+                    aantal_k, _ = importeer_klimaat_uit_priva(
+                        gebruiker=huidige_gebruiker(), tuin_id=TUIN_ID)
+                    aantal_w, _ = importeer_watergift_uit_priva(
+                        gebruiker=huidige_gebruiker(), tuin_id=TUIN_ID)
+                    st.success(f"✅ {aantal_k} afdeling-dagen klimaat, {aantal_w} vak-dagen watergift opgehaald.")
+                except Exception as e:
+                    st.error(f"❌ Kon niet uit Priva ophalen: {e}")
 
-                # De automatische taak kan stilvallen zonder dat iemand het ziet;
-                # Priva bewaart maar vijf dagen, dus dat moet snel opvallen.
-                laatste_priva = laatste_priva_ophaling()
-                if laatste_priva is None:
-                    st.warning("De automatische Priva-taak heeft nog nooit gedraaid.")
-                else:
-                    uren_geleden = (
-                        datetime.now(laatste_priva.tzinfo) - laatste_priva
-                    ).total_seconds() / 3600
-                    wanneer = f"{format_datum(laatste_priva.date())} om {laatste_priva:%H:%M}"
-                    if uren_geleden > 36:
-                        st.warning(
-                            f"⚠️ Laatste automatische ophaling: {wanneer}, "
-                            f"{fmt_getal(uren_geleden / 24)} dagen geleden. Priva bewaart 5 dagen, "
-                            "dus controleer de taak voordat er een gat ontstaat."
-                        )
-                    else:
-                        st.caption(f"Laatste automatische ophaling: {wanneer}.")
+            water_dekking = get_watergift_dekking()
+            if water_dekking:
+                laatste_water = max(r[2] for r in water_dekking)
+                st.caption(f"Watergift: {len(water_dekking)} vakken, tot {format_datum(laatste_water)}.")
+
+            # De automatische taak kan stilvallen zonder dat iemand het ziet;
+            # Priva bewaart maar vijf dagen, dus dat moet snel opvallen.
+            laatste_priva = laatste_priva_ophaling()
+            if laatste_priva is None:
+                st.warning("De automatische Priva-taak heeft nog nooit gedraaid.")
             else:
-                st.caption("Priva-koppeling niet geconfigureerd (PRIVA_CLIENT_ID ontbreekt).")
+                uren_geleden = (
+                    datetime.now(laatste_priva.tzinfo) - laatste_priva
+                ).total_seconds() / 3600
+                wanneer = f"{format_datum(laatste_priva.date())} om {laatste_priva:%H:%M}"
+                if uren_geleden > 36:
+                    st.warning(
+                        f"⚠️ Laatste automatische ophaling: {wanneer}, "
+                        f"{fmt_getal(uren_geleden / 24)} dagen geleden. Priva bewaart 5 dagen, "
+                        "dus controleer de taak voordat er een gat ontstaat."
+                    )
+                else:
+                    st.caption(f"Laatste automatische ophaling: {wanneer}.")
+        else:
+            st.caption("Priva-koppeling niet geconfigureerd (PRIVA_CLIENT_ID ontbreekt).")
+
 
     dekking = get_klimaatdata_dekking()
-    kolommen_klimaat, rijen_klimaat = get_klimaat_overzicht_dataframe()
-
-    if not dekking and not rijen_klimaat:
-        st.info(
-            "Nog geen gekoppelde klimaatdata. Upload hierboven een CSV-export uit de klimaatcomputer "
-            "of haal 'm uit Priva; de gemiddelde temperatuur, RV en dagstralingssom worden automatisch "
-            "gekoppeld aan elk vak op basis van vaknummer (→ afdeling) en teeltperiode."
-        )
-
-    # --- Grafieken: klimaatverloop per afdeling over een vrije periode ---
-    if dekking:
-        st.write("**Grafieken**")
-        alle_afdelingen = sorteer_afdelingen([r[0] for r in dekking], TUIN_NUMMER)
-        data_eerste = datetime.strptime(min(r[1] for r in dekking), "%Y-%m-%d").date()
-        data_laatste = datetime.strptime(max(r[2] for r in dekking), "%Y-%m-%d").date()
-
-        col_afd, col_van, col_tot = st.columns([2, 1, 1])
-        gekozen_afdelingen = col_afd.multiselect(
-            "Afdeling(en)", alle_afdelingen, default=alle_afdelingen, key="klimaat_grafiek_afd"
-        )
-        standaard_van = max(data_eerste, data_laatste - timedelta(days=90))
-        datum_van = col_van.date_input(
-            "Van", value=standaard_van, min_value=data_eerste, max_value=data_laatste,
-            key="klimaat_grafiek_van", format="DD-MM-YYYY",
-        )
-        datum_tot = col_tot.date_input(
-            "Tot en met", value=data_laatste, min_value=data_eerste, max_value=data_laatste,
-            key="klimaat_grafiek_tot", format="DD-MM-YYYY",
-        )
-        col_dn, col_tr = st.columns(2)
-        toon_dagnacht = col_dn.checkbox(
-            "Toon ook dag- en nachtgemiddelde", value=False, key="klimaat_grafiek_dagnacht"
-        )
-        toon_trend = col_tr.checkbox(
-            "Toon trendlijn (voortschrijdend gemiddelde)", value=False, key="klimaat_grafiek_trend"
-        )
-
-        if gekozen_afdelingen and datum_van <= datum_tot:
-            records = []
-            for afdeling in sorteer_afdelingen(gekozen_afdelingen, TUIN_NUMMER):
-                for datum, temp, rv, straling, temp_dag, temp_nacht, rv_dag, rv_nacht in \
-                        get_klimaatdata_dagen_voor_periode(afdeling, datum_van, datum_tot):
-                    records.append({
-                        "datum": datum, "afdeling": afdeling,
-                        "temp_24h": temp, "temp_dag": temp_dag, "temp_nacht": temp_nacht,
-                        "rv_24h": rv, "rv_dag": rv_dag, "rv_nacht": rv_nacht,
-                        "lichtsom": straling,
-                    })
-            klimaat_grafieken(records, toon_dagnacht=toon_dagnacht, toon_trend=toon_trend)
-
-            st.markdown("---")
-            st.write("**Licht/temperatuur-verhouding**")
-            licht_temperatuur_grafiek(records)
-        elif datum_van > datum_tot:
-            st.warning("'Van' ligt na 'Tot en met'.")
-
-    # --- Warmteverbruik (Pulsteller, hele kas) ---
-    energie_dekking = get_energiedata_dekking()
-    if energie_dekking:
-        st.markdown("---")
-        st.write("**Warmteverbruik (hele kas)**")
-        e_eerste, e_laatste, e_aantal, e_ontbrekend = energie_dekking
-        e_eerste_d = datetime.strptime(e_eerste, "%Y-%m-%d").date()
-        e_laatste_d = datetime.strptime(e_laatste, "%Y-%m-%d").date()
-        e_standaard_van = max(e_eerste_d, e_laatste_d - timedelta(days=90))
-        col_e_van, col_e_tot = st.columns(2)
-        e_datum_van = col_e_van.date_input(
-            "Van", value=e_standaard_van, min_value=e_eerste_d, max_value=e_laatste_d,
-            key="energie_grafiek_van", format="DD-MM-YYYY",
-        )
-        e_datum_tot = col_e_tot.date_input(
-            "Tot en met", value=e_laatste_d, min_value=e_eerste_d, max_value=e_laatste_d,
-            key="energie_grafiek_tot", format="DD-MM-YYYY",
-        )
-        if e_datum_van <= e_datum_tot:
-            energie_dagen = get_energiedata_dagen_voor_periode(e_datum_van, e_datum_tot)
-            gas_dagen = get_gasdata_dagen_voor_periode(e_datum_van, e_datum_tot)
-            if energie_dagen or gas_dagen:
-                df_energie = pd.DataFrame(energie_dagen, columns=["datum", "warmte_mj_totaal", "MJ per m²"])
-                df_gas = pd.DataFrame(gas_dagen, columns=["datum", "gas_m3_totaal", "gas_mj_totaal", "gas_mj_per_m2"])
-                df_warmte_dag = pd.merge(
-                    df_energie[["datum", "warmte_mj_totaal"]],
-                    df_gas[["datum", "gas_mj_totaal"]],
-                    on="datum", how="outer",
-                )
-                df_warmte_dag["Hoofdwarmte (GJ)"] = df_warmte_dag["warmte_mj_totaal"] / 1000
-                df_warmte_dag["Gasketel (GJ)"] = df_warmte_dag["gas_mj_totaal"] / 1000
-                df_warmte_dag["datum"] = pd.to_datetime(df_warmte_dag["datum"])
-
-                # Een dag zonder meting van een bron blijft leeg (geen staafdeel),
-                # niet 0: 0 zou betekenen dat er die dag niet gestookt is.
-                df_warmte_lang = df_warmte_dag.melt(
-                    id_vars="datum", value_vars=["Hoofdwarmte (GJ)", "Gasketel (GJ)"],
-                    var_name="Bron", value_name="GJ",
-                ).dropna(subset=["GJ"])
-                warmte_chart = alt.Chart(df_warmte_lang).mark_bar().encode(
-                    x=datum_as(),
-                    y=alt.Y("GJ:Q", title="Warmte (GJ)", stack=True),
-                    color=alt.Color(
-                        "Bron:N",
-                        scale=alt.Scale(domain=["Hoofdwarmte (GJ)", "Gasketel (GJ)"], range=["#2a78d6", "#c0392b"]),
-                        legend=alt.Legend(title=None, orient="top"),
-                    ),
-                    tooltip=[alt.Tooltip("datum:T", title="datum", format="%d-%m-%y"), "Bron:N",
-                             alt.Tooltip("GJ:Q", format=".2f")],
-                )
-                st.altair_chart(warmte_chart, use_container_width=True)
-        else:
-            st.warning("'Van' ligt na 'Tot en met'.")
-        st.caption(
-            f"Warmteverbruik geregistreerd van {format_datum(e_eerste)} t/m {format_datum(e_laatste)} "
-            f"({e_aantal} dagen, {e_ontbrekend} ontbrekend). Kasoppervlak {TUIN_NAAM}: "
-            f"{fmt_getal(oppervlakte_van_tuin(TUIN_ID), 0, 'm²')}."
-        )
-        gas_dekking = get_gasdata_dekking()
-        if gas_dekking:
-            g_eerste, g_laatste, g_aantal = gas_dekking
-            st.caption(
-                f"Gasketel (bijstook, Pulsteller 1) geregistreerd van {format_datum(g_eerste)} t/m "
-                f"{format_datum(g_laatste)} ({g_aantal} dagen), omgerekend met "
-                f"{fmt_kort(GAS_CALORISCHE_WAARDE_MJ_PER_M3, 2)} MJ/m³."
-            )
-
-    # --- Gemiddelden per teelt (onder de grafieken) ---
-    if rijen_klimaat:
-        st.markdown("---")
-        with st.expander(f"📋 Gemiddelden per vak ({len(rijen_klimaat)})"):
-            df_klimaat = pd.DataFrame(rijen_klimaat, columns=kolommen_klimaat)
-            toon_tabel(df_klimaat, [
-                ("Code", "Code", "tekst", None, "medium"),
-                ("Teeltvak", "Vak", "tekst", None, "small"),
-                ("Afdeling", "Afd.", "getal", "%d", "small"),
-                ("Startdatum", "Start", "datum", None, "small"),
-                ("Oogstdatum", "Oogst", "tekst", None, "small"),
-                ("Gem. temperatuur (°C)", "Temp. (°C)", "getal", "%.1f", "small"),
-                ("Gem. RV (%)", "RV (%)", "getal", "%.1f", "small"),
-                ("Gem. stralingssom (per dag)", "Lichtsom/dag", "getal", "%d", "small"),
-                ("Ideale temp (°C)", "Ideaal (°C)", "getal", "%.1f", "small"),
-                ("Verschil (°C)", "Verschil (°C)", "tekst", None, "small"),
-                ("Totaal water (l/m²)", "Water (l/m²)", "getal", "%.1f", "small"),
-                ("Totaal warmte (GJ)", "Warmte (GJ)", "getal", "%.2f", "small"),
-            ], pin_eerste=True)
+    if not dekking:
+        st.info("Nog geen klimaatdata. Upload hierboven een CSV-export uit de klimaatcomputer of haal 'm uit Priva.")
 
     # --- Geïmporteerd t/m: per afdeling tot welke dag er data is (onderaan) ---
     if dekking:
@@ -3695,226 +3366,9 @@ with tab_klimaat:
                 "afdeling achterloopt op de afdeling met de meest recente data (0 = alles gelijk geïmporteerd)."
             )
 
-# --- STATISTIEKEN ---
-with tab_stats:
-    st.subheader("📈 Statistieken & Inzichten")
-    if rijen:
-        df_stats = pd.DataFrame(rijen, columns=kolommen)
-
-        # Teeltduur analyse
-        df_afgerond = df_stats[df_stats['Oogstdatum'] != '-'].copy()
-        if len(df_afgerond) > 0:
-            st.write("**Teeltduur analyse (afgeronde vakken):**")
-            df_afgerond['Teeltduur (dagen)'] = pd.to_numeric(df_afgerond['Teeltduur (dagen)'], errors='coerce')
-            gemiddeld = df_afgerond['Teeltduur (dagen)'].mean()
-            minimum = df_afgerond['Teeltduur (dagen)'].min()
-            maximum = df_afgerond['Teeltduur (dagen)'].max()
-
-            toon_kengetallen([
-                {"label": "Gemiddeld", "waarde": fmt_dagen(gemiddeld)},
-                {"label": "Kortst", "waarde": fmt_dagen(minimum)},
-                {"label": "Langst", "waarde": fmt_dagen(maximum)},
-            ])
-
-        # --- Analyse: lengtegroei ---
-        st.markdown("---")
-        st.write("**Lengtegroei: halverwege → oogst**")
-        st.caption(
-            "Factor = oogstlengte / lengte halverwege. Gebaseerd op alle afgeronde vakken met beide metingen."
-        )
-
-        alle_teelten_stats = get_alle_teelten_detail()
-        analyse_lengte_rijen = [
-            {
-                "Oogstdatum": t["datum_oogst"],
-                "Vak": t["vaknummer"],
-                "Code": t["code"] or "-",
-                "Lengte halverwege (cm)": t["lengte_half"],
-                "Lengte oogst (cm)": t["lengte_eind"],
-                "Factor (oogst / halverwege)": t["lengte_eind"] / t["lengte_half"],
-            }
-            for t in alle_teelten_stats
-            if t["datum_oogst"] and t["lengte_half"] and t["lengte_eind"]
-        ]
-
-        if len(analyse_lengte_rijen) < 2:
-            st.info("Nog te weinig vakken met zowel een halverwege- als oogstlengte voor deze grafiek.")
-        else:
-            df_lengte = pd.DataFrame(analyse_lengte_rijen).sort_values("Oogstdatum")
-            df_lengte["Oogstdatum"] = pd.to_datetime(df_lengte["Oogstdatum"])
-
-            df_lengte_lang = df_lengte.melt(
-                id_vars=["Oogstdatum", "Vak", "Code"],
-                value_vars=["Lengte halverwege (cm)", "Lengte oogst (cm)"],
-                var_name="Meting", value_name="Lengte (cm)",
-            )
-            lijn_lengte = alt.Chart(df_lengte_lang).mark_line(point=True).encode(
-                x=datum_as("Oogstdatum", veld="Oogstdatum"),
-                y=alt.Y("Lengte (cm):Q", title="Lengte (cm)", scale=alt.Scale(zero=False)),
-                color=alt.Color("Meting:N", title=None),
-                tooltip=["Oogstdatum:T", "Vak:N", "Code:N", "Meting:N", alt.Tooltip("Lengte (cm):Q", format=".1f")],
-            )
-            lijn_factor = alt.Chart(df_lengte).mark_line(point=True, color="#c0392b", strokeDash=[4, 4]).encode(
-                x=datum_as("Oogstdatum", veld="Oogstdatum"),
-                y=alt.Y("Factor (oogst / halverwege):Q", title="Factor (oogst / halverwege)",
-                        scale=alt.Scale(zero=False)),
-                tooltip=["Oogstdatum:T", "Vak:N", "Code:N", alt.Tooltip("Factor (oogst / halverwege):Q", format=".2f")],
-            )
-            st.altair_chart(
-                alt.layer(lijn_lengte, lijn_factor).resolve_scale(y="independent"),
-                use_container_width=True,
-            )
-            st.caption(
-                f"Gebaseerd op {len(df_lengte)} afgeronde vakken met zowel een halverwege- als oogstmeting "
-                "(rode stippellijn = factor, rechteras)."
-            )
-
-        # --- Analyse: groeifactoren vs. resultaat ---
-        st.markdown("---")
-        st.write("**Analyse: groeifactoren vs. resultaat (afgeronde vakken)**")
-        st.caption(
-            "Combineert lichtsom, temperatuur en watergift tijdens de teelt met het eindresultaat "
-            "(gewicht, lengte, rijpheid, teeltduur) en zoekt naar de sterkste samenhang."
-        )
-
-        # Beide tuinen ophalen: het seizoensnormaal van een tuin met weinig
-        # teelten rond een plantweek valt terug op beide tuinen samen. De
-        # analyse zelf gaat over de gekozen tuin.
-        analyse_rijen = []
-        for _tuin in TUINEN:
-            for k in get_teeltkengetallen(_tuin["id"]):
-                if not k["datum_oogst"]:
-                    continue
-                laag, hoog = rijpheid_tekst_naar_bereik(k["rijpheid"]) if k["rijpheid"] else (None, None)
-                analyse_rijen.append({
-                    "tuin_id": _tuin["id"],
-                    "plantweek": k["plantweek"],
-                    "Temperatuur (°C)": k["gem_temperatuur"],
-                    "Lichtsom (per dag)": (
-                        k["lichtsom"] / k["klimaatdagen"] if k["lichtsom"] and k["klimaatdagen"] else None
-                    ),
-                    "Water (l/m²)": k["liters"],
-                    "Teeltduur (dagen)": k["teeltduur"],
-                    "Lengte (cm)": k["lengte_eind"],
-                    "Gewicht (g)": k["oogstgewicht"],
-                    "Rijpheid": (laag + hoog) / 2 if laag is not None else None,
-                })
-        kolommen_analyse = list(ANALYSE_VARIABELEN)
-        df_alle = pd.DataFrame(analyse_rijen)
-        if not df_alle.empty:
-            df_alle[kolommen_analyse] = df_alle[kolommen_analyse].apply(pd.to_numeric, errors="coerce")
-        df_tuin = df_alle[df_alle["tuin_id"] == TUIN_ID] if not df_alle.empty else df_alle
-
-        if len(df_tuin) < ANALYSE_MIN_N:
-            st.info(f"Nog te weinig afgeronde vakken voor een zinvolle analyse (minimaal {ANALYSE_MIN_N} nodig).")
-        else:
-            seizoen_eruit = st.toggle(
-                "Seizoenseffect eruit halen", value=True, key="stats_seizoen",
-                help="Vergelijkt elk vak met vakken uit dezelfde tijd van het jaar (plantweek ±2), "
-                     "zodat winter tegen zomer niet de verbanden bepaalt.",
-            )
-            if seizoen_eruit:
-                df_analyse = seizoensafwijking(df_alle, kolommen_analyse)
-                df_analyse = df_analyse[df_analyse["tuin_id"] == TUIN_ID][kolommen_analyse]
-                st.caption(
-                    "Per vak is elke waarde vergeleken met het normaal voor die tijd van het jaar: het "
-                    "gemiddelde van de andere vakken met een plantweek binnen 2 weken (alle jaren, eigen "
-                    f"tuin; zijn dat er minder dan {SEIZOEN_MIN_BUREN}, dan beide tuinen samen). De verbanden "
-                    "hieronder gaan over die afwijkingen: wat er binnen een seizoen gebeurt."
-                )
-            else:
-                df_analyse = df_tuin[kolommen_analyse]
-                st.caption(
-                    "Ruwe waarden: de verbanden zijn grotendeels het seizoen (winterteelten zijn kouder, "
-                    "donkerder en duren langer)."
-                )
-
-            corr = df_analyse.corr(min_periods=5)
-            aanwezig = df_analyse.notna().astype(int)
-            n_paren = aanwezig.T @ aanwezig
-
-            corr_lang = (
-                corr.reset_index().melt(id_vars="index", var_name="Variabele 2", value_name="r")
-                .rename(columns={"index": "Variabele 1"})
-            )
-            corr_lang["n"] = [int(n_paren.loc[a, b]) for a, b in zip(corr_lang["Variabele 1"], corr_lang["Variabele 2"])]
-            corr_lang = corr_lang.dropna(subset=["r"])
-            genoeg = f"datum.n >= {ANALYSE_MIN_N}"
-            heatmap = alt.Chart(corr_lang).mark_rect().encode(
-                x=alt.X("Variabele 1:N", title=None, sort=kolommen_analyse),
-                y=alt.Y("Variabele 2:N", title=None, sort=kolommen_analyse),
-                color=alt.condition(
-                    genoeg,
-                    alt.Color("r:Q", title="Correlatie", scale=alt.Scale(scheme="redblue", domain=[-1, 1])),
-                    alt.value("#e3e3e3"),
-                ),
-                tooltip=["Variabele 1:N", "Variabele 2:N", alt.Tooltip("r:Q", format=".2f"), "n:Q"],
-            )
-            # Tekstkleur: wit op een donker vakje, grijs als n te klein is.
-            corr_lang["tekstkleur"] = [
-                "#9a9a9a" if n < ANALYSE_MIN_N else "white" if abs(r) > 0.5 else "black"
-                for r, n in zip(corr_lang["r"], corr_lang["n"])
-            ]
-            tekst = alt.Chart(corr_lang).mark_text(fontSize=11).encode(
-                x=alt.X("Variabele 1:N", sort=kolommen_analyse),
-                y=alt.Y("Variabele 2:N", sort=kolommen_analyse),
-                text=alt.Text("r:Q", format=".2f"),
-                color=alt.Color("tekstkleur:N", scale=None),
-            )
-            # Eigen kleurschaal per laag: de tekstkleur is een vaste kleur per
-            # vakje en hoort niet in de correlatieschaal van de vakjes.
-            st.altair_chart(
-                (heatmap + tekst).resolve_scale(color="independent").properties(height=340),
-                use_container_width=True,
-            )
-            st.caption(
-                f"Gebaseerd op {len(df_analyse)} afgeronde vakken van {TUIN_NAAM}. Grijze vakjes: minder dan "
-                f"{ANALYSE_MIN_N} vakken met beide waarden, te weinig om iets over te zeggen. "
-                "Beweeg over een vakje voor r en n."
-            )
-
-            paren = []
-            for i, kol_a in enumerate(kolommen_analyse):
-                for kol_b in kolommen_analyse[i + 1:]:
-                    r = corr.loc[kol_a, kol_b]
-                    n = int(n_paren.loc[kol_a, kol_b])
-                    if pd.notna(r) and n >= ANALYSE_MIN_N:
-                        paren.append((abs(r), r, kol_a, kol_b, n))
-            paren.sort(key=lambda p: p[0], reverse=True)
-            te_klein = sum(
-                1 for i, a in enumerate(kolommen_analyse) for b in kolommen_analyse[i + 1:]
-                if pd.notna(corr.loc[a, b]) and int(n_paren.loc[a, b]) < ANALYSE_MIN_N
-            )
-
-            if paren:
-                st.write("**Sterkste samenhangen:**")
-                for abs_r, r, kol_a, kol_b, n in paren[:3]:
-                    df_paar = df_analyse[[kol_a, kol_b]].dropna()
-                    helling = r * df_paar[kol_b].std() / df_paar[kol_a].std() if df_paar[kol_a].std() else 0
-                    sterkte = "sterk" if abs_r > 0.7 else "matig" if abs_r > 0.4 else "zwak"
-                    st.write(f"- {verband_zin(kol_a, kol_b, helling, r, n, seizoen_eruit)} {sterkte.capitalize()} verband.")
-                    as_titel = (lambda kol: f"{kol} t.o.v. normaal") if seizoen_eruit else (lambda kol: kol)
-                    scatter = alt.Chart(df_paar).mark_circle(size=60, opacity=0.6).encode(
-                        x=alt.X(f"{kol_a}:Q", title=as_titel(kol_a), scale=alt.Scale(zero=False)),
-                        y=alt.Y(f"{kol_b}:Q", title=as_titel(kol_b), scale=alt.Scale(zero=False)),
-                        tooltip=[alt.Tooltip(f"{kol_a}:Q", format=".1f"), alt.Tooltip(f"{kol_b}:Q", format=".1f")],
-                    )
-                    trend = scatter.transform_regression(kol_a, kol_b).mark_line(color="#c0392b")
-                    st.altair_chart((scatter + trend).properties(height=220), use_container_width=True)
-
-                st.caption(
-                    (f"{te_klein} paren met minder dan {ANALYSE_MIN_N} vakken zijn weggelaten. " if te_klein else "")
-                    + "Een verband kan ook toeval zijn: gebruik dit als richting om op te letten, niet als "
-                    "bewijs, en correlatie is geen oorzakelijk verband."
-                )
-            else:
-                st.caption(f"Geen paren met minstens {ANALYSE_MIN_N} vakken met beide waarden.")
-    else:
-        st.info("Geen data beschikbaar voor statistieken.")
-
 # --- LOGBOEK ---
 with tab_log:
-    st.subheader("🧾 Logboek")
+    st.subheader("Logboek")
     st.caption("Wie wat wanneer heeft aangemaakt, gewijzigd of verwijderd — nieuwste bovenaan.")
 
     limiet_log = st.number_input(
@@ -4017,3 +3471,10 @@ with tab_help:
     - Je kunt hetzelfde vak meerdere keren gebruiken (bijv. lente, zomer, herfst)
     - Elke ronde is een apart record met eigen gegevens
     """)
+
+# Lokaal meten: maak een leeg bestand .vem_tijd naast app.py; elke run schrijft
+# dan zijn duur (en de actieve pagina) in .vem_tijd.log.
+_VEM_TIJD = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".vem_tijd")
+if os.path.exists(_VEM_TIJD):
+    with open(_VEM_TIJD + ".log", "a", encoding="utf-8") as _f:
+        _f.write(f"{datetime.now():%H:%M:%S} alles {time.perf_counter() - _VEM_T0:.2f}\n")
