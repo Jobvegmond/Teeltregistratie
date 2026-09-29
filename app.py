@@ -700,6 +700,34 @@ def _cookie_key():
     return _tijdelijke_cookie_key()
 
 
+# De pagina's (zie NAVIGATIE onderaan): (naam van de functie, titel, adres, standaard).
+PAGINA_DEFINITIES = [
+    ("pagina_planning", "Planning", "planning", False),
+    ("pagina_stek", "Stek", "stek", False),
+    ("pagina_teeltoverzicht", "Teeltoverzicht", "teeltoverzicht", True),
+    ("pagina_teeltvergelijking", "Teeltvergelijking", "teeltvergelijking", False),
+    ("pagina_tuinvergelijking", "Tuin vergelijking", "tuinvergelijking", False),
+    ("pagina_meer", "Meer", "meer", False),
+]
+
+
+def _paginas():
+    """st.Page-objecten; de paginafuncties zelf worden pas bij het draaien opgezocht (ze staan onderaan)."""
+    def pagina(naam):
+        def draai():
+            globals()[naam]()
+        draai.__name__ = naam
+        return draai
+    return [st.Page(pagina(naam), title=titel, url_path=adres, default=standaard)
+            for naam, titel, adres, standaard in PAGINA_DEFINITIES]
+
+
+# Al vóór het inloggen (verborgen) aan st.navigation geven: het cookie-onderdeel
+# van de inlogmodule start in de eerste run een herhaalde run, en die weet de
+# gevraagde pagina (link of bladwijzer, bijv. /planning) alleen als de
+# navigatie dan al bekend is. Anders kom je op de standaardpagina uit.
+st.navigation(_paginas(), position="hidden")
+
 _DAGEN_KORT = ["ma", "di", "wo", "do", "vr", "za", "zo"]
 _vandaag_kop = date.today()
 st.markdown(
@@ -745,7 +773,10 @@ if _auth_status is None:
     st.info("Log in om de teeltregistratie te gebruiken.")
     st.stop()
 
-# Vanaf hier is de gebruiker ingelogd.
+# Vanaf hier is de gebruiker ingelogd. De navigatie staat vóór alles wat een
+# st.rerun() kan geven (tuinkeuze, zijbalk): een herhaalde run onthoudt dan de
+# gekozen pagina. Uitgevoerd wordt de pagina pas onderaan (_pagina.run()).
+_pagina = st.navigation(_paginas(), position="top")
 st.sidebar.caption(f"👤 Ingelogd als {st.session_state.get('name')}")
 authenticator.logout("Uitloggen", location="sidebar")
 
@@ -1197,14 +1228,12 @@ with _paneel[actie].container():
         else:
             st.info("Nog geen registraties.")
 
-# --- HOOFDSCHERM: TABBLADEN ---
+# --- HOOFDSCHERM: PAGINA'S ---
+#
+# Elke pagina is een functie; st.navigation (na het inloggen) kiest er één en
+# _pagina.run() onderaan voert alleen die uit. Alles hierboven (login, tuinkeuze, registratie in de
+# zijbalk, gedeelde functies en caches) geldt voor alle pagina's.
 styles.laad()
-tab_planning, tab_stek, tab_overzicht, tab_teeltvgl, tab_tuinvgl, tab_meer = st.tabs([
-    "Planning", "Stek", "Teeltoverzicht", "Teeltvergelijking", "Tuin vergelijking", "Meer",
-])
-# Weinig gebruikt: import, logboek en uitleg als subtabbladen onder "Meer".
-with tab_meer:
-    tab_import, tab_log, tab_help = st.tabs(["Data importeren", "Logboek", "Hoe dit werkt"])
 
 # --- NU: hoe staat elk vak ervoor ---
 #
@@ -1796,7 +1825,7 @@ def _nu_toon_tuin(info, vandaag, data):
                         _nu_vak_venster(info, vak, vandaag, data)
 
 
-with tab_overzicht:
+def _pagina_overzicht_1():
     _nu_vandaag = date.today()
     _nu_uitleg = (
         "Per vak: plantweek en leeftijd, de Florgib (geregistreerd of verwacht), de correctie op de lichtlijn "
@@ -2017,7 +2046,7 @@ def _tv_uitklappers(g, van, tot, periode_naam):
             st.caption("Liter per m² vak; bij een week per dag, anders het totaal en het aantal dagen met data.")
 
 
-with tab_tuinvgl:
+def _pagina_tuinvgl_1():
     st.subheader("Tuin vergelijking", help=(
         "Wat er in een periode in de kas gebeurde: tuin 1 naast tuin 3 en het totaal, alles per m². Het totaal "
         "is gewogen naar m² (niet het gemiddelde van twee tuinen). Een kengetal zonder data toont – (waarom: "
@@ -2298,7 +2327,7 @@ def _tl_vakkentabel(groep, vandaag):
         st.session_state["tl_gekozen"] = None
 
 
-with tab_teeltvgl:
+def _pagina_teeltvgl_1():
     st.subheader("Teeltvergelijking", help=(
         "Een teelt = alle vakken uit één plantweek. Bovenaan per tuin samengevat (gewogen naar de m² van het vak), "
         "daaronder de vakken naast elkaar. De kleine regel is dezelfde plantweek vorig jaar."))
@@ -2589,12 +2618,12 @@ def toon_vakkenregister(vandaag, tuin_weergave):
                    "het vak.")
 
 
-with tab_overzicht:
+def _pagina_overzicht_2():
     st.markdown("---")
     toon_vakkenregister(date.today(), TUIN_WEERGAVE)
 
 # --- PLANNING (TOEKOMSTIGE TEELTEN) ---
-with tab_planning:
+def _pagina_planning_1():
     st.subheader("Planning")
     with st.expander("Hoe lees ik dit?"):
         st.caption(
@@ -2918,7 +2947,7 @@ def _stek_mailhtml(rapport, totaal_geplant):
     )
 
 
-with tab_stek:
+def _pagina_stek_1():
     st.subheader("Stek")
     stekweken = get_stekweken()
     if not stekweken:
@@ -3158,7 +3187,7 @@ with tab_stek:
 
 
 # --- DATA IMPORTEREN (onder Meer) ---
-with tab_import:
+def _pagina_import_1():
     st.subheader("Data importeren")
     col_imp_klimaat, col_imp_energie, col_imp_priva = st.columns(3)
 
@@ -3285,7 +3314,7 @@ with tab_import:
             )
 
 # --- LOGBOEK ---
-with tab_log:
+def _pagina_log_1():
     st.subheader("Logboek")
     st.caption("Wie wat wanneer heeft aangemaakt, gewijzigd of verwijderd — nieuwste bovenaan.")
 
@@ -3327,7 +3356,7 @@ with tab_log:
         st.info("Nog geen logregels.")
 
 # --- EXTRA INFO ---
-with tab_help:
+def _pagina_help_1():
     st.write("""
     **Een vak starten**
     - Dat gaat via het tabblad 🗓️ Planning: klik bij het concept van dat vak op ✅. Het vak
@@ -3390,9 +3419,49 @@ with tab_help:
     - Elke ronde is een apart record met eigen gegevens
     """)
 
+# --- NAVIGATIE ---
+#
+# Losse pagina's (st.navigation): een klik voert alleen de code van die pagina
+# uit, niet die van alle tabbladen. Elke pagina heeft een eigen adres
+# (bijv. /planning) voor links en bladwijzers; de app opent op Teeltoverzicht.
+
+def pagina_planning():
+    _pagina_planning_1()
+
+
+def pagina_stek():
+    _pagina_stek_1()
+
+
+def pagina_teeltoverzicht():
+    _pagina_overzicht_1()
+    _pagina_overzicht_2()
+
+
+def pagina_teeltvergelijking():
+    _pagina_teeltvgl_1()
+
+
+def pagina_tuinvergelijking():
+    _pagina_tuinvgl_1()
+
+
+def pagina_meer():
+    """Weinig gebruikt: import, logboek en uitleg als subtabbladen."""
+    tab_import, tab_log, tab_help = st.tabs(["Data importeren", "Logboek", "Hoe dit werkt"])
+    with tab_import:
+        _pagina_import_1()
+    with tab_log:
+        _pagina_log_1()
+    with tab_help:
+        _pagina_help_1()
+
+
+_pagina.run()
+
 # Lokaal meten: maak een leeg bestand .vem_tijd naast app.py; elke run schrijft
 # dan zijn duur (en de actieve pagina) in .vem_tijd.log.
 _VEM_TIJD = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".vem_tijd")
 if os.path.exists(_VEM_TIJD):
     with open(_VEM_TIJD + ".log", "a", encoding="utf-8") as _f:
-        _f.write(f"{datetime.now():%H:%M:%S} alles {time.perf_counter() - _VEM_T0:.2f}\n")
+        _f.write(f"{datetime.now():%H:%M:%S} {_pagina.title} {time.perf_counter() - _VEM_T0:.2f}\n")
