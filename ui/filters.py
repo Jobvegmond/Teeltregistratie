@@ -158,19 +158,20 @@ def bladeraar(sleutel, opties, standaard, format_func=str, huidig=None, plek=Non
 
 
 def periode(sleutel, lengtes, standaard_lengte, opties_van, standaard_van, format_van=None, huidig_van=None,
-            label="Periode", plek=None):
+            label="Periode", plek=None, per_lengte=True, breedte=None):
     """
     Kalenderperiode: knoppengroep voor de lengte (bijv. Week / Maand / Kwartaal /
     Jaar, of 2 wk / 4 wk / 3 mnd) + ◀ [label ▾] ▶. De functies krijgen de
     gekozen lengte mee: opties_van(lengte) = de perioden (laag → hoog),
     standaard_van(lengte), format_van(lengte) → format_func, huidig_van(lengte).
-    Geeft (lengte, periode) terug; per lengte wordt de periode apart bewaard.
+    Geeft (lengte, periode) terug. De periode wordt per lengte apart bewaard,
+    of bij per_lengte=False één keer (als de opties niet van de lengte afhangen).
     """
     plek = plek or st
     lengte = weergave(label, lengtes, f"{sleutel}_lengte", standaard_lengte, plek=plek)
-    kies = bladeraar(f"{sleutel}_{lengte}", opties_van(lengte), standaard_van(lengte),
+    kies = bladeraar(f"{sleutel}_{lengte}" if per_lengte else sleutel, opties_van(lengte), standaard_van(lengte),
                      format_func=(format_van(lengte) if format_van else str),
-                     huidig=huidig_van(lengte) if huidig_van else None, plek=plek)
+                     huidig=huidig_van(lengte) if huidig_van else None, plek=plek, breedte=breedte)
     return lengte, kies
 
 
