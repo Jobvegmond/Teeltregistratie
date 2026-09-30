@@ -917,6 +917,8 @@ if _tuin_modus == "een" and st.session_state["tuin_weergave"] == "beide":
     _tuin_rij.caption(f"Beide kan hier niet: {_tuin_reden[:-1].lower()}")
 elif _tuin_modus == "beide":
     _tuin_rij.caption(_tuin_reden)
+# Zijbalk voor invoer (onder de gebruiker); de keuze van de tuin hoort bij de registratie.
+st.sidebar.header("Registratie")
 if TUIN_WEERGAVE == "beide" and _tuin_modus == "vrij" and len(_tuin_nummers) > 1:
     # Registreren kan maar in één tuin: bij Beide kies je die bovenaan de registratie.
     st.session_state["w_tuin_registratie"] = st.session_state["tuin_nummer"]
@@ -1023,11 +1025,10 @@ def toon_oogstregistraties_beheer(teelt_id, teelt_info):
 # Zijbalk voor invoer. Een nieuwe teelt begint niet hier maar in het tabblad
 # Planning: daar staat het concept al klaar en zet je het met één knop om in
 # een lopende teelt.
-st.sidebar.header("Registratie")
-
 FLORGIB, OOGST, OPMERKING, WIJZIGEN = "Florgib lengte", "Oogst", "Opmerking", "Wijzigen of verwijderen"
 WIJZIG_ONDERDELEN = ["Startdatum en planten", "Florgib", "Oogst", "Opmerkingen"]
-actie = st.sidebar.radio("Wat wil je doen?", [FLORGIB, OOGST, OPMERKING, WIJZIGEN])
+actie = filters.weergave("Wat wil je doen?", [FLORGIB, OOGST, OPMERKING, WIJZIGEN], "zijbalk_actie", FLORGIB,
+                         plek=st.sidebar, format_func=lambda a: {FLORGIB: "Florgib", WIJZIGEN: "Wijzigen"}.get(a, a))
 
 # Elke actie krijgt een eigen plek in de zijbalk; de plekken van de andere twee
 # blijven leeg. Streamlit ruimt namelijk alleen op wat het opnieuw tekent: zonder
