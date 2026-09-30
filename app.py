@@ -2635,9 +2635,8 @@ def _tl_vakkentabel(groep, vandaag, markeer=()):
             "Tuin": st.column_config.TextColumn(pinned=True), "Afd.": st.column_config.NumberColumn(pinned=True),
             "Vak": st.column_config.NumberColumn(pinned=True), "Code": st.column_config.TextColumn(pinned=True),
         })
-    st.caption("Groen/rood = minstens 5 % beter/slechter dan het gemiddelde van deze teelt (alleen waar beter "
-               "vastligt). ⏳ = lopend vak: klimaat en input t/m gisteren, oogst en duur zijn de prognose. "
-               "Klik op een regel voor het vak.")
+    uitleg_help.voetnoot("Klik op een regel voor het vak. Groen/rood = minstens 5 % beter/slechter dan het "
+                         "gemiddelde van de teelt.")
     gekozen = keuze.selection.rows if keuze else []
     vorige = st.session_state.get("tl_gekozen")
     if gekozen and gekozen != vorige:
@@ -2648,84 +2647,48 @@ def _tl_vakkentabel(groep, vandaag, markeer=()):
 
 
 def _pagina_teeltvgl_1():
-    pagina_uitleg((
-        "Een teelt = alle vakken uit één plantweek. Bovenaan per tuin samengevat (gewogen naar de m² van het vak), "
-        "daaronder de vakken naast elkaar. De kleine regel is dezelfde plantweek vorig jaar."))
+    layout.pagina_kop(
+        "Teeltvergelijking",
+        wat="Een teelt = alle vakken uit één plantweek. Bovenaan per tuin samengevat, daaronder de vakken van de "
+            "teelt naast elkaar.",
+        lezen=["Blader met ◀ ▶ door de teelten, of klik op het label om direct naar een plantweek te springen. "
+               "De tuin kies je bovenaan; de samenvatting toont altijd beide tuinen.",
+               "Kleine regel = dezelfde plantweek vorig jaar. Loopt de teelt nog, dan klimaat en input van vorig "
+               "jaar tot dezelfde teeltdag.",
+               "Beweeg over een cel voor het verschil en de uitleg; klik op een kengetal voor het verloop over "
+               "12 plantweken.",
+               "Klik op een vak in de vakkentabel om het te openen (en op te lichten).",
+               "⏳ = lopend vak: klimaat en input t/m gisteren, oogst en duur zijn de prognose."],
+        bron="Samenvatting gewogen naar de m² van het vak. Klimaat, water en energie uit Priva; oogst, lengte "
+             "en gewicht uit de registratie.",
+        kleuren="Samenvatting: groen/rood pijltje = beter/slechter dan vorig jaar; lichtgroen vak = beste tuin; "
+                "⚠ = niet alle vakken met data. Vakkentabel: groen/rood = minstens 5 % beter/slechter dan het "
+                "gemiddelde van de teelt (alleen waar beter vastligt).",
+    )
     _tl_vandaag = date.today()
     _tl_gisteren = _tl_vandaag - timedelta(days=1)
     _tl_versie = vakstatus_dataversie()
     _tl_alle = _tl_vakken(_tl_versie, _tl_vandaag)
     _tl_dd = _tl_dagdata(_tl_versie)
     _tl_weken = teeltvgl.plantweken(_tl_alle)
-    _tl_lijst = sorted(_tl_weken, reverse=True)
-    if not _tl_lijst:
+    if not _tl_weken:
         st.info("Nog geen vakken.")
     else:
-        # Kiezen met losse velden: tuin, week, vak, jaar. Een gekozen vak licht op
-        # in de vakkenlijst; het vak bepaalt ook welke jaren er te kiezen zijn.
-        _tl_items = [{"id": t["id"], "tuin_id": t["tuin_id"], "vak": t["vak"],
-                      "jaar": teeltvgl.plantweek(t["start"])[0], "week": teeltvgl.plantweek(t["start"])[1]}
-                     for t in _tl_alle]
-        _tl_tuin_id = {t["nummer"]: t["id"] for t in TUINEN}
-        _tl_tuin_opties = ["beide"] + sorted(_tl_tuin_id)
-        if st.session_state.get("tl_week") not in _tl_lijst:
-            st.session_state["tl_week"] = teeltvgl.standaard_plantweek(_tl_weken)
-        if st.session_state.get("tl_tuin") not in _tl_tuin_opties:
-            st.session_state["tl_tuin"] = TUIN_WEERGAVE if TUIN_WEERGAVE in _tl_tuin_opties else "beide"
-
-        def _tl_tuin():
-            keuze = st.session_state["tl_tuin"]
-            return None if keuze == "beide" else _tl_tuin_id[keuze]
-
-        def _tl_zet(week):
-            st.session_state.update(tl_week=week, tl_wk=week[1], tl_jaar=week[0])
-
-        def _tl_na_tuin():
-            st.session_state["tl_vak"] = "alle"
-
-        def _tl_plantweken():
-            """De plantweken (oud naar nieuw) met vakken in de gekozen tuin."""
-            return sorted({(i["jaar"], i["week"]) for i in selectie.gekozen(_tl_items, _tl_tuin())})
-
-        def _tl_blader(stappen):
-            huidig, lijst = st.session_state["tl_week"], _tl_plantweken()
-            verder = [w for w in lijst if (w > huidig if stappen > 0 else w < huidig)]
-            if verder:
-                st.session_state["tl_vak"] = "alle"
-                _tl_zet(verder[0] if stappen > 0 else verder[-1])
-
-        # Eén rij, links uitgelijnd, met vaste breedtes (niet over het hele scherm uitgesmeerd).
-        _tl_rij = st.container(horizontal=True, vertical_alignment="bottom", gap="small")
-        _tl_rij.selectbox("Tuin", _tl_tuin_opties, key="tl_tuin", on_change=_tl_na_tuin, width=130,
-                          format_func=lambda n: "Beide" if n == "beide" else f"Tuin {n}")
-        _tl_weekopties = selectie.weken(_tl_items, _tl_tuin())
-        st.session_state["tl_wk"] = selectie.geldig(
-            st.session_state.get("tl_wk"), _tl_weekopties,
-            selectie.geldig(st.session_state["tl_week"][1], _tl_weekopties, _tl_weekopties[-1]))
-        _tl_rij.selectbox("Week", _tl_weekopties, key="tl_wk", format_func=lambda w: f"wk {w}", width=110)
-        # "alle" i.p.v. None: een selectbox toont None als "niets gekozen".
-        _tl_vakopties = ["alle"] + selectie.vakken(_tl_items, _tl_tuin(), week=st.session_state["tl_wk"])
-        st.session_state["tl_vak"] = selectie.geldig(st.session_state.get("tl_vak"), _tl_vakopties, "alle")
-        _tl_rij.selectbox("Vak", _tl_vakopties, key="tl_vak", width=140,
-                          format_func=lambda v: "Alle vakken" if v == "alle" else f"Vak {v}")
-        _tl_vak = None if st.session_state["tl_vak"] == "alle" else st.session_state["tl_vak"]
-        _tl_jaaropties = selectie.jaren(_tl_items, st.session_state["tl_wk"], _tl_tuin(), _tl_vak)
-        st.session_state["tl_jaar"] = selectie.geldig(
-            st.session_state.get("tl_jaar"), _tl_jaaropties,
-            selectie.geldig(st.session_state["tl_week"][0], _tl_jaaropties, _tl_jaaropties[-1]))
-        _tl_rij.selectbox("Jaar", _tl_jaaropties, key="tl_jaar", width=110)
-        st.session_state["tl_week"] = (st.session_state["tl_jaar"], st.session_state["tl_wk"])
-        _tl_pw = _tl_plantweken()
-        _tl_rij.button("◀", key="tl_terug", on_click=_tl_blader, args=(-1,), help="Vorige teelt",
-                       disabled=not _tl_pw or st.session_state["tl_week"] <= _tl_pw[0])
-        _tl_rij.button("▶", key="tl_verder", on_click=_tl_blader, args=(1,), help="Volgende teelt",
-                       disabled=not _tl_pw or st.session_state["tl_week"] >= _tl_pw[-1])
-        _tl_markeer = {i["id"] for i in selectie.gekozen(
-            _tl_items, _tl_tuin(), _tl_vak, st.session_state["tl_wk"], st.session_state["tl_jaar"])
-        } if _tl_vak is not None else set()
-        _tl_week = st.session_state["tl_week"]
-        st.caption(f"Teelt wk {_tl_week[1]} - {_tl_week[0]} · {_vakken_tekst(_tl_weken[_tl_week][0])}, "
-                   f"{_tl_weken[_tl_week][1]} afgerond (beide tuinen)")
+        _tl_tuin_ids = {t["id"] for t in TUINEN if TUIN_WEERGAVE == "beide" or t["nummer"] == TUIN_WEERGAVE}
+        _tl_per_week = {}
+        for t in _tl_alle:
+            if t["tuin_id"] in _tl_tuin_ids:
+                w = teeltvgl.plantweek(t["start"])
+                _tl_per_week[w] = _tl_per_week.get(w, 0) + 1
+        _tl_opties = sorted(_tl_per_week)
+        if not _tl_opties:
+            st.info("Nog geen vakken in deze tuin.")
+            return
+        _tl_balk = layout.filterbalk("teeltvgl")
+        _tl_week = filters.bladeraar(
+            "tl_teelt", _tl_opties, teeltvgl.standaard_plantweek(_tl_weken), plek=_tl_balk, naam="teelt",
+            format_func=lambda w: f"Teelt wk {w[1]} '{str(w[0])[2:]} · {_vakken_tekst(_tl_per_week[w])}",
+            breedte=230, spring_label="Spring naar plantweek")
         _tl_vorig = teeltvgl.vorig_jaar(_tl_week)
         _tl_tuinen = [(t["naam"], t["id"]) for t in sorted(TUINEN, key=lambda t: t["nummer"])]
         _tl_groep = [teeltvgl.met_dagdata(t, _tl_dd, _tl_gisteren)
@@ -2736,11 +2699,6 @@ def _pagina_teeltvgl_1():
                           for t in _tl_alle if teeltvgl.plantweek(t["start"]) == _tl_vorig]
         _tl_nu = teeltvgl.tabelwaarden(_tl_groep, _tl_tuinen)
         _tl_toen = teeltvgl.tabelwaarden(_tl_toen_groep, _tl_tuinen)
-        st.caption(
-            f"Kleine regel = zelfde plantweek vorig jaar ({_vakken_tekst(len(_tl_toen_groep))})"
-            + (f"; klimaat en input tot dezelfde teeltdag (dag {_tl_dag})" if _tl_dag is not None else "")
-            + ". Groen/rood pijltje = beter/slechter; lichtgroen vak = beste tuin; ⏳ = met lopende vakken of "
-              "prognose; ⚠ = niet alle vakken met data. Beweeg over een cel voor het verschil en de uitleg.")
 
         def _tl_verloop(k, week=_tl_week):
             rijen = []
@@ -2763,14 +2721,20 @@ def _pagina_teeltvgl_1():
                 markering=_tl_nu["markering"], ontbreekt=_tl_nu["ontbreekt"],
                 label_toen=f"wk {_tl_vorig[1]} '{str(_tl_vorig[0])[2:]}"),
             sleutel="tl_verloop", verloop=_tl_verloop, verloop_titel="Verloop over 12 plantweken")
+        uitleg_help.voetnoot(
+            f"Kleine regel = wk {_tl_vorig[1]} '{str(_tl_vorig[0])[2:]} ({_vakken_tekst(len(_tl_toen_groep))})"
+            + (f", klimaat en input tot dezelfde teeltdag (dag {_tl_dag})" if _tl_dag is not None else ""))
 
-        _tl_groep_tuin = [t for t in _tl_groep if _tl_tuin() is None or t["tuin_id"] == _tl_tuin()]
-        st.write("**Vakken van deze teelt**" + ("" if _tl_tuin() is None else f" ({_tuinnaam_van[_tl_tuin()]})"))
-        _tl_vakkentabel(_tl_groep_tuin, _tl_vandaag, markeer=_tl_markeer)
+        _tl_groep_tuin = [t for t in _tl_groep if t["tuin_id"] in _tl_tuin_ids]
+        layout.sectie("Vakken van deze teelt", len(_tl_groep_tuin))
+        _tl_vakkentabel(_tl_groep_tuin, _tl_vandaag)
 
         _tl_opm = opm_logic.filter_opmerkingen(_opm_alle(_tl_versie), teelt_ids={t["id"] for t in _tl_groep_tuin})
-        st.write(f"**Opmerkingen bij deze teelt** ({len(_tl_opm)})" if _tl_opm else "**Opmerkingen bij deze teelt**")
-        toon_opmerkingenlijst(_tl_opm, "tl_opm", "Geen opmerkingen bij de vakken van deze teelt.")
+        if st.button(f"{len(_tl_opm)} opmerking{'' if len(_tl_opm) == 1 else 'en'} bij deze teelt",
+                     icon=":material/arrow_forward:", type="tertiary", key="tl_naar_opmerkingen",
+                     disabled=not _tl_opm):
+            ga_naar("opmerkingen", {"opm_periode_lengte": "Alles", "opm_teelt": [_tl_week], "opm_vak": None,
+                                    "opm_categorie": None, "opm_zoek": None})
 
 
 # --- WATERGIFT: vak × dag, met EC/pH per watersysteem ---
