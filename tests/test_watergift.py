@@ -73,6 +73,36 @@ class TestMatrixLogica(unittest.TestCase):
         self.assertIsNone(wg.teelt_op_dag(self.TEELTEN, date(2026, 9, 26), self.VANDAAG))   # leeg tussen de teelten
         self.assertEqual(wg.lopende_teelt(self.TEELTEN, self.VANDAAG)["code"], "264005")
 
+    def test_vooruitkijken_met_verwachte_oogst(self):
+        teelten = wg.rondes([
+            {"start": date(2026, 9, 28), "florgib": None, "oogst": None, "eerste_emmer": None,
+             "verwacht_oogst": date(2026, 12, 4), "concept": False},
+            {"start": date(2026, 12, 14), "florgib": None, "oogst": None, "eerste_emmer": None,
+             "verwacht_oogst": date(2027, 2, 26), "concept": True}])
+        lopend = wg.teelt_op_dag(teelten, date(2026, 11, 1), self.VANDAAG)
+        self.assertEqual((lopend["ronde"], lopend["concept"]), (0, False))
+        self.assertEqual(wg.markering(lopend, date(2026, 12, 4), self.VANDAAG), {"oogst_verwacht"})
+        self.assertIsNone(wg.teelt_op_dag(teelten, date(2026, 12, 10), self.VANDAAG))   # tussen oogst en concept
+        self.assertEqual(wg.teelt_op_dag(teelten, date(2027, 1, 5), self.VANDAAG)["ronde"], 1)
+        self.assertEqual(wg.laatste_eind({5: teelten}), date(2026, 12, 4))
+        self.assertEqual(wg.laatste_eind({5: teelten}, met_concepten=True), date(2027, 2, 26))
+
+    def test_echte_teelt_gaat_voor_concept(self):
+        teelten = wg.rondes([
+            {"start": date(2026, 9, 25), "florgib": None, "oogst": None, "eerste_emmer": None,
+             "verwacht_oogst": date(2026, 12, 1), "concept": True},
+            {"start": date(2026, 9, 28), "florgib": None, "oogst": None, "eerste_emmer": None,
+             "verwacht_oogst": date(2026, 12, 4), "concept": False}])
+        self.assertFalse(wg.teelt_op_dag(teelten, date(2026, 10, 15), self.VANDAAG)["concept"])
+        concept = [dict(teelten[0])]
+        self.assertIsNone(wg.lopende_teelt(concept, self.VANDAAG))     # een concept is geen lopende teelt
+
+    def test_oogst_loopt_tot_vandaag_bij_eerste_emmer(self):
+        t = {"start": date(2026, 8, 3), "florgib": None, "oogst": None, "eerste_emmer": date(2026, 9, 28),
+             "verwacht_oogst": date(2026, 9, 29)}
+        self.assertEqual(wg.markering(t, date(2026, 9, 30), self.VANDAAG), {"oogst"})
+        self.assertIs(wg.teelt_op_dag([t], date(2026, 9, 30), self.VANDAAG), t)     # loopt door t/m vandaag
+
     def test_watergift_som_per_teelt(self):
         gift = {date(2026, 9, 27): 5.0, date(2026, 9, 28): 3.0, date(2026, 9, 29): None, date(2026, 9, 30): 2.5}
         self.assertEqual(wg.totaal_sinds_planten(gift, date(2026, 9, 28), self.VANDAAG), 5.5)

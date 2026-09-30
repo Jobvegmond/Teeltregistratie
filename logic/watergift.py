@@ -45,19 +45,33 @@ def dagen(van, tot):
 
 def teelt_op_dag(teelten_vak, dag, vandaag):
     """
-    De teelt van een vak op een dag, of None (vak leeg). Een teelt loopt van
-    de plantdag t/m de oogstdatum, of t/m vandaag als hij nog loopt.
-    teelten_vak: dicts met start, florgib, oogst (dates of None), eerste_emmer.
+    De teelt van een vak op een dag, of None (vak leeg). Een teelt loopt van de
+    plantdag t/m de oogstdatum; nog niet geoogst: t/m de verwachte oogst
+    (prognose, plan of concept), en een gestarte teelt minstens t/m vandaag.
+    teelten_vak: dicts met start, florgib, oogst, verwacht_oogst, eerste_emmer.
     """
-    for t in teelten_vak:
-        eind = t["oogst"] or vandaag
-        if t["start"] and t["start"] <= dag <= eind:
+    # Echte teelten gaan voor: een concept dat over een gestarte teelt heen valt, telt daar niet.
+    for t in sorted(teelten_vak, key=lambda t: bool(t.get("concept"))):
+        if not t["start"]:
+            continue
+        if t["oogst"]:
+            eind = t["oogst"]
+        else:
+            # Nog niet geoogst: t/m de verwachte oogst, en een gestarte teelt minstens t/m vandaag.
+            eind = max([e for e in (t.get("verwacht_oogst"), vandaag if t["start"] <= vandaag else None) if e]
+                       or [t["start"]])
+        if t["start"] <= dag <= eind:
             return t
     return None
 
 
-def markering(teelt, dag):
-    """Wat er die dag in de teelt gebeurt: {"plant", "florgib", "oogst"} (deelverzameling) of None als het vak leeg is."""
+def markering(teelt, dag, vandaag=None):
+    """
+    Wat er die dag in de teelt gebeurt, als deelverzameling van {"plant",
+    "florgib", "oogst", "oogst_verwacht"}, of None als het vak leeg is.
+    - oogst: van de eerste emmer t/m de oogstdatum (nog niet afgerond: t/m vandaag);
+    - oogst_verwacht: de verwachte oogstdag van een teelt die nog niet geoogst wordt.
+    """
     if teelt is None:
         return None
     uit = set()
@@ -66,14 +80,37 @@ def markering(teelt, dag):
     if teelt["florgib"] and dag == teelt["florgib"]:
         uit.add("florgib")
     begin_oogst = teelt.get("eerste_emmer") or teelt["oogst"]
-    if begin_oogst and begin_oogst <= dag <= (teelt["oogst"] or dag):
+    eind_oogst = teelt["oogst"] or vandaag
+    if begin_oogst and eind_oogst and begin_oogst <= dag <= eind_oogst:
         uit.add("oogst")
+    elif not teelt["oogst"] and not teelt.get("eerste_emmer") and dag == teelt.get("verwacht_oogst"):
+        uit.add("oogst_verwacht")
     return uit
 
 
+def rondes(teelten_vak):
+    """Nummert de teelten van één vak op volgorde (0, 1, 2, ...) in "ronde", voor een eigen kleur per ronde."""
+    for i, t in enumerate(sorted(teelten_vak, key=lambda t: t["start"])):
+        t["ronde"] = i
+    return teelten_vak
+
+
+def laatste_eind(teelten, met_concepten=False):
+    """
+    De verste dag waarop een teelt nog loopt (oogst of verwachte oogst), of None.
+    Standaard alleen echte teelten (gestart of bevestigd): de concept-planning
+    loopt vaak een jaar vooruit.
+    """
+    einden = [t["oogst"] or t.get("verwacht_oogst") for lijst in teelten.values() for t in lijst
+              if met_concepten or not t.get("concept")]
+    einden = [e for e in einden if e]
+    return max(einden) if einden else None
+
+
 def lopende_teelt(teelten_vak, vandaag):
-    """De teelt die nu in het vak staat (gestart, nog niet geoogst), of None."""
-    lopend = [t for t in teelten_vak if t["start"] and t["start"] <= vandaag and not t["oogst"]]
+    """De teelt die nu in het vak staat (gestart, nog niet geoogst, geen concept), of None."""
+    lopend = [t for t in teelten_vak if t["start"] and t["start"] <= vandaag and not t["oogst"]
+              and not t.get("concept")]
     return max(lopend, key=lambda t: t["start"]) if lopend else None
 
 

@@ -15,6 +15,10 @@ from utils.format import fmt_getal
 
 DAGEN_KORT = ["ma", "di", "wo", "do", "vr", "za", "zo"]
 TYPE_KLEUR = {"gewasbescherming": "#d64541", "biologie": "#2e9d5b", "voeding": "#8a6d3b"}
+# Achtergrond per teeltronde in een vak (om en om), half doorzichtig zodat het in licht en donker werkt.
+RONDE_KLEUR = ("rgba(76,175,80,0.20)", "rgba(142,68,173,0.17)", "rgba(214,69,120,0.15)")
+OOGST = "rgba(237,161,0,0.85)"
+OOGST_VERWACHT = "rgba(237,161,0,0.35)"
 
 # Vaste breedtes van de linkerkolommen (px), zodat ze bij zijwaarts scrollen blijven staan.
 LINKS = (("Vak", 44), ("Plantw.", 54), ("Leeftijd", 56), ("Totaal", 60))
@@ -46,8 +50,6 @@ table.wg tr.kw td { font-size: 11px; }
 table.wg tr.kw td.buiten { color: #d64541; font-weight: 700; }
 table.wg tr.beh td { height: 14px; font-size: 9px; border-bottom: 1px solid rgba(128,128,128,0.2); }
 table.wg tr.beh span { display: inline-block; padding: 0 2px; border-radius: 3px; color: #fff; margin: 0 1px; }
-table.wg td.leeg { background: repeating-linear-gradient(135deg, rgba(128,128,128,0.10) 0 4px, transparent 4px 8px); }
-table.wg td.excel { border: 1px dashed rgba(42,120,214,0.7); }
 table.wg td.florgib { position: relative; }
 table.wg td.florgib::after { content: ""; position: absolute; top: 2px; right: 2px; width: 6px; height: 6px;
                               border-radius: 50%; background: #8e44ad; }
@@ -71,8 +73,13 @@ export default function(component) {
         houder.innerHTML = data;
         houder._html = data;
         const scroll = houder.querySelector('.wg-scroll');
-        // Eerste keer: naar rechts, zodat de recentste dagen in beeld staan.
-        if (scroll) scroll.scrollLeft = links === null ? scroll.scrollWidth : links;
+        // Eerste keer: vandaag in beeld, met de afgelopen weken links ervan.
+        if (scroll && links === null) {
+            const vandaag = scroll.querySelector('thead tr.dg th.vandaag');
+            scroll.scrollLeft = vandaag ? Math.max(0, vandaag.offsetLeft - scroll.clientWidth * 0.6) : scroll.scrollWidth;
+        } else if (scroll) {
+            scroll.scrollLeft = links;
+        }
     }
     houder.onclick = (e) => {
         const el = e.target.closest('[data-klik]');
@@ -93,22 +100,30 @@ def _getal(waarde, decimalen=None):
 
 
 def _celstijl(cel, maximum):
-    """Achtergrond (licht → donker blauw naar de gift), en de randen voor plantdag en oogst."""
-    stijl, schaduw = [], []
-    if cel.get("liter"):
-        sterkte = 0.12 + 0.78 * min(1.0, cel["liter"] / maximum) if maximum else 0.5
-        if cel.get("bron") == "excel":
-            sterkte *= 0.6
+    """
+    Achtergrond: oogst oranje (verwacht: licht oranje), anders water blauw (licht →
+    donker naar de gift), anders de kleur van de teeltronde (concept: gearceerd),
+    en een leeg vak wit. Plantdag = groene streep links.
+    """
+    stijl = []
+    marks = cel.get("markering")
+    if marks and "oogst" in marks:
+        stijl.append(f"background: {OOGST}")
+    elif cel.get("liter"):
+        sterkte = 0.15 + 0.75 * min(1.0, cel["liter"] / maximum) if maximum else 0.5
         stijl.append(f"background: rgba(42,120,214,{sterkte:.2f})")
         if sterkte > 0.55:
             stijl.append("color: #fff")
-    marks = cel.get("markering") or set()
-    if "plant" in marks:
-        schaduw.append("inset 3px 0 0 #2E6A4C")
-    if "oogst" in marks:
-        schaduw.append("inset 0 -3px 0 #eda100")
-    if schaduw:
-        stijl.append("box-shadow: " + ", ".join(schaduw))
+    elif marks and "oogst_verwacht" in marks:
+        stijl.append(f"background: {OOGST_VERWACHT}")
+    elif cel.get("ronde") is not None:
+        kleur = RONDE_KLEUR[cel["ronde"] % len(RONDE_KLEUR)]
+        if cel.get("concept"):
+            stijl.append(f"background: repeating-linear-gradient(135deg, {kleur} 0 4px, transparent 4px 8px)")
+        else:
+            stijl.append(f"background: {kleur}")
+    if marks and "plant" in marks:
+        stijl.append("box-shadow: inset 3px 0 0 #2E6A4C")
     return "; ".join(stijl)
 
 
@@ -172,12 +187,8 @@ def bouw_html(m):
                      + links_cel(3, escape(v["totaal"]), attrs=' title="Totale watergift van de lopende teelt (l/m²)"'))
             for d, c in zip(dagen, v["cellen"]):
                 klas = ["c"]
-                if c.get("markering") is None:
-                    klas.append("leeg")
-                elif "florgib" in c["markering"]:
+                if c.get("markering") and "florgib" in c["markering"]:
                     klas.append("florgib")
-                if c.get("bron") == "excel" and c.get("liter"):
-                    klas.append("excel")
                 regel += (f'<td class="{dagklasse(d, " ".join(klas))}" style="{_celstijl(c, m["maximum"])}"'
                           f'{klik} title="{escape(c["tip"])}">{_getal(c.get("liter") or None)}</td>')
             rijen.append(f"<tr>{regel}</tr>")
@@ -193,13 +204,14 @@ def bouw_html(m):
         '<div class="wg-legenda">'
         '<span><i style="background:rgba(42,120,214,0.25)"></i><i style="background:rgba(42,120,214,0.9)">'
         '</i>gift l/m² (licht → veel)</span>'
-        '<span><i style="background:rgba(42,120,214,0.3);border:1px dashed rgba(42,120,214,0.7)"></i>'
-        'ingesteld (Excel, vóór Priva)</span>'
+        + '<span>' + "".join(f'<i style="background:{k}"></i>' for k in RONDE_KLEUR) + 'teelt (kleur per ronde)</span>'
+        + f'<span><i style="background:repeating-linear-gradient(135deg,{RONDE_KLEUR[0]} 0 4px,transparent 4px 8px)">'
+        '</i>concept-planning</span>'
+        '<span><i style="border:1px solid rgba(128,128,128,.3)"></i>vak leeg</span>'
         '<span><i style="box-shadow:inset 3px 0 0 #2E6A4C;border:1px solid rgba(128,128,128,.3)"></i>plantdag</span>'
         '<span><i style="border-radius:50%;width:8px;height:8px;background:#8e44ad"></i>Florgib</span>'
-        '<span><i style="box-shadow:inset 0 -3px 0 #eda100;border:1px solid rgba(128,128,128,.3)"></i>oogst</span>'
-        '<span><i style="background:repeating-linear-gradient(135deg,rgba(128,128,128,.25) 0 4px,transparent 4px 8px)">'
-        '</i>vak leeg</span>'
+        f'<span><i style="background:{OOGST}"></i>oogst</span>'
+        f'<span><i style="background:{OOGST_VERWACHT}"></i>verwachte oogst</span>'
         '<span><i style="background:#2E6A4C"></i>vandaag</span>'
         '</div>')
     return (f'<div class="wg-scroll"><table class="wg"><thead><tr class="wk">{kop_wk}</tr>'
