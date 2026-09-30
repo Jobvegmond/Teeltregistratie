@@ -110,6 +110,7 @@ from logic import prognoselog
 from logic import opmerkingen as opm_logic
 from logic import selectie
 from logic import watergift as wg
+from logic import weken as kalender
 from logic import tuinvergelijking as tuinvgl
 from logic import teeltvergelijking as teeltvgl
 from logic import teeltprognose as tp
@@ -516,7 +517,7 @@ def toon_strokenplanning(stroken, vaknummers, hoogte=640, legenda=True):
     _dagen_nl = ["ma", "di", "wo", "do", "vr", "za", "zo"]
 
     def _week_dag(ts):
-        return f"wk {ts.isocalendar().week} {_dagen_nl[ts.weekday()]}"
+        return f"wk {kalender.weeknummer(ts.date())} {_dagen_nl[ts.weekday()]}"
 
     df_stroken["start_tekst"] = df_stroken["start"].apply(_week_dag)
     df_stroken["eind_tekst"] = df_stroken["eind"].apply(_week_dag)
@@ -775,7 +776,7 @@ st.markdown(
     '<div class="vem-merk"><span class="vem-titel">Teeltregistratie</span>'
     '<span class="vem-bedrijf">Van Egmond Matricaria</span></div>'
     '<div class="vem-meta">'
-    f'<span class="vem-week">Week {_vandaag_kop.isocalendar()[1]} · '
+    f'<span class="vem-week">Week {kalender.weeknummer(_vandaag_kop)} · '
     f'{_DAGEN_KORT[_vandaag_kop.weekday()]} {format_datum(_vandaag_kop)}</span>'
     f'<span class="vem-versie">versie {APP_VERSIE}</span>'
     '</div></div>',
@@ -3083,8 +3084,8 @@ def toon_vooruitblik(vandaag, n_weken=6):
                        key="vooruitblik_eenheid")
     tuinen = sorted(TUINEN, key=lambda t: t["nummer"])
     vakgegevens = {t["id"]: get_vakgegevens(t["id"]) for t in tuinen}
-    maandag_nu = vandaag - timedelta(days=vandaag.weekday())
-    weken = [maandag_nu + timedelta(weeks=i) for i in range(n_weken)]
+    zondag_nu = kalender.week_begin(vandaag)
+    week_starts = [zondag_nu + timedelta(weeks=i) for i in range(n_weken)]
     data, _, stook, _ = _nu_alles(vandaag)
     lopend = [t for t in data["teelten"].to_dict("records") if not vs.als_datum(t["datum_oogst"])]
 
@@ -3105,13 +3106,13 @@ def toon_vooruitblik(vandaag, n_weken=6):
         return round((gegevens.get("stelen_bij_60") or 0) / 60 * dichtheid)
 
     def week_van(dag):
-        """Maandag van de week; een oogst die al vóór deze week verwacht werd telt bij deze week."""
-        return max(weken[0], dag - timedelta(days=dag.weekday()))
+        """Zondag van de week (zo–za); een oogst die al vóór deze week verwacht werd telt bij deze week."""
+        return max(week_starts[0], kalender.week_begin(dag))
 
-    rijen = [{"Week": f"Week {w.isocalendar()[1]} - {w.isocalendar()[0]}" + (" (deze week)" if i == 0 else "")}
-             for i, w in enumerate(weken)]
+    rijen = [{"Week": "Week {1} - {0}".format(*kalender.week_sleutel(w)) + (" (deze week)" if i == 0 else "")}
+             for i, w in enumerate(week_starts)]
     for tuin in tuinen:
-        plant, oogst = {w: 0 for w in weken}, {w: 0 for w in weken}
+        plant, oogst = {w: 0 for w in week_starts}, {w: 0 for w in week_starts}
         for t in (t for t in lopend if t["tuin_id"] == tuin["id"]):
             start = vs.als_datum(t["datum_teelt_start"])
             # Prognose van het teeltmodel (zoals in "Nu"), anders de plandatum.
@@ -3124,7 +3125,7 @@ def toon_vooruitblik(vandaag, n_weken=6):
                 plant[week_van(start)] += waarde(tuin["id"], vak, start)
             if eind and week_van(vs.als_datum(eind)) in oogst:
                 oogst[week_van(vs.als_datum(eind))] += waarde(tuin["id"], vak, start)
-        for rij, w in zip(rijen, weken):
+        for rij, w in zip(rijen, week_starts):
             rij[f"{tuin['naam']} plant"] = round(plant[w])
             rij[f"{tuin['naam']} oogst"] = round(oogst[w])
     kolommen = [("Week", "Week", "tekst", None, "medium")]
