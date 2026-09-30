@@ -685,43 +685,6 @@ def toon_kengetallen(items, titel=None):
     st.markdown(f'{kop}<div class="vem-kg">{"".join(tegels)}</div>', unsafe_allow_html=True)
 
 
-def watergift_grafiek(records, melding="Nog geen watergift gekoppeld."):
-    """
-    Watergift per dag als staven, per vak naast elkaar (niet opgeteld).
-    `records`: dicts met datum, Vak ("Vak 12") en liter (l/m²). Gebruikt in
-    de teeltweergave (teelt_detail: Nu en Teeltvergelijking).
-    """
-    # Priva schrijft ook dagen zonder gift weg (0,0); die zijn geen gift en
-    # rekten de as op tot vandaag, alsof er nog water gegeven werd.
-    df_water = pd.DataFrame(records).dropna(subset=["liter"]) if records else None
-    if df_water is not None:
-        df_water = df_water[df_water["liter"] > 0]
-    if df_water is None or df_water.empty:
-        st.info(melding)
-        return
-    df_water["datum"] = pd.to_datetime(df_water["datum"])
-    df_water = df_water.sort_values("datum")
-    df_water["dag"] = df_water["datum"].dt.strftime(DATUM_FORMAAT_AS)
-    st.caption("Watergift per vak (l/m² per dag, alleen dagen met een gift) — vakken naast elkaar, "
-               f"niet opgeteld. Laatste gift {df_water['datum'].max():%d-%m-%y}.")
-    # x als ordinaal (i.p.v. temporeel) zetten, want xOffset heeft een
-    # discrete band-schaal per dag nodig om de vakken naast elkaar te
-    # kunnen zetten — op een continue tijdas vallen de staven anders
-    # gewoon over elkaar heen. Het label is daarom een kant-en-klare
-    # dd-mm-tekst: een tijdformaat op een ordinale as leest Vega als
-    # getalformaat ("invalid format") en de grafiek blijft dan leeg.
-    water_chart = alt.Chart(df_water).mark_bar().encode(
-        x=alt.X("dag:O", title=None, sort=list(df_water["dag"].unique()),
-                axis=alt.Axis(labelAngle=-45)),
-        xOffset="Vak:N",
-        y=alt.Y("liter:Q", title="Liter/m²"),
-        color=alt.Color("Vak:N", legend=alt.Legend(title=None, orient="top")),
-        tooltip=[alt.Tooltip("datum:T", title="datum", format="%d-%m-%y"), "Vak:N",
-                 alt.Tooltip("liter:Q", title="l/m²", format=".1f")],
-    )
-    st.altair_chart(water_chart, use_container_width=True)
-
-
 def licht_temperatuur_grafiek(dagen_records):
     """
     Zet de werkelijke en de ideale etmaaltemperatuur (op basis van de
@@ -1804,7 +1767,7 @@ def toon_opmerkingenlijst(rijen, sleutel, leeg="Geen opmerkingen."):
     if gekozen and gekozen != st.session_state.get(f"{sleutel}_open"):
         st.session_state[f"{sleutel}_open"] = gekozen
         vandaag = date.today()
-        _tl_detail_venster(rijen[gekozen[0]]["teelt_id"], _tl_vakken(vakstatus_dataversie(), vandaag), vandaag)
+        vak_venster(rijen[gekozen[0]]["teelt_id"], vandaag)
     elif not gekozen:
         st.session_state[f"{sleutel}_open"] = None
 
@@ -1867,10 +1830,9 @@ def teelt_detail(s, klimaat, water, model=None):
     (s["stook"] uit het teeltmodel) en afgeronde (s["teelt"]["datum_oogst"]).
     - s: een vakstatus-dict (logic.vakstatus.beoordeel_teelt) met "stook" (of None)
     - klimaat: DataFrame met datum, temp_24h, lichtsom van de afdeling sinds planten
-    - water: [{datum, liter}] van het vak sinds planten
+    - water: [{datum, liter}] van het vak sinds planten (als staafjes op de tijdlijn)
     """
     t, u = s["teelt"], s.get("stook")
-    vak = t["vaknummer"]
     _nu_tijdlijn(s, water)
     if u:
         nodig = 1.0
@@ -1887,12 +1849,6 @@ def teelt_detail(s, klimaat, water, model=None):
         "Lichtsom per dag (J/cm²)", toon_dagnacht=False, formaat=",.0f",
         melding="Geen lichtsom sinds planten.",
     )
-
-    st.write("**Watergift**")
-    if s["florgib"]:
-        st.caption(f"Na de Florgib ({format_datum(s['florgib'])}) wordt er geen water meer gegeven.")
-    watergift_grafiek([{"datum": r["datum"], "Vak": f"Vak {vak}", "liter": r["liter"]} for r in water],
-                      "Geen watergift in dit vak.")
 
     st.write("**Groei**")
     if s["refs"]:
@@ -1953,55 +1909,15 @@ def teelt_detail(s, klimaat, water, model=None):
 
 
 def _nu_vak_venster(info, vak, vandaag, data):
-    """Venster met de hele teelt van één vak."""
-    tuin, s = info["tuin"], info["statussen"].get(vak)
+    """Klik op een vak in de matrix: de vakpopup van de lopende teelt, of (leeg vak) wat er gepland staat."""
+    s = info["statussen"].get(vak)
+    if s is not None:
+        vak_venster(int(s["teelt"]["id"]), vandaag)
+        return
 
-    @st.dialog(f"Vak {vak} · {tuin['naam']}", width="large")
+    @st.dialog(f"Vak {vak} · {info['tuin']['naam']}", width="large")
     def _venster():
-        if s is None:
-            st.write(_nu_bloktip(vak, None, info["gepland"].get(vak), info["laatste_oogst"].get(vak), info))
-            return
-        t, u, model = s["teelt"], s["stook"], info["model"]
-        florgib = (format_datum(s["florgib"]) if s["florgib"]
-                   else f"verw. {format_datum(u['florgib_verwacht'])}" if u and u["florgib_verwacht"] else LEEG)
-        toon_kengetallen([
-            {"label": "Code", "waarde": t["code"] or LEEG},
-            {"label": "Ras", "waarde": t["ras"] or LEEG},
-            {"label": "Afdeling", "waarde": fmt_kort(t["afdeling"])},
-            {"label": "Geplant", "waarde": f"{format_datum(s['start'])} (wk {s['plantweek']})"},
-            {"label": "Leeftijd", "waarde": fmt_dagen(s["leeftijd"])},
-            {"label": "Florgib", "waarde": florgib,
-             "help": "Geregistreerde Florgib, of de verwachte: de dag waarop het model het deel van de teelt "
-                     "bereikt waarop meestal gespoten wordt"
-                     + (f" ({fmt_getal(model.florgib_fractie * 100)} %)." if model and model.florgib_fractie else ".")},
-            {"label": "Correctie", "waarde": _nu_c_tekst(u),
-             "delta": (f"{fmt_verschil(u['gewicht'], 0, 'g')} gewicht" if u and u["gewicht"] is not None
-                       and u["c"] is not None and not tp.op_koers(u["c"]) else None),
-             "help": "Constante afwijking van de lichtlijn vanaf vandaag waarmee de teelt precies op de plandatum "
-                     f"oogstrijp is (grenzen {fmt_verschil(C_GRENZEN[0], 0)} tot {fmt_verschil(C_GRENZEN[1], 0)} °C). "
-                     "Gewichtseffect = correctie × het verband tussen stooklijn en oogstgewicht in de historie "
-                     "(indicatief)."},
-            {"label": "Status", "waarde": NU_STATUS_KORT[s["klasse"]]},
-            {"label": "Plan-oogst", "waarde": format_datum(s["plan"]) if s["plan"] else LEEG,
-             "help": "Startdatum + teeltduur uit de teeltduur-tabel."},
-            {"label": "Prognose", "waarde": format_datum(s["prognose"]) if s["prognose"] else LEEG,
-             "delta": f"{fmt_verschil(s['prognose_dagen'], 0)} d t.o.v. plan" if s["prognose_dagen"] else None,
-             "help": f"Oogst als de afdeling blijft stoken zoals de laatste {AFWIJKING_VENSTER_DAGEN} dagen "
-                     "(gemiddelde afwijking van de lichtlijn), bij de gemiddelde lichtsom per kalenderweek."},
-        ])
-
-        klimaat = data["klimaat"]
-        klimaat = klimaat[(klimaat["tuin_id"] == tuin["id"]) & (klimaat["afdeling"] == t["afdeling"])
-                          & (klimaat["datum"] >= str(s["start"]))].sort_values("datum")
-        water = data["water"]
-        water = water[(water["tuin_id"] == tuin["id"]) & (water["vaknummer"] == vak)
-                      & (water["datum"] >= str(s["start"]))]
-        toon_opmerkingen(int(t["id"]))
-        teelt_detail(s, klimaat, [{"datum": r.datum, "liter": r.liter_per_m2} for r in water.itertuples()], model)
-        toon_watergift_vak(tuin["id"], vak, s["start"], vandaag)
-
-        st.write("**Vergelijking**")
-        st.dataframe(_nu_vergelijking(s, info, data), hide_index=True, use_container_width=True)
+        st.write(_nu_bloktip(vak, None, info["gepland"].get(vak), info["laatste_oogst"].get(vak), info))
 
     _venster()
 
@@ -2043,8 +1959,9 @@ def _nu_vergelijking(s, info, data):
     dit = kengetallen(t)
     if dit["florgib"] is None and u and u["florgib_verwacht"]:
         dit["florgib"] = (u["florgib_verwacht"] - s["start"]).days
-    oogst_verwacht = s["prognose"] or s["plan"]
-    dit["duur"] = (oogst_verwacht - s["start"]).days if oogst_verwacht else None
+    if not vs.als_datum(t["datum_oogst"]):
+        oogst_verwacht = s["prognose"] or s["plan"]
+        dit["duur"] = (oogst_verwacht - s["start"]).days if oogst_verwacht else None
 
     regels = [("Florgib op dag", "florgib", 0), ("Lengte bij Florgib (cm)", "half", 1),
               ("Oogstlengte (cm)", "eind", 1), ("Teeltduur (dagen)", "duur", 0), ("Uitval (%)", "uitval", 1),
@@ -2551,38 +2468,74 @@ def _tl_vakken(versie, vandaag):
             for k in _tl_ruw(versie) if vs.als_datum(k["datum_teelt_start"]) <= vandaag]
 
 
-def _tl_detail_venster(teelt_id, vakken, vandaag):
-    """Popup met één vak: dezelfde weergave als het vakvenster in Teeltoverzicht, ook voor afgeronde vakken."""
+def vak_venster(teelt_id, vandaag, vakken=None):
+    """
+    De vakpopup: één voor de hele app, vanuit elke pagina hetzelfde, voor lopende en afgeronde vakken.
+    Kengetallen, opmerkingen, tijdlijn (met watergift), voortgang, klimaat, lichtsom, groei, stek, de
+    watergift per dag en de vergelijking met vorig jaar en de referentievakken. `vakken` = rijen uit
+    _tl_vakken (voor uitval, lengte en gewicht); standaard alle.
+    """
     data, model, stook, _ = _nu_alles(vandaag)
     alle = data["teelten"].to_dict("records")
     t = next((r for r in alle if r["id"] == teelt_id), None)
-    rij = next((r for r in vakken if r["id"] == teelt_id), None)
-    if t is None or rij is None:
+    if t is None:
         return
-    tuin = _tuinnaam_van.get(t["tuin_id"], "?")
+    if vakken is None:
+        vakken = _tl_vakken(vakstatus_dataversie(), vandaag)
+    rij = next((r for r in vakken if r["id"] == teelt_id), None) or {}
+    tuin = next(x for x in TUINEN if x["id"] == t["tuin_id"])
 
-    @st.dialog(f"Vak {t['vaknummer']} · {tuin} · {t['code'] or '-'}", width="large")
+    @st.dialog(f"Vak {t['vaknummer']} · {tuin['naam']} · {t['code'] or '-'}", width="large")
     def _venster():
         start, oogst = vs.als_datum(t["datum_teelt_start"]), vs.als_datum(t["datum_oogst"])
         s = vs.beoordeel_teelt(t, alle, oogst or vandaag, bereken_verwachte_oogstdatum)
-        s["stook"] = stook.get(teelt_id) if not oogst else None
-        if s["stook"]:
-            s["prognose"] = s["stook"]["prognose"]
-        if not s["florgib"] and rij["florgib"]:
+        u = s["stook"] = stook.get(teelt_id) if not oogst else None
+        s["prognose"] = u["prognose"] if u else None
+        s["prognose_dagen"] = (u["prognose"] - s["plan"]).days if u and u["prognose"] and s["plan"] else None
+        s["klasse"] = "grijs" if not u else ("rijp" if u["oogstrijp"] else tp.dagen_klasse(s["prognose_dagen"]))
+        if not s["florgib"] and rij.get("florgib"):
             s["florgib"] = rij["florgib"]
-        toon_kengetallen([
-            {"label": "Tuin", "waarde": tuin},
+        florgib = (format_datum(s["florgib"]) if s["florgib"]
+                   else f"verw. {format_datum(u['florgib_verwacht'])}" if u and u["florgib_verwacht"] else LEEG)
+        kengetallen = [
             {"label": "Afdeling", "waarde": fmt_kort(t["afdeling"])},
             {"label": "Ras", "waarde": t["ras"] or LEEG},
             {"label": "Geplant", "waarde": f"{format_datum(start)} (wk {s['plantweek']})"},
-            {"label": "Florgib", "waarde": format_datum(rij["florgib"]) if rij["florgib"] else LEEG},
-            {"label": "Oogst" if oogst else "Prognose ⏳",
-             "waarde": format_datum(rij["oogst"]) if rij["oogst"] else LEEG},
-            {"label": "Teeltduur", "waarde": fmt_dagen(rij["teeltduur"]) if rij["teeltduur"] else LEEG},
-            {"label": "Uitval", "waarde": fmt_pct(rij["uitval"])},
-            {"label": "Oogstlengte", "waarde": fmt_getal(rij["lengte"], 1, "cm")},
-            {"label": "Oogstgewicht", "waarde": fmt_getal(rij["gewicht"], 0, "g")},
-        ])
+            {"label": "Teeltduur" if oogst else "Leeftijd",
+             "waarde": fmt_dagen((oogst - start).days if oogst else s["leeftijd"])},
+            {"label": "Florgib", "waarde": florgib,
+             "help": "Geregistreerde Florgib, of de verwachte: de dag waarop het model het deel van de teelt "
+                     "bereikt waarop meestal gespoten wordt"
+                     + (f" ({fmt_getal(model.florgib_fractie * 100)} %)." if model and model.florgib_fractie else ".")},
+        ]
+        if not oogst:
+            kengetallen += [
+                {"label": "Correctie", "waarde": _nu_c_tekst(u),
+                 "delta": (f"{fmt_verschil(u['gewicht'], 0, 'g')} gewicht" if u and u["gewicht"] is not None
+                           and u["c"] is not None and not tp.op_koers(u["c"]) else None),
+                 "help": "Constante afwijking van de lichtlijn vanaf vandaag waarmee de teelt precies op de "
+                         f"plandatum oogstrijp is (grenzen {fmt_verschil(C_GRENZEN[0], 0)} tot "
+                         f"{fmt_verschil(C_GRENZEN[1], 0)} °C). Gewichtseffect = correctie × het verband tussen "
+                         "stooklijn en oogstgewicht in de historie (indicatief)."},
+                {"label": "Status", "waarde": NU_STATUS_KORT[s["klasse"]]},
+            ]
+        kengetallen.append({"label": "Plan-oogst", "waarde": format_datum(s["plan"]) if s["plan"] else LEEG,
+                            "help": "Startdatum + teeltduur uit de teeltduur-tabel."})
+        if oogst:
+            kengetallen += [
+                {"label": "Oogst", "waarde": format_datum(oogst)},
+                {"label": "Uitval", "waarde": fmt_pct(rij.get("uitval"))},
+                {"label": "Oogstlengte", "waarde": fmt_getal(rij.get("lengte"), 1, "cm")},
+                {"label": "Oogstgewicht", "waarde": fmt_getal(rij.get("gewicht"), 0, "g")},
+            ]
+        else:
+            kengetallen.append(
+                {"label": "Prognose", "waarde": format_datum(s["prognose"]) if s["prognose"] else LEEG,
+                 "delta": f"{fmt_verschil(s['prognose_dagen'], 0)} d t.o.v. plan" if s["prognose_dagen"] else None,
+                 "help": f"Oogst als de afdeling blijft stoken zoals de laatste {AFWIJKING_VENSTER_DAGEN} dagen "
+                         "(gemiddelde afwijking van de lichtlijn), bij de gemiddelde lichtsom per kalenderweek."})
+        toon_kengetallen(kengetallen)
+
         eind = oogst or vandaag
         klimaat = pd.DataFrame(
             get_klimaatdata_dagen_voor_periode(t["afdeling"], str(start), str(eind), t["tuin_id"]),
@@ -2591,7 +2544,10 @@ def _tl_detail_venster(teelt_id, vakken, vandaag):
                  for d, liter in get_watergift_dagen_voor_periode(t["vaknummer"], str(start), str(eind), t["tuin_id"])]
         toon_opmerkingen(teelt_id)
         teelt_detail(s, klimaat, water, model)
-        toon_watergift_vak(t["tuin_id"], t["vaknummer"], start, eind)
+        toon_watergift_vak(t["tuin_id"], t["vaknummer"], start, eind, florgib=s["florgib"])
+        with layout.uitklap("Vergelijking met vorig jaar en de referentievakken"):
+            st.dataframe(_nu_vergelijking(s, {"tuin": tuin, "alle": alle}, data), hide_index=True,
+                         use_container_width=True)
 
     _venster()
 
@@ -2650,7 +2606,7 @@ def _tl_vakkentabel(groep, vandaag, markeer=()):
     vorige = st.session_state.get("tl_gekozen")
     if gekozen and gekozen != vorige:
         st.session_state["tl_gekozen"] = gekozen
-        _tl_detail_venster(groep[gekozen[0]]["id"], groep, vandaag)
+        vak_venster(groep[gekozen[0]]["id"], vandaag, groep)
     elif not gekozen:
         st.session_state["tl_gekozen"] = None
 
@@ -2979,12 +2935,14 @@ def _wg_dag_venster(tuin, dag, gift, kwaliteit, vakken_df, beurten):
     _venster()
 
 
-def toon_watergift_vak(tuin_id, vaknummer, start, eind):
+def toon_watergift_vak(tuin_id, vaknummer, start, eind, florgib=None):
     """Voor de vakpopup: de watergift per dag van de teelt, met gietbeurten en de EC/pH van de gift van dit vak."""
     rijen = get_watergift_vak(tuin_id, vaknummer, start, eind)
     gegeven = [r for r in rijen if r[1]]
-    with st.expander(f"Watergift per dag ({len(gegeven)} giftdagen, "
-                     f"{fmt_getal(sum(r[1] for r in gegeven), 0)} l/m² totaal)"):
+    with layout.uitklap(f"Watergift per dag ({len(gegeven)} giftdagen, "
+                        f"{fmt_getal(sum(r[1] for r in gegeven), 0)} l/m² totaal)"):
+        if florgib:
+            uitleg_help.voetnoot(f"Na de Florgib ({format_datum(florgib)}) wordt er geen water meer gegeven.")
         if not gegeven:
             st.caption("Geen watergift geregistreerd in deze teelt.")
             return
@@ -3080,7 +3038,7 @@ def _pagina_watergift_1():
             echte = [t for t in teelten.get(vak, []) if not t["concept"] and t["start"] <= vandaag]
             teelt = wg.lopende_teelt(echte, vandaag) or (echte or [None])[-1]
             if teelt:
-                _tl_detail_venster(teelt["id"], _tl_vakken(vakstatus_dataversie(), vandaag), vandaag)
+                vak_venster(teelt["id"], vandaag)
             else:
                 st.toast(f"Vak {vak} heeft nog geen teelt.")
     legend.legenda(wg_matrix.LEGENDA)
@@ -3258,7 +3216,7 @@ def _register_tabel(rijen, kolommen, sleutel, vakken, vandaag, klikbaar=True, so
     gekozen = keuze.selection.rows if keuze else []
     if gekozen and gekozen != st.session_state.get(f"{sleutel}_open"):
         st.session_state[f"{sleutel}_open"] = gekozen
-        _tl_detail_venster(rijen[gekozen[0]]["id"], vakken, vandaag)
+        vak_venster(rijen[gekozen[0]]["id"], vandaag, vakken)
     elif not gekozen:
         st.session_state[f"{sleutel}_open"] = None
 
@@ -4153,7 +4111,7 @@ def _pagina_prognosekwaliteit():
     gekozen = keuze.selection.rows if keuze else []
     if gekozen and gekozen != st.session_state.get("pk_missers_open"):
         st.session_state["pk_missers_open"] = gekozen
-        _tl_detail_venster(missers[gekozen[0]]["teelt_id"], _tl_vakken(vakstatus_dataversie(), vandaag), vandaag)
+        vak_venster(missers[gekozen[0]]["teelt_id"], vandaag)
     elif not gekozen:
         st.session_state["pk_missers_open"] = None
 
