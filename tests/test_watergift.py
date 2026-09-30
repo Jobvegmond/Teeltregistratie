@@ -1,6 +1,6 @@
 """Tests voor logic/watergift.py en de adapter voor behandelingen."""
 import unittest
-from datetime import date
+from datetime import date, timedelta
 
 from integrations import behandelingen as beh
 from logic import watergift as wg
@@ -55,3 +55,108 @@ class TestBehandelingen(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestMatrixLogica(unittest.TestCase):
+    TEELTEN = [{"start": date(2026, 8, 3), "florgib": date(2026, 8, 31), "oogst": date(2026, 9, 25),
+                "eerste_emmer": date(2026, 9, 21), "code": "263205"},
+               {"start": date(2026, 9, 28), "florgib": None, "oogst": None, "eerste_emmer": None, "code": "264005"}]
+    VANDAAG = date(2026, 9, 30)
+
+    def test_teelt_en_markering(self):
+        self.assertEqual(wg.markering(wg.teelt_op_dag(self.TEELTEN, date(2026, 8, 3), self.VANDAAG),
+                                      date(2026, 8, 3)), {"plant"})
+        self.assertEqual(wg.markering(wg.teelt_op_dag(self.TEELTEN, date(2026, 8, 31), self.VANDAAG),
+                                      date(2026, 8, 31)), {"florgib"})
+        self.assertEqual(wg.markering(wg.teelt_op_dag(self.TEELTEN, date(2026, 9, 23), self.VANDAAG),
+                                      date(2026, 9, 23)), {"oogst"})
+        self.assertIsNone(wg.teelt_op_dag(self.TEELTEN, date(2026, 9, 26), self.VANDAAG))   # leeg tussen de teelten
+        self.assertEqual(wg.lopende_teelt(self.TEELTEN, self.VANDAAG)["code"], "264005")
+
+    def test_vooruitkijken_met_verwachte_oogst(self):
+        teelten = wg.kleuren([
+            {"start": date(2026, 9, 28), "florgib": None, "oogst": None, "eerste_emmer": None,
+             "verwacht_oogst": date(2026, 12, 4), "concept": False},
+            {"start": date(2026, 12, 14), "florgib": None, "oogst": None, "eerste_emmer": None,
+             "verwacht_oogst": date(2027, 2, 26), "concept": True}])
+        lopend = wg.teelt_op_dag(teelten, date(2026, 11, 1), self.VANDAAG)
+        self.assertEqual((lopend["kleur"], lopend["concept"]), (40 % 4, False))
+        self.assertEqual(wg.markering(lopend, date(2026, 12, 4), self.VANDAAG), {"oogst_verwacht"})
+        self.assertIsNone(wg.teelt_op_dag(teelten, date(2026, 12, 10), self.VANDAAG))   # tussen oogst en concept
+        self.assertEqual(wg.teelt_op_dag(teelten, date(2027, 1, 5), self.VANDAAG)["kleur"], 51 % 4)
+        self.assertEqual(wg.laatste_eind({5: teelten}), date(2026, 12, 4))
+        self.assertEqual(wg.laatste_eind({5: teelten}, met_concepten=True), date(2027, 2, 26))
+
+    def test_echte_teelt_gaat_voor_concept(self):
+        teelten = wg.kleuren([
+            {"start": date(2026, 9, 25), "florgib": None, "oogst": None, "eerste_emmer": None,
+             "verwacht_oogst": date(2026, 12, 1), "concept": True},
+            {"start": date(2026, 9, 28), "florgib": None, "oogst": None, "eerste_emmer": None,
+             "verwacht_oogst": date(2026, 12, 4), "concept": False}])
+        self.assertFalse(wg.teelt_op_dag(teelten, date(2026, 10, 15), self.VANDAAG)["concept"])
+        concept = [dict(teelten[0])]
+        self.assertIsNone(wg.lopende_teelt(concept, self.VANDAAG))     # een concept is geen lopende teelt
+
+    def test_oogst_loopt_tot_vandaag_bij_eerste_emmer(self):
+        t = {"start": date(2026, 8, 3), "florgib": None, "oogst": None, "eerste_emmer": date(2026, 9, 28),
+             "verwacht_oogst": date(2026, 9, 29)}
+        self.assertEqual(wg.markering(t, date(2026, 9, 30), self.VANDAAG), {"oogst"})
+        self.assertIs(wg.teelt_op_dag([t], date(2026, 9, 30), self.VANDAAG), t)     # loopt door t/m vandaag
+
+    def test_kleur_per_plantweek_met_correctie(self):
+        def teelt(start):
+            return {"start": start, "florgib": None, "oogst": None, "eerste_emmer": None}
+        vak_a = wg.kleuren([teelt(date(2026, 5, 25)), teelt(date(2026, 8, 24))])    # wk 22 en 35
+        vak_b = wg.kleuren([teelt(date(2026, 8, 25))])                             # ook wk 35
+        self.assertEqual(vak_a[1]["kleur"], vak_b[0]["kleur"])                     # zelfde teelt, zelfde kleur
+        vak_c = wg.kleuren([teelt(date(2026, 6, 1)), teelt(date(2026, 8, 24) + timedelta(weeks=1))])  # 23 en 36
+        self.assertNotEqual(vak_c[0]["kleur"], vak_c[1]["kleur"])                  # 13 wk: verschillend
+        vak_e = wg.kleuren([teelt(date(2026, 6, 1)), teelt(date(2026, 6, 1) + timedelta(weeks=12))])  # 23 en 35: 12 wk
+        self.assertNotEqual(vak_e[0]["kleur"], vak_e[1]["kleur"])                  # veelvoud van 4: schuift op
+
+    def test_watergift_som_per_teelt(self):
+        gift = {date(2026, 9, 27): 5.0, date(2026, 9, 28): 3.0, date(2026, 9, 29): None, date(2026, 9, 30): 2.5}
+        self.assertEqual(wg.totaal_sinds_planten(gift, date(2026, 9, 28), self.VANDAAG), 5.5)
+
+    def test_samenvatting_leeg_vak_telt_niet_mee(self):
+        gift = {(1, date(2026, 9, 28)): 4.0, (2, date(2026, 9, 28)): 0.0}
+        bezet = lambda vak, dag: vak == 1                     # vak 2 staat leeg
+        uit = wg.samenvatting(gift, [1, 2], {1: 550, 2: 550}, bezet, date(2026, 9, 28), date(2026, 9, 29))
+        self.assertEqual((uit["gift_per_dag"], uit["giftdagen"], uit["laatste"]), (2.0, 1, date(2026, 9, 28)))
+
+    def test_band(self):
+        self.assertEqual(wg.band_status(1.1, (1.2, 1.7)), "laag")
+        self.assertEqual(wg.band_status(1.8, (1.2, 1.7)), "hoog")
+        self.assertIsNone(wg.band_status(1.4, (1.2, 1.7)))
+        self.assertIsNone(wg.band_status(None, (1.2, 1.7)))
+
+    def test_weken_van_zondag_tot_zaterdag(self):
+        self.assertEqual(wg.week_begin(date(2026, 9, 30)), date(2026, 9, 27))     # wo → zo ervoor
+        self.assertEqual(wg.week_begin(date(2026, 9, 27)), date(2026, 9, 27))     # zo blijft zo
+        self.assertEqual(wg.weeknummer(date(2026, 9, 27)), 40)                     # zo hoort bij de week erna
+        self.assertEqual(wg.weeknummer(date(2026, 10, 3)), 40)                     # za
+        self.assertEqual(wg.periode(date(2026, 9, 27), 4), (date(2026, 9, 6), date(2026, 10, 3)))
+
+
+class TestBehandelingenSubregel(unittest.TestCase):
+    """De subregel met middelcodes staat er alleen als er behandelingen zijn."""
+
+    def matrix(self, behandelingen):
+        from ui import watergift_matrix as wm
+        dagen = [date(2026, 9, 28), date(2026, 9, 29)]
+        per_dag = wg.behandelingen_per_vak_dag(behandelingen)
+        m = {"dagen": dagen, "vandaag": date(2026, 9, 30), "maximum": 5.0,
+             "toon_behandelingen": wg.toon_behandelingen(behandelingen), "kwaliteit": [],
+             "afdelingen": [{"naam": "Afd. 1", "vakken": [
+                 {"vak": 3, "plantweek": "wk 35", "leeftijd": "30 d", "totaal": "40", "tip": "",
+                  "cellen": [{"liter": 2.0, "bron": "priva", "markering": set(), "tip": ""}] * 2,
+                  "behandelingen": [per_dag.get((3, d), []) for d in dagen]}]}]}
+        return wm.bouw_html(m)
+
+    def test_verborgen_bij_lege_tabel(self):
+        self.assertNotIn('class="beh"', self.matrix([]))
+
+    def test_zichtbaar_met_testdata(self):
+        html = self.matrix([{"vaknummer": 3, "datum": "2026-09-29", "code": "ENT", "type": "biologie"}])
+        self.assertIn('class="beh"', html)
+        self.assertIn(">ENT</span>", html)

@@ -569,6 +569,8 @@ def init_db():
 
         # EC en pH van de gift per watersysteem per dag (Priva; integrations/priva_water.py).
         cursor.execute(WATER_KWALITEIT_TABEL)
+        # EC van het uitgangswater (voorregeling), sinds versie 2.4.0.
+        cursor.execute("ALTER TABLE water_kwaliteit_dag ADD COLUMN IF NOT EXISTS ec_aanvoer REAL")
         # Gewasbescherming, biologie en voeding: nu nog leeg, later gevuld via
         # integrations/behandelingen/. De pagina Watergift leest ze al.
         cursor.execute("""
@@ -1379,6 +1381,7 @@ WATER_KWALITEIT_TABEL = """
         ec_gem REAL, ec_min REAL, ec_max REAL,
         ph_gem REAL, ph_min REAL, ph_max REAL,
         ec_doel REAL, ph_doel REAL,
+        ec_aanvoer REAL,
         recept INTEGER,
         metingen INTEGER,
         bron TEXT NOT NULL DEFAULT 'priva',
@@ -1387,7 +1390,7 @@ WATER_KWALITEIT_TABEL = """
     )
 """
 WATER_KWALITEIT_KOLOMMEN = ("tuin_id", "watersysteem", "datum", "ec_gem", "ec_min", "ec_max", "ph_gem", "ph_min",
-                            "ph_max", "ec_doel", "ph_doel", "recept", "metingen", "bron")
+                            "ph_max", "ec_doel", "ph_doel", "ec_aanvoer", "recept", "metingen", "bron")
 # Opnieuw ophalen overschrijft dezelfde dag: de laatste ophaling heeft de volledigste dag.
 WATER_KWALITEIT_UPSERT = (
     f"INSERT INTO water_kwaliteit_dag ({', '.join(WATER_KWALITEIT_KOLOMMEN)}) "
@@ -1466,6 +1469,61 @@ def get_water_kwaliteit_dekking(tuin_id=None):
             dagen = (datetime.strptime(str(laatste), "%Y-%m-%d") - datetime.strptime(str(eerste), "%Y-%m-%d")).days + 1
             uit.append((systeem, str(eerste), str(laatste), aantal, dagen - aantal))
         return uit
+
+
+def get_watergift_overzicht(tuin_id, van, tot):
+    """
+    Alles voor de pagina Watergift van één tuin over van..tot, in vier query's
+    (nooit per vak of dag), als lijsten van dicts:
+    - gift: vaknummer, datum, liter_per_m2, bron, beurten
+    - kwaliteit: watersysteem, datum, ec_gem, ph_gem, ec_min, ec_max, ph_min, ph_max, ec_doel, ec_aanvoer, recept
+    - behandelingen: vaknummer, datum, code, naam, type, dosering, eenheid, methode
+    - eerste_emmer: {teelt_id: eerste oogstdag}
+    `van` mag vroeg liggen (bijv. de plantdag van de oudste lopende teelt) voor de totalen per teelt.
+    """
+    def rijen(cursor):
+        kolommen = [k[0] for k in cursor.description]
+        return [dict(zip(kolommen, r)) for r in cursor.fetchall()]
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT vaknummer, datum, liter_per_m2, bron, beurten FROM watergift_dag
+            WHERE tuin_id = %s AND datum BETWEEN %s AND %s
+        """, (tuin_id, str(van), str(tot)))
+        gift = rijen(cursor)
+        cursor.execute("""
+            SELECT watersysteem, datum, ec_gem, ph_gem, ec_min, ec_max, ph_min, ph_max, ec_doel, ec_aanvoer, recept
+            FROM water_kwaliteit_dag WHERE tuin_id = %s AND datum BETWEEN %s AND %s
+        """, (tuin_id, str(van), str(tot)))
+        kwaliteit = rijen(cursor)
+        cursor.execute("""
+            SELECT b.vaknummer, b.datum, m.code, m.naam, m.type, b.dosering, b.eenheid, b.methode
+            FROM behandeling b LEFT JOIN middel m ON m.id = b.middel_id
+            WHERE b.tuin_id = %s AND b.datum BETWEEN %s AND %s
+        """, (tuin_id, str(van), str(tot)))
+        behandelingen = rijen(cursor)
+        cursor.execute("""
+            SELECT o.teelt_id, MIN(o.datum) FROM oogstregistraties o
+            JOIN teelten t ON t.id = o.teelt_id JOIN teeltvakken v ON v.id = t.teeltvak_id
+            WHERE v.tuin_id = %s AND o.aantal_emmers > 0 GROUP BY o.teelt_id
+        """, (tuin_id,))
+        eerste_emmer = {int(i): d for i, d in cursor.fetchall()}
+    return {"gift": gift, "kwaliteit": kwaliteit, "behandelingen": behandelingen, "eerste_emmer": eerste_emmer}
+
+
+def get_watergift_vak(tuin_id, vaknummer, van, tot):
+    """Watergift per dag van één vak met de EC/pH van die dag (voor de vakpopup), oud naar nieuw."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT w.datum, w.liter_per_m2, w.beurten, w.bron, k.ec_gem, k.ph_gem
+            FROM watergift_dag w
+            LEFT JOIN water_kwaliteit_dag k ON k.tuin_id = w.tuin_id AND k.datum = w.datum AND k.watersysteem = 1
+            WHERE w.tuin_id = %s AND w.vaknummer = %s AND w.datum BETWEEN %s AND %s
+            ORDER BY w.datum
+        """, (tuin_id, int(vaknummer), str(van), str(tot)))
+        return cursor.fetchall()
 
 
 # --- BEHANDELINGEN (gewasbescherming, biologie, voeding; nu nog leeg) ---

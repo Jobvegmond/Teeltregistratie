@@ -49,6 +49,11 @@ class TestKwaliteit(unittest.TestCase):
         rij, = pw.kwaliteit_rijen(reeksen, 1, date(2026, 9, 28), date(2026, 9, 28))
         self.assertEqual((rij["ec_doel"], rij["ph_doel"]), (1.6, None))
 
+    def test_ec_uitgangswater_zonder_nullen(self):
+        reeksen = {"ec": [(t(28, 9), 1.41)], "ec_aanvoer": [(t(28, 9), 0.12), (t(28, 9, 5), 0.0)]}
+        rij, = pw.kwaliteit_rijen(reeksen, 1, date(2026, 9, 28), date(2026, 9, 28))
+        self.assertEqual(rij["ec_aanvoer"], 0.12)
+
     def test_kwaliteit_rijen_alleen_binnen_venster(self):
         reeksen = {"ec": [(t(27, 9), 1.4), (t(28, 9), 1.5)], "ph": [(t(28, 9), 6.0)], "recept": [(t(28, 8), 2.0)]}
         rijen = pw.kwaliteit_rijen(reeksen, 1, date(2026, 9, 28), date(2026, 9, 28))

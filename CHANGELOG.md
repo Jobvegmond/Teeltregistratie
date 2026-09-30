@@ -3,6 +3,18 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.4.0] - 2026-09-30
+
+### Toegevoegd
+- **Pagina Watergift**: matrix vak × dag met de watergift (l/m²), EC
+  uitgangswater, EC en pH (rood buiten de band EC 1,0–2,0 / pH 4,8–6,0),
+  teeltkleur per plantweek, plantdag, Florgib, oogst (verwacht: licht oranje),
+  concept-planning t/m volgende week, weken zo–za, vooruitkijken t/m de
+  verwachte oogst van de laatste lopende of bevestigde teelt, kruis bij het
+  aanwijzen, klik op vak (vakpopup) of dag (dagpopup), Download Excel.
+- **EC van het uitgangswater** (voorregeling) uit Priva, kolom `ec_aanvoer`.
+- Vakpopup: watergift per dag met gietbeurten en EC/pH.
+
 ## [2.3.0] - 2026-09-30
 
 ### Toegevoegd
