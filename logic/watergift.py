@@ -4,6 +4,8 @@ pagina Watergift. Alleen rekenwerk; tests in tests/test_watergift.py.
 """
 from datetime import date, datetime, timedelta
 
+from logic.weken import week_begin, weeknummer  # noqa: F401 (week_begin/weeknummer via wg.* in app.py)
+
 
 def watersysteem_van_vak(watersystemen, tuin_nummer, vak):
     """Het watersysteem dat dit vak water geeft (config.WATERSYSTEMEN), of None."""
@@ -32,16 +34,6 @@ def als_datum(waarde):
     if isinstance(waarde, date):
         return waarde
     return datetime.strptime(str(waarde)[:10], "%Y-%m-%d").date()
-
-
-def week_begin(dag):
-    """De zondag waarmee de week van `dag` begint (onze week loopt van zondag t/m zaterdag)."""
-    return dag - timedelta(days=(dag.weekday() + 1) % 7)
-
-
-def weeknummer(dag):
-    """Weeknummer met de zondag als eerste dag: de zondag hoort bij de ISO-week die de dag erna begint."""
-    return (dag + timedelta(days=1)).isocalendar()[1]
 
 
 def periode(eind_zondag, weken):

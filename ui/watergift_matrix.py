@@ -27,6 +27,25 @@ OOGST = "rgba(237,161,0,0.85)"
 GIFT = "#5b9bd5"                   # cel met watergift: vaste middenblauwe achtergrond, witte tekst
 OOGST_VERWACHT = "rgba(237,161,0,0.35)"
 
+# De legenda onder de matrix (ui/legend.py).
+LEGENDA = [
+    {"kleur": GIFT, "label": "watergift (l/m²)"},
+    {"label": "teeltronde (eigen kleur per ronde, licht/donker per teelt)",
+     "stijl": "width:2.4rem;background:linear-gradient(90deg,"
+              + ",".join(f"{k} {i * 100 // 6}% {(i + 1) * 100 // 6}%"
+                         for i, k in enumerate(k for paar in TEELT_KLEUR for k in paar)) + ");"},
+    {"label": "concept-planning",
+     "stijl": f"background:repeating-linear-gradient(135deg,{TEELT_KLEUR[0][1]} 0 3px,transparent 3px 6px);"},
+    {"label": "vak leeg", "stijl": "background:transparent;"},
+    {"label": "plantdag", "stijl": "background:transparent;box-shadow:inset 3px 0 0 #2E6A4C;"},
+    {"kleur": "#8e44ad", "vorm": "stip", "label": "Florgib"},
+    {"kleur": "#8e44ad", "vorm": "ring", "label": "verwachte Florgib", "stijl": "width:0.6rem;height:0.6rem;"},
+    {"kleur": OOGST, "label": "laatste oogstdag"},
+    {"kleur": OOGST_VERWACHT, "label": "verwachte oogst"},
+    {"kleur": "#2E6A4C", "label": "vandaag"},
+    {"kleur": "#d64541", "vorm": "lijn", "label": "EC/pH buiten de band (rode cijfers)"},
+]
+
 # Vaste breedtes van de linkerkolommen (px), zodat ze bij zijwaarts scrollen blijven staan.
 LINKS = (("Vak", 44), ("Plantw.", 54), ("Leeftijd", 56), ("Totaal", 60))
 
@@ -73,9 +92,6 @@ table.wg td.florgib-v::after { content: ""; position: absolute; top: 2px; right:
                                 border-radius: 50%; border: 1.5px solid #8e44ad; box-sizing: border-box; }
 table.wg td.florgib::after { content: ""; position: absolute; top: 2px; right: 2px; width: 6px; height: 6px;
                               border-radius: 50%; background: #8e44ad; }
-.wg-legenda { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 11px; margin: 6px 2px 0; opacity: 0.85; }
-.wg-legenda span { display: inline-flex; align-items: center; gap: 4px; }
-.wg-legenda i { display: inline-block; width: 16px; height: 12px; border-radius: 2px; }
 """
 
 JS = """
@@ -217,24 +233,8 @@ def bouw_html(m):
                     sub += f'<td class="{dagklasse(d)}">{inhoud}</td>'
                 rijen.append(f'<tr class="beh">{sub}</tr>')
 
-    legenda = (
-        '<div class="wg-legenda">'
-        f'<span><i style="background:{GIFT}"></i>watergift (l/m²)</span>'
-        + '<span>' + "".join(f'<i style="background:{licht}"></i><i style="background:{donker}"></i>'
-                             for licht, donker in TEELT_KLEUR) + 'teeltronde (licht/donker per teelt)</span>'
-        + f'<span><i style="background:repeating-linear-gradient(135deg,{TEELT_KLEUR[0][1]} 0 4px,transparent 4px 8px)">'
-        '</i>concept-planning</span>'
-        '<span><i style="border:1px solid rgba(128,128,128,.3)"></i>vak leeg</span>'
-        '<span><i style="box-shadow:inset 3px 0 0 #2E6A4C;border:1px solid rgba(128,128,128,.3)"></i>plantdag</span>'
-        '<span><i style="border-radius:50%;width:8px;height:8px;background:#8e44ad"></i>Florgib</span>'
-        '<span><i style="border-radius:50%;width:8px;height:8px;border:1.5px solid #8e44ad;box-sizing:border-box">'
-        '</i>verwachte Florgib</span>'
-        f'<span><i style="background:{OOGST}"></i>laatste oogstdag</span>'
-        f'<span><i style="background:{OOGST_VERWACHT}"></i>verwachte oogst</span>'
-        '<span><i style="background:#2E6A4C"></i>vandaag</span>'
-        '</div>')
     return (f'<div class="wg-scroll"><table class="wg"><thead><tr class="wk">{kop_wk}</tr>'
-            f'<tr class="dg">{kop_dg}</tr></thead><tbody>{"".join(rijen)}</tbody></table></div>{legenda}')
+            f'<tr class="dg">{kop_dg}</tr></thead><tbody>{"".join(rijen)}</tbody></table></div>')
 
 
 def toon(m, sleutel):

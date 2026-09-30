@@ -3,6 +3,46 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.5.0] - 2026-09-30
+
+Eén UI-standaard voor de hele app (docs/ui-standaard.md): overal dezelfde
+paginaopbouw, hetzelfde element per soort keuze en uitleg op één manier.
+
+### Gewijzigd
+- **Weken lopen overal van zondag t/m zaterdag** (kop, Tuin vergelijking,
+  Watergift, Opmerkingen, Gantt, vooruitblik). Teeltcodes en plantweken
+  blijven de ISO-week van de plantdatum.
+- Elke pagina: titel met een knop **Uitleg** (vaste kopjes: wat zie je, hoe
+  lees je het, waar komen de getallen vandaan, wat betekenen de kleuren).
+  "Hoe lees ik dit?" (Planning) en het tabblad "Hoe dit werkt" (Meer) vervallen.
+- **Tuin** alleen nog bovenaan. Planning, Stek en Meer werken per tuin (Beide
+  kan daar niet), Tuin vergelijking altijd over beide tuinen. Bij Beide vraagt
+  de zijbalk "Registreren in".
+- **Periode** overal als knoppengroep + ◀ [label ▾] ▶ met een sprongkeuze
+  (Tuin vergelijking, Watergift, Opmerkingen, plantperiode in het register);
+  teelt en pootweek op dezelfde manier (Teeltvergelijking, Stek). Geen
+  schuifjes of datumbereiken meer om te filteren.
+- Afdeling als aan/uit-labels, gedeeld tussen Teeltoverzicht en Watergift;
+  ras, categorie, type en gebruiker als labels of keuzelijst; zoeken altijd
+  als laatste.
+- Filterkeuzes blijven bewaard als je van pagina wisselt.
+- **Eén vakpopup** vanuit elke pagina, voor lopende en afgeronde vakken, met
+  de vergelijking met vorig jaar als openklapmenu. De aparte
+  watergiftgrafiek in de popup vervalt (staafjes op de tijdlijn en de tabel
+  Watergift per dag blijven).
+- Teeltvergelijking: de eigen tuin- en vak-keuzelijst vervallen; een vak
+  licht op door erop te klikken.
+- Tuin vergelijking: "Watergift per vak" vervalt; geplante vakken, watergift
+  en opmerkingen zijn links naar de pagina met het juiste filter.
+- Zichtbare legenda onder de matrix (Teeltoverzicht, Watergift) en de Gantt.
+- Zijbalk: "Wat wil je doen?" als knoppengroep op één regel. Stek: "uitval" heet
+  stekuitval.
+
+### Toegevoegd
+- Excel-export van het vakkenregister en van de opmerkingen.
+- Register: plantperiode per week, maand, kwartaal of jaar.
+- Logboek: zoeken in de omschrijving.
+
 ## [2.4.2] - 2026-09-30
 
 ### Gewijzigd

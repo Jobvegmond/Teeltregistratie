@@ -5,6 +5,8 @@ jaar). Alleen rekenwerk; tests in tests/test_perioden.py.
 """
 from datetime import date, timedelta
 
+from logic.weken import week_dagen, week_sleutel
+
 PERIODEN = ("Week", "Maand", "Kwartaal", "Jaar")
 MAANDNAMEN_KORT = ["jan", "feb", "mrt", "apr", "mei", "jun", "jul", "aug", "sep", "okt", "nov", "dec"]
 
@@ -16,7 +18,7 @@ def periode_sleutel(d, periode_naam):
     label is wat er in de grafieken en tabellen komt te staan.
     """
     if periode_naam == "Week":
-        jaar, week, _ = d.isocalendar()
+        jaar, week = week_sleutel(d)       # zondag t/m zaterdag (logic/weken.py)
         return (jaar, week), f"Wk {week} - {jaar}"
     if periode_naam == "Maand":
         return (d.year, d.month), f"{MAANDNAMEN_KORT[d.month - 1]} {d.year}"
@@ -29,11 +31,8 @@ def periode_sleutel(d, periode_naam):
 def periode_grenzen(sleutel, periode_naam):
     """Eerste en laatste dag (beide inclusief) van een periode uit periode_sleutel."""
     if periode_naam == "Week":
-        jaar, week = sleutel
         # Week 53 bestaat niet elk jaar; dan de laatste week van dat jaar.
-        week = min(week, date(jaar, 12, 28).isocalendar()[1])
-        van = date.fromisocalendar(jaar, week, 1)
-        return van, van + timedelta(days=6)
+        return week_dagen(*sleutel)
     if periode_naam == "Maand":
         jaar, maand = sleutel
         volgende = date(jaar + 1, 1, 1) if maand == 12 else date(jaar, maand + 1, 1)
@@ -106,3 +105,13 @@ def kort_label(sleutel, periode_naam, soort):
     if periode_naam == "Maand":
         return MAANDNAMEN_KORT[ander[1] - 1]
     return f"K{ander[1]}"
+
+
+def reeks(van, tot, periode_naam):
+    """Alle perioden (sleutels, laag → hoog) van de periode van `van` t/m die van `tot`."""
+    sleutel, eind = periode_sleutel(van, periode_naam)[0], periode_sleutel(tot, periode_naam)[0]
+    uit = [sleutel]
+    while sleutel < eind:
+        sleutel = verschuif(sleutel, periode_naam, 1)
+        uit.append(sleutel)
+    return uit
