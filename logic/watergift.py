@@ -98,10 +98,20 @@ def markering(teelt, dag, vandaag=None):
     return uit
 
 
-def rondes(teelten_vak):
-    """Nummert de teelten van één vak op volgorde (0, 1, 2, ...) in "ronde", voor een eigen kleur per ronde."""
-    for i, t in enumerate(sorted(teelten_vak, key=lambda t: t["start"])):
-        t["ronde"] = i
+def kleuren(teelten_vak, aantal=4):
+    """
+    Geeft elke teelt van één vak een kleur 0..aantal-1 in "kleur": volgens de
+    plantweek, zodat alle vakken van dezelfde teelt dezelfde kleur hebben. Krijgt
+    een teelt dezelfde kleur als de vorige in dit vak (plantweken precies een
+    veelvoud van `aantal` uit elkaar), dan schuift hij één kleur op, zodat
+    opeenvolgende teelten in een vak altijd te onderscheiden zijn.
+    """
+    vorige = None
+    for t in sorted(teelten_vak, key=lambda t: t["start"]):
+        kleur = t["start"].isocalendar()[1] % aantal
+        if kleur == vorige:
+            kleur = (kleur + 1) % aantal
+        t["kleur"] = vorige = kleur
     return teelten_vak
 
 
