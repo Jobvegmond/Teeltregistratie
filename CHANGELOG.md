@@ -35,7 +35,7 @@ paginaopbouw, hetzelfde element per soort keuze en uitleg op één manier.
 - Tuin vergelijking: "Watergift per vak" vervalt; geplante vakken, watergift
   en opmerkingen zijn links naar de pagina met het juiste filter.
 - Zichtbare legenda onder de matrix (Teeltoverzicht, Watergift) en de Gantt.
-- Zijbalk: "Wat wil je doen?" als knoppengroep. Stek: "uitval" heet
+- Zijbalk: "Wat wil je doen?" als knoppengroep op één regel. Stek: "uitval" heet
   stekuitval.
 
 ### Toegevoegd
