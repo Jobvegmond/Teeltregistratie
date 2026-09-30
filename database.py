@@ -411,6 +411,9 @@ def init_db():
         cursor.execute("UPDATE watergift_dag SET bron = 'priva' WHERE bron IS NULL")
         # Aantal gietbeurten per vak-dag (alleen uit Priva; bij Excel leeg).
         cursor.execute("ALTER TABLE watergift_dag ADD COLUMN IF NOT EXISTS beurten INTEGER")
+        # EC en pH van de gift(en) van dat vak die dag, gewogen naar de liters (sinds 2.4.1).
+        cursor.execute("ALTER TABLE watergift_dag ADD COLUMN IF NOT EXISTS ec REAL")
+        cursor.execute("ALTER TABLE watergift_dag ADD COLUMN IF NOT EXISTS ph REAL")
 
         # Tuinen: tuin 3 (Hartweg 20) en tuin 1 (Hartweg 29). Alles wat er al
         # stond is van tuin 3; die blijft de standaard, zodat bestaande code
@@ -571,6 +574,11 @@ def init_db():
         cursor.execute(WATER_KWALITEIT_TABEL)
         # EC van het uitgangswater (voorregeling), sinds versie 2.4.0.
         cursor.execute("ALTER TABLE water_kwaliteit_dag ADD COLUMN IF NOT EXISTS ec_aanvoer REAL")
+        # EC/pH van alle giften van die dag, gewogen naar de liters (sinds 2.4.1).
+        cursor.execute("ALTER TABLE water_kwaliteit_dag ADD COLUMN IF NOT EXISTS ec_gift REAL")
+        cursor.execute("ALTER TABLE water_kwaliteit_dag ADD COLUMN IF NOT EXISTS ph_gift REAL")
+        # Elke gietbeurt per vak, met EC/pH/flow gemiddeld over de beurt (sinds 2.4.1).
+        cursor.execute(WATERGIFT_BEURT_TABEL)
         # Gewasbescherming, biologie en voeding: nu nog leeg, later gevuld via
         # integrations/behandelingen/. De pagina Watergift leest ze al.
         cursor.execute("""
@@ -1351,7 +1359,7 @@ def importeer_klimaat_uit_priva(dagen_terug=4, gebruiker=None, tuin_id=None):
 WATERGIFT_BRONNEN = ("priva", "excel")
 
 
-def upsert_watergift_dag(vaknummer, datum, liter_per_m2, bron="priva", tuin_id=None, beurten=None):
+def upsert_watergift_dag(vaknummer, datum, liter_per_m2, bron="priva", tuin_id=None, beurten=None, ec=None, ph=None):
     """
     Slaat één vak-dag watergift op (of overschrijft bij een herhaalde ophaal),
     met het aantal gietbeurten als dat bekend is.
@@ -1363,12 +1371,13 @@ def upsert_watergift_dag(vaknummer, datum, liter_per_m2, bron="priva", tuin_id=N
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT INTO watergift_dag (tuin_id, vaknummer, datum, liter_per_m2, bron, beurten)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            INSERT INTO watergift_dag (tuin_id, vaknummer, datum, liter_per_m2, bron, beurten, ec, ph)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (tuin_id, vaknummer, datum)
-            DO UPDATE SET liter_per_m2 = EXCLUDED.liter_per_m2, bron = EXCLUDED.bron, beurten = EXCLUDED.beurten
+            DO UPDATE SET liter_per_m2 = EXCLUDED.liter_per_m2, bron = EXCLUDED.bron, beurten = EXCLUDED.beurten,
+                          ec = EXCLUDED.ec, ph = EXCLUDED.ph
             WHERE EXCLUDED.bron = 'priva' OR watergift_dag.bron = 'excel'
-        """, (_tuin_of_standaard(tuin_id), int(vaknummer), str(datum), liter_per_m2, bron, beurten))
+        """, (_tuin_of_standaard(tuin_id), int(vaknummer), str(datum), liter_per_m2, bron, beurten, ec, ph))
         conn.commit()
 
 
@@ -1382,6 +1391,7 @@ WATER_KWALITEIT_TABEL = """
         ph_gem REAL, ph_min REAL, ph_max REAL,
         ec_doel REAL, ph_doel REAL,
         ec_aanvoer REAL,
+        ec_gift REAL, ph_gift REAL,
         recept INTEGER,
         metingen INTEGER,
         bron TEXT NOT NULL DEFAULT 'priva',
@@ -1390,7 +1400,8 @@ WATER_KWALITEIT_TABEL = """
     )
 """
 WATER_KWALITEIT_KOLOMMEN = ("tuin_id", "watersysteem", "datum", "ec_gem", "ec_min", "ec_max", "ph_gem", "ph_min",
-                            "ph_max", "ec_doel", "ph_doel", "ec_aanvoer", "recept", "metingen", "bron")
+                            "ph_max", "ec_doel", "ph_doel", "ec_aanvoer", "ec_gift", "ph_gift", "recept", "metingen",
+                            "bron")
 # Opnieuw ophalen overschrijft dezelfde dag: de laatste ophaling heeft de volledigste dag.
 WATER_KWALITEIT_UPSERT = (
     f"INSERT INTO water_kwaliteit_dag ({', '.join(WATER_KWALITEIT_KOLOMMEN)}) "
@@ -1398,6 +1409,45 @@ WATER_KWALITEIT_UPSERT = (
     "ON CONFLICT (tuin_id, watersysteem, datum) DO UPDATE SET "
     + ", ".join(f"{k} = EXCLUDED.{k}" for k in WATER_KWALITEIT_KOLOMMEN[3:])
 )
+
+
+WATERGIFT_BEURT_TABEL = """
+    CREATE TABLE IF NOT EXISTS watergift_beurt (
+        id SERIAL PRIMARY KEY,
+        tuin_id INTEGER NOT NULL REFERENCES tuinen (id),
+        vaknummer INTEGER NOT NULL,
+        start TEXT NOT NULL,
+        eind TEXT NOT NULL,
+        datum TEXT NOT NULL,
+        liter_per_m2 REAL,
+        ec REAL, ph REAL, flow REAL,
+        bron TEXT NOT NULL DEFAULT 'priva',
+        UNIQUE (tuin_id, vaknummer, start)
+    )
+"""
+WATERGIFT_BEURT_KOLOMMEN = ("tuin_id", "vaknummer", "start", "eind", "datum", "liter_per_m2", "ec", "ph", "flow", "bron")
+# Opnieuw ophalen overschrijft dezelfde beurt (zelfde vak en starttijd).
+WATERGIFT_BEURT_UPSERT = (
+    f"INSERT INTO watergift_beurt ({', '.join(WATERGIFT_BEURT_KOLOMMEN)}) "
+    f"VALUES ({', '.join(f'%({k})s' for k in WATERGIFT_BEURT_KOLOMMEN)}) "
+    "ON CONFLICT (tuin_id, vaknummer, start) DO UPDATE SET "
+    + ", ".join(f"{k} = EXCLUDED.{k}" for k in WATERGIFT_BEURT_KOLOMMEN[3:])
+)
+
+
+def upsert_watergift_beurten(beurten, tuin_id=None):
+    """Gietbeurten (dicts uit integrations.priva_water.beurt_rijen) opslaan; tijden als ISO-tekst in UTC."""
+    if not beurten:
+        return
+    tuin = _tuin_of_standaard(tuin_id)
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        for b in beurten:
+            waarden = {k: b.get(k) for k in WATERGIFT_BEURT_KOLOMMEN}
+            waarden.update(tuin_id=tuin, start=b["start"].isoformat(), eind=b["eind"].isoformat(),
+                           datum=str(b["datum"]), bron=b.get("bron") or "priva")
+            cursor.execute(WATERGIFT_BEURT_UPSERT, waarden)
+        conn.commit()
 
 
 def upsert_water_kwaliteit_dag(rij, tuin_id=None):
@@ -1420,7 +1470,7 @@ def importeer_watergift_uit_priva(dagen_terug=4, gebruiker=None, tuin_id=None):
     """
     from integrations.priva_water import haal_water_dagwaarden
 
-    rijen, kwaliteit = haal_water_dagwaarden(priva_client_voor_tuin(tuin_id), dagen_terug)
+    rijen, kwaliteit, beurten = haal_water_dagwaarden(priva_client_voor_tuin(tuin_id), dagen_terug)
 
     verwerkt = 0
     overgeslagen = 0
@@ -1429,11 +1479,12 @@ def importeer_watergift_uit_priva(dagen_terug=4, gebruiker=None, tuin_id=None):
             overgeslagen += 1
             continue
         upsert_watergift_dag(rij["vaknummer"], rij["datum"], rij["liter_per_m2"], tuin_id=tuin_id,
-                             beurten=rij["beurten"])
+                             beurten=rij["beurten"], ec=rij.get("ec"), ph=rij.get("ph"))
         verwerkt += 1
     kwaliteit = [k for k in kwaliteit if k["datum"] < date.today()]
     for rij in kwaliteit:
         upsert_water_kwaliteit_dag(rij, tuin_id=tuin_id)
+    upsert_watergift_beurten([b for b in beurten if b["datum"] < date.today()], tuin_id=tuin_id)
 
     if rijen:
         eerste = min(r["datum"] for r in rijen)
@@ -1444,7 +1495,7 @@ def importeer_watergift_uit_priva(dagen_terug=4, gebruiker=None, tuin_id=None):
     log_wijziging(
         gebruiker, "opgehaald", "watergift_priva", None,
         f"{verwerkt} vak-dagen uit Priva ({periode}), {overgeslagen} overgeslagen; "
-        f"{len(kwaliteit)} dagen EC/pH"
+        f"{len(kwaliteit)} dagen EC/pH, {len(beurten)} gietbeurten"
     )
 
     return verwerkt, overgeslagen, len(kwaliteit)
@@ -1475,7 +1526,7 @@ def get_watergift_overzicht(tuin_id, van, tot):
     """
     Alles voor de pagina Watergift van één tuin over van..tot, in vier query's
     (nooit per vak of dag), als lijsten van dicts:
-    - gift: vaknummer, datum, liter_per_m2, bron, beurten
+    - gift: vaknummer, datum, liter_per_m2, bron, beurten, ec, ph (van de gift van dat vak)
     - kwaliteit: watersysteem, datum, ec_gem, ph_gem, ec_min, ec_max, ph_min, ph_max, ec_doel, ec_aanvoer, recept
     - behandelingen: vaknummer, datum, code, naam, type, dosering, eenheid, methode
     - eerste_emmer: {teelt_id: eerste oogstdag}
@@ -1488,12 +1539,13 @@ def get_watergift_overzicht(tuin_id, van, tot):
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT vaknummer, datum, liter_per_m2, bron, beurten FROM watergift_dag
+            SELECT vaknummer, datum, liter_per_m2, bron, beurten, ec, ph FROM watergift_dag
             WHERE tuin_id = %s AND datum BETWEEN %s AND %s
         """, (tuin_id, str(van), str(tot)))
         gift = rijen(cursor)
         cursor.execute("""
-            SELECT watersysteem, datum, ec_gem, ph_gem, ec_min, ec_max, ph_min, ph_max, ec_doel, ec_aanvoer, recept
+            SELECT watersysteem, datum, ec_gem, ph_gem, ec_min, ec_max, ph_min, ph_max, ec_doel, ec_aanvoer,
+                   ec_gift, ph_gift, recept
             FROM water_kwaliteit_dag WHERE tuin_id = %s AND datum BETWEEN %s AND %s
         """, (tuin_id, str(van), str(tot)))
         kwaliteit = rijen(cursor)
@@ -1509,7 +1561,13 @@ def get_watergift_overzicht(tuin_id, van, tot):
             WHERE v.tuin_id = %s AND o.aantal_emmers > 0 GROUP BY o.teelt_id
         """, (tuin_id,))
         eerste_emmer = {int(i): d for i, d in cursor.fetchall()}
-    return {"gift": gift, "kwaliteit": kwaliteit, "behandelingen": behandelingen, "eerste_emmer": eerste_emmer}
+        cursor.execute("""
+            SELECT vaknummer, start, eind, datum, liter_per_m2, ec, ph, flow FROM watergift_beurt
+            WHERE tuin_id = %s AND datum BETWEEN %s AND %s ORDER BY start, vaknummer
+        """, (tuin_id, str(van), str(tot)))
+        beurten = rijen(cursor)
+    return {"gift": gift, "kwaliteit": kwaliteit, "behandelingen": behandelingen, "eerste_emmer": eerste_emmer,
+            "beurten": beurten}
 
 
 def get_watergift_vak(tuin_id, vaknummer, van, tot):
@@ -1517,9 +1575,8 @@ def get_watergift_vak(tuin_id, vaknummer, van, tot):
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT w.datum, w.liter_per_m2, w.beurten, w.bron, k.ec_gem, k.ph_gem
+            SELECT w.datum, w.liter_per_m2, w.beurten, w.bron, w.ec, w.ph
             FROM watergift_dag w
-            LEFT JOIN water_kwaliteit_dag k ON k.tuin_id = w.tuin_id AND k.datum = w.datum AND k.watersysteem = 1
             WHERE w.tuin_id = %s AND w.vaknummer = %s AND w.datum BETWEEN %s AND %s
             ORDER BY w.datum
         """, (tuin_id, int(vaknummer), str(van), str(tot)))

@@ -4,6 +4,11 @@ Watergift en waterkwaliteit uit de Priva Horti API, in één verzoek per tuin.
 - Gift per vak: de oplopende meterstand KRAAN.VERBRUIKM2 (l/m²) per kraan
   (kraan = vak). Daggift = de toename over de dag; een gietbeurt = een reeks
   toenames zonder pauze langer dan BEURT_PAUZE.
+- EC en pH per gift: het tijdgewogen gemiddelde van de EC/pH van het
+  watersysteem tussen start en eind van de beurt. Zo rekent Priva ook (A_EC en
+  A_pH in het kraanoverzicht; gecontroleerd op kraan 7–9 van tuin 3, 29-09-26).
+  De API geeft die per-beurtwaarde zelf niet: KRAAN.GEMID_EC is daar de
+  live-meting. Daarnaast de gemiddelde flow van de kraan tijdens de beurt.
 - EC en pH per watersysteem: gemeten (EC_BOX.GEM_EC, PH_BOX.GEM_PH) en
   ingesteld (DOS_EC_CTL.REGEL_EC, DOS_PH_CTL.REGEL_PH), het actieve recept en
   de gemeten EC van het uitgangswater (voorregeling, EC_M_SENSOR.GEM_EC); het
@@ -63,6 +68,16 @@ def reeks_uit(entry):
     return sorted(uit)
 
 
+# Tijdens een gietbeurt logt Priva de meterstand elke ~5 s; daarbuiten alleen bij een wijziging en eens
+# per 12 uur. Ligt de vorige stand langer dan dit terug, dan begon het water pas bij de nieuwe stand te lopen.
+LOG_STAP = timedelta(seconds=30)
+
+
+def _begin_toename(t0, t1):
+    """Het moment waarop een toename van de meterstand begon: t0, of vlak voor t1 als t0 lang geleden is."""
+    return t0 if t1 - t0 <= LOG_STAP else t1 - timedelta(seconds=5)
+
+
 def gift_per_dag(reeks):
     """
     {dag: (liter per m², aantal beurten)} uit een meterstandreeks. Een grote
@@ -75,10 +90,11 @@ def gift_per_dag(reeks):
         toename = v1 - v0
         if toename < WATER_RESET_DREMPEL:
             continue
-        dag = lokale_dag(t0)
+        begin = _begin_toename(t0, t1) if toename > 0 else t0
+        dag = lokale_dag(begin)
         liter, beurten = uit.get(dag, (0.0, 0))
         if toename > 0:
-            if vorige_toename is None or t0 - vorige_toename > BEURT_PAUZE:
+            if vorige_toename is None or begin - vorige_toename > BEURT_PAUZE:
                 beurten += 1
             vorige_toename = t1
             liter += toename
@@ -145,26 +161,93 @@ def kwaliteit_rijen(reeksen, systeem, vanaf, tot):
     return rijen
 
 
+STAART_KRAAN_FLOW = "000000003428"   # KRAAN.FLOW  flow tijdens de gift (m³/uur)
+
+
+def kraan_flow_variabele(vak):
+    return f"000001c2-{vak:04x}-0000-0000-{STAART_KRAAN_FLOW}"
+
+
+def beurten_uit(reeks):
+    """
+    De gietbeurten uit een meterstandreeks: [(start, eind, l/m²)], tijden in UTC.
+    Een beurt = opeenvolgende toenames zonder pauze langer dan BEURT_PAUZE.
+    """
+    uit = []
+    for (t0, v0), (t1, v1) in zip(reeks, reeks[1:]):
+        toename = v1 - v0
+        if toename <= 0 or toename < WATER_RESET_DREMPEL:
+            continue
+        begin = _begin_toename(t0, t1)
+        if uit and begin - uit[-1][1] <= BEURT_PAUZE:
+            start, _, liter = uit[-1]
+            uit[-1] = (start, t1, liter + toename)
+        else:
+            uit.append((begin, t1, toename))
+    return uit
+
+
+def gemiddelde_tussen(reeks, van, tot):
+    """
+    Tijdgewogen gemiddelde van een reeks tussen van en tot, zoals Priva de EC/pH
+    van een gift toont: de laatste meting vóór `van` geldt vanaf `van`, elke
+    meting telt tot de volgende. None zonder metingen.
+    """
+    voor = [w for t, w in reeks if t <= van]
+    punten = ([(van, voor[-1])] if voor else []) + [(t, w) for t, w in reeks if van < t < tot]
+    if not punten:
+        return None
+    duur = (tot - punten[0][0]).total_seconds()
+    if duur <= 0:
+        return punten[0][1]
+    som = sum(((punten[i + 1][0] if i + 1 < len(punten) else tot) - t).total_seconds() * w
+              for i, (t, w) in enumerate(punten))
+    return som / duur
+
+
+def gewogen(paren):
+    """Gemiddelde van (waarde, gewicht)-paren zonder lege waarden, of None."""
+    paren = [(w, g) for w, g in paren if w is not None and g]
+    totaal = sum(g for _, g in paren)
+    return sum(w * g for w, g in paren) / totaal if totaal else None
+
+
+def beurt_rijen(vak, meterstand, ec, ph, flow):
+    """Eén regel per gietbeurt van een vak: start, eind, dag, l/m², EC, pH en flow gemiddeld over de beurt."""
+    rijen = []
+    for start, eind, liter in beurten_uit(meterstand):
+        f = gemiddelde_tussen([(t, w) for t, w in flow if w > 0], start, eind) if flow else None
+        rijen.append({"vaknummer": vak, "start": start, "eind": eind, "datum": lokale_dag(start),
+                      "liter_per_m2": round(liter, 2),
+                      "ec": round(gemiddelde_tussen(ec, start, eind), 3) if ec else None,
+                      "ph": round(gemiddelde_tussen(ph, start, eind), 2) if ph else None,
+                      "flow": round(f, 2) if f is not None else None})
+    return rijen
+
+
 def haal_water_dagwaarden(client, dagen_terug):
     """
-    Eén API-verzoek: gift per vak én EC/pH per watersysteem voor de laatste
-    afgeronde dagen. Geeft (gift, kwaliteit):
-      gift: [{"vaknummer", "datum", "liter_per_m2", "beurten"}], op (datum, vak)
-      kwaliteit: dagregels van kwaliteit_rijen, op (systeem, datum)
+    Eén API-verzoek: gift per vak, EC/pH per watersysteem en de flow per kraan
+    voor de laatste afgeronde dagen. Geeft (gift, kwaliteit, beurten):
+      gift: [{"vaknummer", "datum", "liter_per_m2", "beurten", "ec", "ph"}], op (datum, vak);
+            ec/ph = het gemiddelde van de giften van dat vak die dag, gewogen naar de liters
+      kwaliteit: dagregels van kwaliteit_rijen, op (systeem, datum), met ec_gift/ph_gift =
+            het gemiddelde van alle giften van die dag, gewogen naar de liters
+      beurten: dicts van beurt_rijen (per gietbeurt)
     De oudste dag van het venster valt weg (daarvoor ontbreekt de stand van
     vóór middernacht); vandaag telt nooit mee.
     """
     begin, eind = client._venster(dagen_terug)
     oudste = lokale_dag(begin) + timedelta(days=1)
     laatste = eind.date()        # het venster eindigt vóór middernacht UTC: de lokale dag daarna is nog niet af
-    datapoints = [{"deviceGroupId": "none", "deviceId": client.device_id, "variableId": kraan_variabele(vak)}
-                  for vak in client.vakken]
+    datapoints = [{"deviceGroupId": "none", "deviceId": client.device_id, "variableId": v}
+                  for vak in client.vakken for v in (kraan_variabele(vak), kraan_flow_variabele(vak))]
     datapoints += [{"deviceGroupId": "none", "deviceId": client.device_id,
                     "variableId": watersysteem_variabele(systeem, staart)}
                    for systeem in WATERSYSTEMEN for staart in GROOTHEDEN]
     payload = client._data_call(begin, eind, datapoints, "watergift")
 
-    gift, reeksen = [], {}
+    meterstanden, flows, reeksen = {}, {}, {}
     for entry in payload.get("data", []):
         dp = entry.get("datapoint", {})
         vid = dp.get("variableId") or dp.get("id") or ""
@@ -173,12 +256,35 @@ def haal_water_dagwaarden(client, dagen_terug):
             continue
         reeks = reeks_uit(entry)
         if delen[0] == "000001c2" and delen[4] == STAART_WATER_METERSTAND:
-            vak = int(delen[1], 16)
-            for dag, (liter, beurten) in gift_per_dag(reeks).items():
-                if oudste <= dag <= laatste:
-                    gift.append({"vaknummer": vak, "datum": dag, "liter_per_m2": liter, "beurten": beurten})
+            meterstanden[int(delen[1], 16)] = reeks
+        elif delen[0] == "000001c2" and delen[4] == STAART_KRAAN_FLOW:
+            flows[int(delen[1], 16)] = reeks
         elif delen[0] == "000002dc" and delen[4] in GROOTHEDEN:
             reeksen.setdefault(int(delen[1], 16), {})[GROOTHEDEN[delen[4]]] = reeks
-    kwaliteit = [r for systeem in sorted(reeksen) for r in kwaliteit_rijen(reeksen[systeem], systeem, oudste, laatste)]
+
+    # EC/pH per gift komt uit het watersysteem dat de vakken water geeft (nu: systeem 1).
+    systeem = reeksen.get(min(reeksen)) if reeksen else {}
+    beurten = [b for vak in sorted(meterstanden)
+               for b in beurt_rijen(vak, meterstanden[vak], systeem.get("ec", []), systeem.get("ph", []),
+                                    flows.get(vak, []))
+               if oudste <= b["datum"] <= laatste]
+    gift = []
+    for vak, reeks in meterstanden.items():
+        for dag, (liter, aantal) in gift_per_dag(reeks).items():
+            if oudste <= dag <= laatste:
+                van_dag = [b for b in beurten if b["vaknummer"] == vak and b["datum"] == dag]
+                gift.append({"vaknummer": vak, "datum": dag, "liter_per_m2": liter, "beurten": aantal,
+                             "ec": _rond(gewogen((b["ec"], b["liter_per_m2"]) for b in van_dag), 3),
+                             "ph": _rond(gewogen((b["ph"], b["liter_per_m2"]) for b in van_dag), 2)})
+    kwaliteit = [r for s in sorted(reeksen) for r in kwaliteit_rijen(reeksen[s], s, oudste, laatste)]
+    for r in kwaliteit:
+        van_dag = [b for b in beurten if b["datum"] == r["datum"]]
+        r["ec_gift"] = _rond(gewogen((b["ec"], b["liter_per_m2"]) for b in van_dag), 3)
+        r["ph_gift"] = _rond(gewogen((b["ph"], b["liter_per_m2"]) for b in van_dag), 2)
     gift.sort(key=lambda r: (r["datum"], r["vaknummer"]))
-    return gift, kwaliteit
+    beurten.sort(key=lambda b: (b["start"], b["vaknummer"]))
+    return gift, kwaliteit, beurten
+
+
+def _rond(waarde, decimalen):
+    return round(waarde, decimalen) if waarde is not None else None

@@ -10,9 +10,9 @@ from integrations import priva_water as pw
 UTC = timezone.utc
 
 
-def t(dag, uur, minuut=0):
+def t(dag, uur, minuut=0, seconde=0):
     """Lokale tijd (CEST, zoals LOKALE_OFFSET) → UTC-tijdstip."""
-    return datetime(2026, 9, dag, uur, minuut, tzinfo=UTC) - pw.LOKALE_OFFSET
+    return datetime(2026, 9, dag, uur, minuut, seconde, tzinfo=UTC) - pw.LOKALE_OFFSET
 
 
 class TestGift(unittest.TestCase):
@@ -63,6 +63,43 @@ class TestKwaliteit(unittest.TestCase):
                          (1.5, 6.0, 2, 1))
 
 
+class TestPerGift(unittest.TestCase):
+    """EC/pH per gietbeurt, zoals Priva ze in het kraanoverzicht toont (gemiddelde over de beurt)."""
+
+    def test_beurten_uit_meterstand(self):
+        # Priva logt tijdens een beurt elke ~5 s
+        reeks = [(t(29, 16, 0), 10.0), (t(29, 16, 0, 5), 10.7), (t(29, 16, 0, 10), 12.0),    # beurt 1: 2,0
+                 (t(29, 18, 0), 12.0), (t(29, 18, 0, 5), 12.5)]                              # beurt 2: 0,5
+        beurten = pw.beurten_uit(reeks)
+        self.assertEqual([(a, b, round(l, 2)) for a, b, l in beurten],
+                         [(t(29, 16, 0), t(29, 16, 0, 10), 2.0), (t(29, 18, 0), t(29, 18, 0, 5), 0.5)])
+
+    def test_beurt_begint_bij_de_wijziging_niet_bij_de_vorige_stand(self):
+        # De vorige stand is 12 uur oud (Priva logt dan eens per 12 uur); de beurt zelf loopt 16:00–16:03.
+        reeks = [(t(29, 4, 7), 55.0), (t(29, 16, 0, 30), 55.05), (t(29, 16, 1), 55.7), (t(29, 16, 3), 57.0)]
+        (start, eind, liter), = pw.beurten_uit(reeks)
+        self.assertEqual((start, eind, round(liter, 2)), (t(29, 16, 0, 25), t(29, 16, 3), 2.0))
+        # ook de dag van de liters volgt de wijziging: een beurt net na middernacht hoort bij de nieuwe dag
+        nacht = [(t(28, 22, 0), 10.0), (t(29, 0, 5), 10.1), (t(29, 0, 6), 11.0)]
+        self.assertEqual(pw.gift_per_dag(nacht), {date(2026, 9, 29): (1.0, 1)})
+
+    def test_gemiddelde_over_de_beurt(self):
+        # Vóór de beurt 1,4; om 16:01 1,2 en om 16:02 1,5; beurt 16:00–16:03: (1×1,4 + 1×1,2 + 1×1,5) / 3
+        ec = [(t(29, 15, 50), 1.4), (t(29, 16, 1), 1.2), (t(29, 16, 2), 1.5), (t(29, 16, 10), 1.0)]
+        self.assertAlmostEqual(pw.gemiddelde_tussen(ec, t(29, 16, 0), t(29, 16, 3)), (1.4 + 1.2 + 1.5) / 3)
+        self.assertIsNone(pw.gemiddelde_tussen([], t(29, 16, 0), t(29, 16, 3)))
+
+    def test_beurt_rijen_en_weging_per_dag(self):
+        meterstand = [(t(29, 8, 0), 0.0), (t(29, 8, 0, 5), 3.0), (t(29, 16, 0), 3.0), (t(29, 16, 0, 5), 4.0)]
+        ec = [(t(29, 7, 0), 1.6), (t(29, 12, 0), 1.2)]           # ochtendbeurt 1,6, middagbeurt 1,2
+        ph = [(t(29, 7, 0), 5.8)]
+        flow = [(t(29, 8, 1), 22.0), (t(29, 16, 1), 20.0)]
+        rijen = pw.beurt_rijen(7, meterstand, ec, ph, flow)
+        self.assertEqual([(r["liter_per_m2"], r["ec"], r["ph"]) for r in rijen], [(3.0, 1.6, 5.8), (1.0, 1.2, 5.8)])
+        # dag: gewogen naar de liters, dus dichter bij de grote ochtendbeurt
+        self.assertAlmostEqual(pw.gewogen((r["ec"], r["liter_per_m2"]) for r in rijen), (3 * 1.6 + 1 * 1.2) / 4)
+
+
 class NepClient:
     """Doet alsof hij Priva is: geeft een vaste payload terug op het ene verzoek."""
     device_id = "VP9508"
@@ -95,13 +132,33 @@ class TestHaalWater(unittest.TestCase):
              "measurements": [meting(t(28, 7), 5.9)]},
         ]}
         client = NepClient(payload)
-        gift, kwaliteit = pw.haal_water_dagwaarden(client, 3)
+        gift, kwaliteit, beurten = pw.haal_water_dagwaarden(client, 3)
         self.assertEqual(client.verzoeken, 1)
+        self.assertIn(pw.kraan_flow_variabele(1), client.gevraagd)
+        self.assertEqual(len(beurten), 1)
+        self.assertEqual((beurten[0]["vaknummer"], beurten[0]["ec"], beurten[0]["ph"]), (2, 1.5, 5.9))
         self.assertIn(pw.kraan_variabele(1), client.gevraagd)
         self.assertIn(pw.watersysteem_variabele(1, pw.STAART_PH), client.gevraagd)
-        self.assertEqual(gift, [{"vaknummer": 2, "datum": date(2026, 9, 28), "liter_per_m2": 0.8, "beurten": 1}])
+        self.assertEqual(gift, [{"vaknummer": 2, "datum": date(2026, 9, 28), "liter_per_m2": 0.8, "beurten": 1,
+                                 "ec": 1.5, "ph": 5.9}])
+        self.assertEqual((kwaliteit[0]["ec_gift"], kwaliteit[0]["ph_gift"]), (1.5, 5.9))
         self.assertEqual((kwaliteit[0]["datum"], kwaliteit[0]["ec_gem"], kwaliteit[0]["ph_gem"]),
                          (date(2026, 9, 28), 1.5, 5.9))
+
+
+class TestBeurtenOpslaan(unittest.TestCase):
+    """De upsert van gietbeurten op een SQLite-kopie: dezelfde beurt twee keer ophalen = één regel."""
+
+    def test_zelfde_beurt_twee_keer(self):
+        db = sqlite3.connect(":memory:")
+        db.execute(database.WATERGIFT_BEURT_TABEL.replace("SERIAL", "INTEGER"))
+        sql = re.sub(r"%\((\w+)\)s", r":\1", database.WATERGIFT_BEURT_UPSERT)
+        rij = {"tuin_id": 3, "vaknummer": 7, "start": "2026-09-29T14:00:30+00:00", "eind": "2026-09-29T14:03:25+00:00",
+               "datum": "2026-09-29", "liter_per_m2": 2.0, "ec": 1.34, "ph": 6.07, "flow": 21.9, "bron": "priva"}
+        db.execute(sql, rij)
+        db.execute(sql, dict(rij, ec=1.35))
+        self.assertEqual(db.execute("SELECT COUNT(*), MAX(ec) FROM watergift_beurt").fetchone(), (1, 1.35))
+        db.close()
 
 
 class TestIdempotentOpslaan(unittest.TestCase):

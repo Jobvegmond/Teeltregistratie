@@ -17,6 +17,17 @@ inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 ### Toegevoegd
 - Watergift: verwachte Florgib (teeltmodel) als open paarse ring, zolang er
   nog geen Florgib geregistreerd is.
+- **EC, pH en flow per gietbeurt**, gerekend zoals Priva (gemiddelde over de
+  beurt; gecontroleerd tegen het kraanoverzicht van 29-09): nieuwe tabel
+  `watergift_beurt`, EC/pH per vak-dag in `watergift_dag` en per dag
+  (`ec_gift`, `ph_gift`) in `water_kwaliteit_dag`, alle gewogen naar de liters.
+  Matrix: EC/pH-regels en tooltips uit de giften; dagpopup met elke gietbeurt.
+- Tabellen ronden getallen nu af in plaats van af te kappen (21,89 → 21,9).
+
+### Gecorrigeerd
+- Watergift: een gietbeurt begint bij de eerste wijziging van de meterstand,
+  niet bij de vorige (tot 12 uur oude) stand; ook de dag van de liters volgt
+  daaruit.
 
 ## [2.4.0] - 2026-09-30
 
