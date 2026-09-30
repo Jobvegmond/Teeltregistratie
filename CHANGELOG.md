@@ -3,6 +3,15 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.4.2] - 2026-09-30
+
+### Gewijzigd
+- Vakkenregister › Afgerond: kolom Stelen/m² vervangen door **Geplant** en
+  **Geoogst (stelen)**, direct na Fase 2 en vóór Uitval (%).
+- Vakpopup, tijdlijn: labels vallen niet meer buiten beeld; **watergift per
+  dag** als staafjes óp de tijdlijn (hoogte naar de gift), labels in twee
+  rijen eronder.
+
 ## [2.4.1] - 2026-09-30
 
 ### Gecorrigeerd

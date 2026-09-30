@@ -1566,8 +1566,11 @@ def _nu_bloktip(vak, s, gepland, laatste_oogst, info):
     return " · ".join(delen)
 
 
-def _nu_tijdlijn(s):
-    """Planten → Florgib → plan en prognose (of de oogst) op één datumas, met vandaag als stippellijn."""
+def _nu_tijdlijn(s, water=None):
+    """
+    Planten → Florgib → plan en prognose (of de oogst) op één datumas, met vandaag als stippellijn en
+    onderaan de watergift per dag als staafjes (water = [{datum, liter}]).
+    """
     u, oogst = s.get("stook"), vs.als_datum(s["teelt"].get("datum_oogst"))
     punten = [("Geplant", s["start"], "gedaan")]
     if s["florgib"]:
@@ -1583,22 +1586,44 @@ def _nu_tijdlijn(s):
     df = pd.DataFrame([{"Moment": m, "datum": pd.Timestamp(d), "Soort": soort,
                         "label": f"{m} {d:%d-%m}", "rij": i % 2} for i, (m, d, soort) in enumerate(punten)])
     as_x = alt.X("datum:T", title=None, axis=alt.Axis(format="%d-%m", grid=False))
+    gift = pd.DataFrame([{"datum": pd.Timestamp(w["datum"]), "liter": float(w["liter"])}
+                         for w in (water or []) if w.get("liter")])
+    # Zonder watergift: de lijn in het midden, labels om en om erboven en eronder. Met watergift staan de
+    # staafjes óp de lijn (omhoog, hoogte naar de gift) en komen de labels in twee rijen eronder.
+    if gift.empty:
+        hoogte, lijn_y, label_dy = 70, 34, (-15, 16)
+    else:
+        hoogte, lijn_y, label_dy = 100, 58, (15, 29)
+    midden = alt.value(lijn_y)
     basis = alt.Chart(df)
-    lijn = basis.mark_rule(color="#999").encode(x=alt.X("min(datum):T"), x2="max(datum):T")
+    lijn = basis.mark_rule(color="#999").encode(x=alt.X("min(datum):T"), x2="max(datum):T", y=midden)
     stippen = basis.mark_point(size=110, filled=True).encode(
-        x=as_x,
+        x=as_x, y=midden,
         color=alt.Color("Soort:N", legend=None,
                         scale=alt.Scale(domain=["gedaan", "plan", "verwacht"], range=["#2e7d32", "#555", "#e67e22"])),
         shape=alt.Shape("Soort:N", legend=None,
                         scale=alt.Scale(domain=["gedaan", "plan", "verwacht"], range=["circle", "diamond", "circle"])),
         tooltip=[alt.Tooltip("Moment:N"), alt.Tooltip("datum:T", format="%d-%m-%y")],
     )
-    tekst = basis.mark_text(dy=-14, fontSize=11).encode(x=as_x, text="label:N")
-    lagen = [lijn, stippen, tekst]
+    rij1 = basis.transform_filter("datum.rij == 0").mark_text(dy=label_dy[0], fontSize=11).encode(
+        x=as_x, y=midden, text="label:N")
+    rij2 = basis.transform_filter("datum.rij == 1").mark_text(dy=label_dy[1], fontSize=11).encode(
+        x=as_x, y=midden, text="label:N")
+    lagen = []
+    if not gift.empty:
+        lagen.append(alt.Chart(gift).mark_bar(color="#5b9bd5", size=3).encode(
+            x=alt.X("datum:T"),
+            y=alt.Y("liter:Q", axis=None,
+                    scale=alt.Scale(domain=[0, float(gift["liter"].max())], range=[lijn_y, lijn_y - 40])),
+            y2=alt.value(lijn_y),
+            tooltip=[alt.Tooltip("datum:T", title="Datum", format="%d-%m-%y"),
+                     alt.Tooltip("liter:Q", title="Watergift (l/m²)", format=".1f")]))
+    lagen += [lijn, stippen, rij1, rij2]
     if not oogst:
         lagen.append(alt.Chart(pd.DataFrame({"datum": [pd.Timestamp(date.today())]})).mark_rule(
             color="#888", strokeDash=[4, 3]).encode(x="datum:T"))
-    st.altair_chart(alt.layer(*lagen).properties(height=70), use_container_width=True)
+    st.altair_chart(alt.layer(*lagen).properties(height=hoogte).resolve_scale(y="independent"),
+                    use_container_width=True)
 
 
 def _nu_klimaat_doel(s, klimaat):
@@ -1778,7 +1803,7 @@ def teelt_detail(s, klimaat, water, model=None):
     """
     t, u = s["teelt"], s.get("stook")
     vak = t["vaknummer"]
-    _nu_tijdlijn(s)
+    _nu_tijdlijn(s, water)
     if u:
         nodig = 1.0
         st.progress(min(u["gedaan"] / nodig, 1.0),
@@ -3134,7 +3159,8 @@ REGISTER_TE_STARTEN = [
 REGISTER_AFGEROND = [
     ("Tuin", "tekst"), ("Afd.", "getal0"), ("Vak", "getal0"), ("Code", "tekst"), ("Plantdatum", "datum"),
     ("Florgib", "datum"), ("Oogstdatum", "datum"), ("Teeltduur (d)", "getal0"), ("Fase 1 (d)", "getal0"),
-    ("Fase 2 (d)", "getal0"), ("Stelen/m²", "getal1"), ("Uitval (%)", "getal1"), ("Oogstlengte (cm)", "getal1"),
+    ("Fase 2 (d)", "getal0"), ("Geplant", "getal0"), ("Geoogst (stelen)", "getal0"), ("Uitval (%)", "getal1"),
+    ("Oogstlengte (cm)", "getal1"),
     ("Oogstgewicht (g)", "getal0"), ("Lichtsom/dag", "getal0"), ("Etmaal (°C)", "getal1"),
     ("Afw. lichtlijn (°C)", "teken1"), ("Water (l/m²)", "getal0"), ("Warmte (MJ/m²)", "getal0"),
 ]
@@ -3190,7 +3216,8 @@ def _register_rijen(vandaag):
             t = teeltvgl.met_dagdata(t, dd, gisteren)
             afgerond.append({**basis, "Florgib": t["florgib"], "Oogstdatum": t["oogst_echt"],
                              "Teeltduur (d)": t["teeltduur"], "Fase 1 (d)": t["fase1"], "Fase 2 (d)": t["fase2"],
-                             "Stelen/m²": t["stelen_m2"], "Uitval (%)": t["uitval"], "Oogstlengte (cm)": t["lengte"],
+                             "Geplant": vs._getal(k.get("aantal_planten")), "Geoogst (stelen)": vs._getal(k.get("stelen")),
+                             "Uitval (%)": t["uitval"], "Oogstlengte (cm)": t["lengte"],
                              "Oogstgewicht (g)": t["gewicht"], "Lichtsom/dag": t["lichtsom"],
                              "Etmaal (°C)": t["temp"], "Afw. lichtlijn (°C)": t["afwijking"],
                              "Water (l/m²)": t["water"], "Warmte (MJ/m²)": t["warmte"]})

@@ -57,4 +57,4 @@ PH_BAND = {1: (4.8, 6.0), 3: (4.8, 6.0)}
 # --- VERSIE ---
 # Staat rechtsboven in de app. Ophogen bij elke wijziging op main (zie CHANGELOG.md):
 # derde getal bij een correctie, tweede bij iets nieuws, eerste bij een grote omzetting.
-APP_VERSIE = "2.4.1"
+APP_VERSIE = "2.4.2"
