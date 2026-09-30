@@ -618,6 +618,25 @@ def afdeling_filters(tuinen_afd, plek):
             for t, afd in tuinen_afd if afd}
 
 
+def ga_naar(url_path, keuzes=None, tuin=None):
+    """
+    Naar een andere pagina met de filters al goed gezet: `keuzes` = {sleutel: waarde} in de opslag van
+    ui/filters (None = terug naar de standaard), `tuin` = de tuinweergave ("beide" of een nummer).
+    """
+    for sleutel, waarde in (keuzes or {}).items():
+        if waarde is None:
+            st.session_state.pop(filters.opslag(sleutel), None)
+        else:
+            filters.bewaar(sleutel, waarde)
+    if tuin is not None:
+        st.session_state["tuin_weergave"] = tuin
+        if tuin != "beide":
+            st.session_state["tuin_nummer"] = tuin
+    # De standaardpagina heeft in Streamlit een lege url_path; daarom zoeken op de titel.
+    titel = next(t for _, t, adres, _ in PAGINA_DEFINITIES if adres == url_path)
+    st.switch_page(next(p for p in _pagina_lijst if p.title == titel))
+
+
 def toon_kengetallen(items, titel=None):
     """
     Toont kengetallen (lijst dicts met label, waarde en optioneel delta en
@@ -2249,37 +2268,15 @@ def _tv_tabeldata(g, tuinen, van, tot, v_van, v_tot, label):
         label_toen=label)
 
 
-def _tv_uitklappers(g, van, tot, periode_naam):
-    """Geplant, geoogst en watergift in de periode, per vak (tuin → afdeling → vak)."""
+def _tv_geoogst(g, van, tot):
+    """Openklapmenu met de emmers per vak en de afgeronde vakken in de periode (tuin → afdeling → vak)."""
     afdeling = g.vak_afdeling
-
-    geplant = sorted((t for t in g.teelten if van <= t["start"] <= tot),
-                     key=lambda t: _tv_volgorde(t["tuin_id"], afdeling.get((t["tuin_id"], t["vaknummer"])),
-                                                t["vaknummer"]))
-    with st.expander(f"🌱 Geplant in deze periode ({_vakken_tekst(len(geplant))})"):
-        if geplant:
-            toon_tabel(pd.DataFrame([{
-                "Tuin": _tuinnaam_van.get(t["tuin_id"], "?"),
-                "Afd.": afdeling.get((t["tuin_id"], t["vaknummer"])),
-                "Vak": t["vaknummer"], "Code": t.get("code") or "-",
-                "Plantdatum": format_datum(t["start"]),
-                "Planten": t.get("aantal_planten") if vs._getal(t.get("aantal_planten")) else "-",
-                "m²": g.vak_m2.get((t["tuin_id"], t["vaknummer"])),
-            } for t in geplant]), [
-                ("Tuin", "Tuin", "tekst", None, "small"), ("Afd.", "Afd.", "getal", "%d", "small"),
-                ("Vak", "Vak", "getal", "%d", "small"), ("Code", "Code", "tekst", None, "medium"),
-                ("Plantdatum", "Plantdatum", "datum", None, "small"), ("Planten", "Planten", "getal", "%d", "small"),
-                ("m²", "m²", "getal", "%.0f", "small"),
-            ])
-        else:
-            st.caption("Niets geplant in deze periode.")
-
     emmers = [e for e in g.emmers if van <= e["datum"] <= tot]
     afgerond = sorted((t for t in g.teelten if t["oogst"] and van <= t["oogst"] <= tot),
                       key=lambda t: _tv_volgorde(t["tuin_id"], afdeling.get((t["tuin_id"], t["vaknummer"])),
                                                  t["vaknummer"]))
-    with st.expander(f"🌾 Geoogst in deze periode ({_vakken_tekst(len({e['teelt_id'] for e in emmers}))}, "
-                     f"{len(afgerond)} afgerond)"):
+    with layout.uitklap(f"Geoogst in deze periode ({_vakken_tekst(len({e['teelt_id'] for e in emmers}))}, "
+                        f"{len(afgerond)} afgerond)"):
         if emmers:
             per_vak = {}
             for e in emmers:
@@ -2324,82 +2321,68 @@ def _tv_uitklappers(g, van, tot, periode_naam):
                 ("Gewicht (g)", "Gewicht (g)", "getal", "%d", "small"), ("Rijpheid", "Rijpheid", "tekst", None, "small"),
             ], verberg_leeg=True)
 
-    water = g.water[(g.water["datum"] >= str(van)) & (g.water["datum"] <= str(tot))].dropna(subset=["liter_per_m2"])
-    with st.expander("💧 Watergift per vak"):
-        if water.empty:
-            st.caption("Geen watergift in deze periode.")
-        else:
-            water = water.assign(
-                Tuin=water["tuin_id"].map(lambda t: _tuinnaam_van.get(int(t), "?")),
-                Afd=[afdeling.get((int(t), int(v))) for t, v in zip(water["tuin_id"], water["vaknummer"])],
-                sorteer=[_tv_volgorde(int(t), afdeling.get((int(t), int(v))), int(v))
-                         for t, v in zip(water["tuin_id"], water["vaknummer"])],
-            )
-            if periode_naam == "Week":
-                water["Dag"] = pd.to_datetime(water["datum"]).dt.strftime("%d-%m")
-                tabel = water.pivot_table(index=["sorteer", "Tuin", "Afd", "vaknummer"], columns="Dag",
-                                          values="liter_per_m2", aggfunc="sum")
-                tabel["Totaal"] = tabel.sum(axis=1)
-            else:
-                tabel = water.groupby(["sorteer", "Tuin", "Afd", "vaknummer"]).agg(
-                    Totaal=("liter_per_m2", "sum"), Dagen=("datum", "nunique"))
-            tabel = tabel.sort_index().reset_index().drop(columns="sorteer").rename(
-                columns={"Afd": "Afd.", "vaknummer": "Vak"})
-            st.dataframe(tabel, hide_index=True, use_container_width=True, column_config={
-                **{k: getalkolom(k, 1) for k in tabel.columns if k not in ("Tuin", "Afd.", "Vak", "Dagen")},
-                "Afd.": getalkolom("Afd.", 0), "Vak": getalkolom("Vak", 0),
-            })
-            st.caption("Liter per m² vak; bij een week per dag, anders het totaal en het aantal dagen met data.")
+
+def _tv_links(g, sleutel, periode_naam, van, tot, n_opmerkingen):
+    """Doorklikken naar de thuispagina van de details: register (geplant), Watergift en Opmerkingen."""
+    geplant = sum(1 for t in g.teelten if van <= t["start"] <= tot)
+    rij = st.container(horizontal=True, gap="medium", key="tv_links")
+    if rij.button(f"Bekijk de {_vakken_tekst(geplant)} geplant in het register", icon=":material/arrow_forward:",
+                  type="tertiary", key="tv_naar_register", disabled=not geplant):
+        ga_naar("teeltoverzicht", {"reg_plantperiode_lengte": periode_naam,
+                                   f"reg_plantperiode_{periode_naam}": sleutel, "reg_ras": None, "reg_zoek": None,
+                                   **{f"afd_t{t['nummer']}": None for t in TUINEN}}, tuin="beide")
+    if rij.button("Watergift in deze periode", icon=":material/arrow_forward:", type="tertiary",
+                  key="tv_naar_watergift"):
+        lengte = {"Week": "2 wk", "Maand": "4 wk"}.get(periode_naam, "3 mnd")
+        ga_naar("watergift", {"wg_periode_lengte": lengte, "wg_periode": wg.week_begin(min(tot, date.today()))},
+                tuin="beide")
+    if rij.button(f"{n_opmerkingen} opmerking{'' if n_opmerkingen == 1 else 'en'} in deze periode",
+                  icon=":material/arrow_forward:", type="tertiary", key="tv_naar_opmerkingen",
+                  disabled=not n_opmerkingen):
+        ga_naar("opmerkingen", {"opm_periode_lengte": periode_naam, f"opm_periode_{periode_naam}": sleutel,
+                                "opm_teelt": None, "opm_vak": None, "opm_categorie": None, "opm_zoek": None},
+                tuin="beide")
 
 
 def _pagina_tuinvgl_1():
-    pagina_uitleg((
-        "Wat er in een periode in de kas gebeurde: tuin 1 naast tuin 3 en het totaal, alles per m². Het totaal "
-        "is gewogen naar m² (niet het gemiddelde van twee tuinen). Een kengetal zonder data toont – (waarom: "
-        "beweeg over de cel)."))
-    _tv_laatste_priva = laatste_priva_ophaling()
-    if _tv_laatste_priva:
-        st.caption(f"Klimaat, watergift en energie bijgewerkt tot {format_datum(_tv_laatste_priva.date())} "
-                   f"{_tv_laatste_priva:%H:%M}.")
+    layout.pagina_kop(
+        "Tuin vergelijking",
+        wat="Wat er in een periode in de kas gebeurde: tuin 1 naast tuin 3 en het totaal, alles per m². "
+            "Daaronder de geoogste stelen van de laatste 12 perioden.",
+        lezen=["Kies de lengte (week, maand, kwartaal, jaar) en blader met ◀ ▶; klik op het label om direct naar "
+               "een periode te springen. Weken lopen van zondag t/m zaterdag.",
+               "Loopt de periode nog, dan telt hij t/m gisteren en loopt de vergelijking tot even ver.",
+               "Kleine regel onder elke waarde = de vergelijkingsperiode. Beweeg over een cel voor het verschil "
+               "en de uitleg; klik op een kengetal voor het verloop over 12 perioden.",
+               "Het totaal is gewogen naar m² (niet het gemiddelde van twee tuinen). Een kengetal zonder data "
+               "toont –.",
+               "Onderaan: door naar de geplante vakken in het register, de watergift en de opmerkingen van de "
+               "periode."],
+        bron="Klimaat, watergift en energie uit Priva (elke ochtend opgehaald). Geplant en geoogst uit de "
+             "registratie; geoogste stelen = emmers × 100 (tuin 1 sinds 04-06-26, tuin 3 sinds 14-08-26).",
+        kleuren="Groen/rood pijltje = beter/slechter dan de vergelijking; lichtgroen vak = de beste tuin; "
+                "⚠ = niet alle dagen of vakken met data.",
+    )
     _tv_vandaag = date.today()
     _tv_g = _tv_gegevens(vakstatus_dataversie())
     _tv_tuinen = [(t["naam"], t["id"]) for t in sorted(TUINEN, key=lambda t: t["nummer"])]
 
-    # Eén compacte rij, links uitgelijnd: periode · welke (◀ label ▶) · vergelijk met.
-    _tv_rij = st.container(horizontal=True, vertical_alignment="bottom", gap="large")
-    _tv_periode = _tv_rij.segmented_control("Periode", list(perioden.PERIODEN), default="Week", key="tv_periode",
-                                            width="content") or "Week"
-    _tv_sleutel_key = f"tv_sleutel_{_tv_periode}"
-    if _tv_sleutel_key not in st.session_state:
-        st.session_state[_tv_sleutel_key] = perioden.laatste_volledige(_tv_periode, _tv_vandaag)
-    _tv_huidig = perioden.periode_sleutel(_tv_vandaag, _tv_periode)[0]
-
-    def _tv_blader(stappen, sleutel_key=_tv_sleutel_key, periode=_tv_periode):
-        st.session_state[sleutel_key] = perioden.verschuif(st.session_state[sleutel_key], periode, stappen)
-
-    with _tv_rij.container(width="content"):
-        st.markdown('<div style="font-size:14px;margin-bottom:0.3rem">Welke</div>', unsafe_allow_html=True)
-        _tv_nav = st.container(horizontal=True, vertical_alignment="center", gap="small", width="content")
-        _tv_nav.button("◀", key="tv_terug", on_click=_tv_blader, args=(-1,), help="Vorige periode")
-        _tv_sleutel = st.session_state[_tv_sleutel_key]
-        _tv_nav.markdown(f"**{perioden.periode_label(_tv_sleutel, _tv_periode)}**", width=150)
-        _tv_nav.button("▶", key="tv_verder", on_click=_tv_blader, args=(1,), help="Volgende periode",
-                       disabled=_tv_sleutel >= _tv_huidig)
-    _tv_vergelijk = _tv_rij.radio("Vergelijk met", ["vorige periode", "zelfde periode vorig jaar"], index=1,
-                                  horizontal=True, key="tv_vergelijk", width="content")
-    _tv_soort = "vorige" if _tv_vergelijk == "vorige periode" else "vorig_jaar"
+    _tv_balk = layout.filterbalk("tuinvgl")
+    _tv_eerste = min((t["start"] for t in _tv_g.teelten), default=_tv_vandaag)
+    _tv_periode, _tv_sleutel = filters.periode(
+        "tv_periode", perioden.PERIODEN, "Week",
+        opties_van=lambda n: perioden.reeks(_tv_eerste, _tv_vandaag, n),
+        standaard_van=lambda n: perioden.laatste_volledige(n, _tv_vandaag),
+        format_van=lambda n: lambda k: perioden.periode_label(k, n),
+        huidig_van=lambda n: perioden.periode_sleutel(_tv_vandaag, n)[0], plek=_tv_balk)
+    _tv_soort = filters.weergave("Vergelijk met", ("vorig_jaar", "vorige"), "tv_vergelijk", "vorig_jaar",
+                                 plek=_tv_balk, format_func=lambda k: {"vorig_jaar": "zelfde periode vorig jaar",
+                                                                       "vorige": "vorige periode"}[k])
 
     _tv_van, _tv_tot, _tv_loopt = perioden.venster(_tv_sleutel, _tv_periode, _tv_vandaag)
     _tv_v_van, _tv_v_tot, _ = perioden.vergelijk_venster(_tv_sleutel, _tv_periode, _tv_soort, _tv_vandaag)
     _tv_label = perioden.kort_label(_tv_sleutel, _tv_periode, _tv_soort)
     _tv_enkel = PERIODE_ENKELVOUD[_tv_periode]
-    st.caption(
-        f"{format_datum(_tv_van)} t/m {format_datum(_tv_tot)}" + (" (loopt nog, t/m gisteren)" if _tv_loopt else "")
-        + f". Kleine regel = {'zelfde ' + _tv_enkel + ' vorig jaar' if _tv_soort == 'vorig_jaar' else 'vorige ' + _tv_enkel}"
-        + (", tot even ver" if _tv_loopt else "")
-        + ". Groen/rood pijltje = beter/slechter; lichtgroen vak = beste tuin; ⚠ = niet alle dagen of vakken "
-          "met data. Beweeg over een cel voor het verschil en de uitleg."
-    )
 
     def _tv_verloop(k, sleutel=_tv_sleutel, periode=_tv_periode):
         rijen = []
@@ -2419,9 +2402,14 @@ def _pagina_tuinvgl_1():
         _tv_tabeldata(_tv_g, _tv_tuinen, _tv_van, _tv_tot, _tv_v_van, _tv_v_tot, _tv_label),
         sleutel="tv_verloop", verloop=_tv_verloop,
         verloop_titel=f"Verloop over 12 {'weken' if _tv_periode == 'Week' else 'perioden'}")
+    _tv_priva = laatste_priva_ophaling()
+    uitleg_help.voetnoot(
+        f"{format_datum(_tv_van)} t/m {format_datum(_tv_tot)}" + (" (loopt nog, t/m gisteren)" if _tv_loopt else "")
+        + f" · kleine regel = {'zelfde ' + _tv_enkel + ' vorig jaar' if _tv_soort == 'vorig_jaar' else 'vorige ' + _tv_enkel}"
+        + (f" · Priva bijgewerkt tot {format_datum(_tv_priva.date())} {_tv_priva:%H:%M}" if _tv_priva else ""))
 
     # Trend geoogste stelen (uit de emmers), de laatste 12 perioden t/m de gekozen.
-    st.write("**Geoogste stelen per periode**")
+    layout.sectie("Geoogste stelen per periode")
     _tv_trend = []
     for _tv_stap in range(-11, 1):
         _tv_s = perioden.verschuif(_tv_sleutel, _tv_periode, _tv_stap)
@@ -2441,18 +2429,15 @@ def _pagina_tuinvgl_1():
             x=alt.X("Periode:O", sort=list(dict.fromkeys(_tv_df["Periode"])), title=None,
                     axis=alt.Axis(labelAngle=-40 if _tv_periode == "Week" else 0)),
             y=alt.Y("Stelen:Q", title="Geoogste stelen"),
-            color=alt.Color("Tuin:N", title=None, legend=alt.Legend(orient="top")),
+            color=alt.Color("Tuin:N", title=None, legend=alt.Legend(orient="bottom")),
             tooltip=["Periode", "Tuin", alt.Tooltip("Stelen:Q", format=",.0f"), "Vakken"],
         ).properties(height=240), use_container_width=True)
-        st.caption("Uit de emmers (× 100 stelen), gestapeld per tuin: tuin 1 sinds 04-06-26, tuin 3 sinds 14-08-26.")
+        uitleg_help.voetnoot("Uit de emmers (× 100 stelen), gestapeld per tuin.")
 
     _tv_opm_van, _tv_opm_tot = perioden.periode_grenzen(_tv_sleutel, _tv_periode)
     _tv_opm = opm_logic.filter_opmerkingen(_opm_alle(vakstatus_dataversie()), van=_tv_opm_van, tot=_tv_opm_tot)
-    _tv_deze = f"{'dit' if _tv_periode in ('Kwartaal', 'Jaar') else 'deze'} {_tv_enkel}"
-    st.write(f"**Opmerkingen in {_tv_deze}** ({len(_tv_opm)})" if _tv_opm else f"**Opmerkingen in {_tv_deze}**")
-    toon_opmerkingenlijst(_tv_opm, "tv_opm", f"Geen opmerkingen in {_tv_deze}.")
-
-    _tv_uitklappers(_tv_g, _tv_van, _tv_tot, _tv_periode)
+    _tv_geoogst(_tv_g, _tv_van, _tv_tot)
+    _tv_links(_tv_g, _tv_sleutel, _tv_periode, _tv_van, _tv_tot, len(_tv_opm))
 
 # --- TEELTVERGELIJKING: een teelt = alle vakken uit één plantweek ---
 #
@@ -3293,7 +3278,7 @@ def _register_tabel(rijen, kolommen, sleutel, vakken, vandaag, klikbaar=True, so
         st.session_state[f"{sleutel}_open"] = None
 
 
-REGISTER_LENGTES = ("Maand", "Kwartaal", "Jaar", "Alles")
+REGISTER_LENGTES = ("Week", "Maand", "Kwartaal", "Jaar", "Alles")
 
 
 def toon_vakkenregister(vandaag, tuin_weergave, afdelingen):
