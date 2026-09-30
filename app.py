@@ -44,6 +44,8 @@ from database import (
     importeer_watergift_uit_priva,
     get_watergift_dekking,
     get_water_kwaliteit_dekking,
+    get_watergift_overzicht,
+    get_watergift_vak,
     get_watergift_dagen_voor_periode,
     verwerk_energie_csv,
     GAS_CALORISCHE_WAARDE_MJ_PER_M3,
@@ -107,16 +109,18 @@ from logic import planning_editor
 from logic import prognoselog
 from logic import opmerkingen as opm_logic
 from logic import selectie
+from logic import watergift as wg
 from logic import tuinvergelijking as tuinvgl
 from logic import teeltvergelijking as teeltvgl
 from logic import teeltprognose as tp
 from logic.afdelingen import sorteer_afdelingen
 from logic.lichtlijn import formule_tekst, t_ideaal
 from ui import styles, vergelijkingstabel
+from ui import watergift_matrix as wg_matrix
 from ui.vergelijkingstabel import Kengetal, verloop_frame
 from config import (
     AFDELING_VOLGORDE, AFWIJKING_VENSTER_DAGEN, C_GRENZEN, FLORGIB_ACHTERSTAND_DAGEN,
-    OP_KOERS_MARGE, OPMERKING_CATEGORIEEN, APP_VERSIE,
+    OP_KOERS_MARGE, OPMERKING_CATEGORIEEN, APP_VERSIE, WATERSYSTEMEN, EC_BAND, PH_BAND,
 )
 
 # --- PAGINA-INSTELLINGEN ---
@@ -738,6 +742,7 @@ PAGINA_DEFINITIES = [
     ("pagina_teeltoverzicht", "Teeltoverzicht", "teeltoverzicht", True),
     ("pagina_teeltvergelijking", "Teeltvergelijking", "teeltvergelijking", False),
     ("pagina_tuinvergelijking", "Tuin vergelijking", "tuinvergelijking", False),
+    ("pagina_watergift", "Watergift", "watergift", False),
     ("pagina_opmerkingen", "Opmerkingen", "opmerkingen", False),
     ("pagina_meer", "Meer", "meer", False),
 ]
@@ -1897,6 +1902,7 @@ def _nu_vak_venster(info, vak, vandaag, data):
                       & (water["datum"] >= str(s["start"]))]
         toon_opmerkingen(int(t["id"]))
         teelt_detail(s, klimaat, [{"datum": r.datum, "liter": r.liter_per_m2} for r in water.itertuples()], model)
+        toon_watergift_vak(tuin["id"], vak, s["start"], vandaag)
 
         st.write("**Vergelijking**")
         st.dataframe(_nu_vergelijking(s, info, data), hide_index=True, use_container_width=True)
@@ -2511,6 +2517,7 @@ def _tl_detail_venster(teelt_id, vakken, vandaag):
                  for d, liter in get_watergift_dagen_voor_periode(t["vaknummer"], str(start), str(eind), t["tuin_id"])]
         toon_opmerkingen(teelt_id)
         teelt_detail(s, klimaat, water, model)
+        toon_watergift_vak(t["tuin_id"], t["vaknummer"], start, eind)
 
     _venster()
 
@@ -2699,6 +2706,329 @@ def _pagina_teeltvgl_1():
         _tl_opm = opm_logic.filter_opmerkingen(_opm_alle(_tl_versie), teelt_ids={t["id"] for t in _tl_groep_tuin})
         st.write(f"**Opmerkingen bij deze teelt** ({len(_tl_opm)})" if _tl_opm else "**Opmerkingen bij deze teelt**")
         toon_opmerkingenlijst(_tl_opm, "tl_opm", "Geen opmerkingen bij de vakken van deze teelt.")
+
+
+# --- WATERGIFT: vak × dag, met EC/pH per watersysteem ---
+#
+# Alles uit de database (watergift_dag, water_kwaliteit_dag, behandeling);
+# rekenwerk in logic/watergift.py, de matrix zelf in ui/watergift_matrix.py.
+WG_PERIODES = {"2 wk": 2, "4 wk": 4, "3 mnd": 13}
+WG_BRON = {"priva": "gemeten (Priva)", "excel": "ingesteld (Excel)"}
+
+
+@st.cache_data(ttl=600, show_spinner="Watergift ophalen…")
+def _wg_data(tuin_id, van, tot, versie):
+    """Watergift, EC/pH, behandelingen en eerste emmers van één tuin; `versie` is alleen de cachesleutel."""
+    return get_watergift_overzicht(tuin_id, van, tot)
+
+
+def _wg_teelten(data, tuin_id, eerste_emmer):
+    """{vak: [teelt]} met start, florgib, oogst, eerste_emmer en code, oud naar nieuw."""
+    uit = {}
+    for t in data["teelten"].to_dict("records"):
+        if t["tuin_id"] != tuin_id:
+            continue
+        uit.setdefault(int(t["vaknummer"]), []).append({
+            "id": int(t["id"]), "code": t["code"], "start": vs.als_datum(t["datum_teelt_start"]),
+            "florgib": vs.als_datum(t["datum_half"]), "oogst": vs.als_datum(t["datum_oogst"]),
+            "eerste_emmer": vs.als_datum(eerste_emmer.get(int(t["id"])))})
+    for lijst in uit.values():
+        lijst.sort(key=lambda t: t["start"] or date.min)
+    return uit
+
+
+def _wg_ec_ph_tekst(k):
+    if not k:
+        return ""
+    delen = []
+    if k.get("ec_gem") is not None:
+        delen.append(f"EC {fmt_getal(k['ec_gem'], 2)}")
+    if k.get("ph_gem") is not None:
+        delen.append(f"pH {fmt_getal(k['ph_gem'], 2)}")
+    return " · ".join(delen)
+
+
+def _wg_matrix_gegevens(tuin, vakken_df, teelten, gift, kwaliteit, behandelingen, dagen_lijst, afdelingen,
+                        vandaag):
+    """De structuur voor ui.watergift_matrix.bouw_html (zie daar) plus een tabel voor de Excel-download."""
+    gift_dag = {(int(r["vaknummer"]), wg.als_datum(r["datum"])): r for r in gift}
+    kw_dag = {wg.als_datum(k["datum"]): k for k in kwaliteit}
+    beh = wg.behandelingen_per_vak_dag(behandelingen)
+    toon_beh = wg.toon_behandelingen(behandelingen)
+    band_ec, band_ph = EC_BAND.get(tuin["nummer"]), PH_BAND.get(tuin["nummer"])
+
+    kw_rijen = []
+    for label, sleutel, band in (("EC (mS/cm)", "ec_gem", band_ec), ("pH", "ph_gem", band_ph)):
+        cellen = []
+        for d in dagen_lijst:
+            k = kw_dag.get(d)
+            waarde = k.get(sleutel) if k else None
+            status = wg.band_status(waarde, band)
+            tip = (f"{DAGEN_KORT_WG[d.weekday()]} {format_datum(d)} · {label}"
+                   + (f"\ngemiddeld {fmt_getal(waarde, 2)} (min {fmt_getal(k[sleutel.replace('gem', 'min')], 2)}, "
+                      f"max {fmt_getal(k[sleutel.replace('gem', 'max')], 2)})" if waarde is not None else "\ngeen meting")
+                   + (f"\nbuiten de band {fmt_getal(band[0], 1)}–{fmt_getal(band[1], 1)} ({status})" if status else ""))
+            cellen.append({"waarde": fmt_getal(waarde, 2 if sleutel == "ec_gem" else 1) if waarde is not None else "",
+                           "buiten": bool(status), "tip": tip})
+        kw_rijen.append({"label": f"{label} · watersysteem 1", "cellen": cellen})
+
+    maximum = max([r["liter_per_m2"] or 0 for (v, d), r in gift_dag.items() if dagen_lijst[0] <= d <= dagen_lijst[-1]]
+                  or [0])
+    afd_rijen, excel = [], []
+    vak_afd = {int(r.vaknummer): int(r.afdeling) for r in vakken_df.itertuples() if r.afdeling == r.afdeling}
+    for afdeling in sorteer_afdelingen(sorted({a for a in vak_afd.values() if a in afdelingen}), tuin["nummer"]):
+        vak_rijen = []
+        for vak in sorted(v for v, a in vak_afd.items() if a == afdeling):
+            teelten_vak = teelten.get(vak, [])
+            lopend = wg.lopende_teelt(teelten_vak, vandaag)
+            if lopend:
+                totaal = wg.totaal_sinds_planten(
+                    {d: r["liter_per_m2"] for (v, d), r in gift_dag.items() if v == vak}, lopend["start"], vandaag)
+                plantweek = f"wk {lopend['start'].isocalendar()[1]}"
+                leeftijd = f"{(vandaag - lopend['start']).days} d"
+                tip_vak = f"Vak {vak} · {lopend['code'] or '-'} · geplant {format_datum(lopend['start'])}"
+            else:
+                totaal, plantweek, leeftijd, tip_vak = None, "", "", f"Vak {vak} · leeg"
+            cellen, excel_rij = [], {"Afd.": afdeling, "Vak": vak, "Plantweek": plantweek, "Leeftijd": leeftijd,
+                                     "Totaal teelt (l/m²)": round(totaal, 1) if totaal is not None else None}
+            for d in dagen_lijst:
+                r = gift_dag.get((vak, d))
+                teelt = wg.teelt_op_dag(teelten_vak, d, vandaag)
+                # Na vandaag is er nog niets te zien: geen arcering "vak leeg".
+                mark = wg.markering(teelt, d) if d <= vandaag else set()
+                liter = r["liter_per_m2"] if r else None
+                regels = [f"{DAGEN_KORT_WG[d.weekday()]} {format_datum(d)} · vak {vak}"]
+                if r is None:
+                    regels.append("geen registratie" if d < vandaag else "nog niet bekend")
+                elif not liter:
+                    regels.append(f"geen gift · {WG_BRON.get(r['bron'], r['bron'])}")
+                else:
+                    beurten = f" in {r['beurten']} beurt{'en' if r['beurten'] != 1 else ''}" if r["beurten"] else ""
+                    regels.append(f"{fmt_getal(liter, 1)} l/m²{beurten} · {WG_BRON.get(r['bron'], r['bron'])}")
+                ec_ph = _wg_ec_ph_tekst(kw_dag.get(d))
+                if ec_ph:
+                    regels.append(ec_ph)
+                if d > vandaag:
+                    pass
+                elif teelt:
+                    extra = [t for t, zit in (("plantdag", "plant"), ("Florgib", "florgib"), ("oogst", "oogst"))
+                             if mark and zit in mark]
+                    regels.append(f"teelt {teelt['code'] or '-'}" + (f" · {', '.join(extra)}" if extra else ""))
+                else:
+                    regels.append("vak leeg")
+                cellen.append({"liter": liter, "bron": r["bron"] if r else None, "markering": mark,
+                               "tip": "\n".join(regels)})
+                excel_rij[format_datum(d)] = liter if liter else None
+            vak_rijen.append({"vak": vak, "plantweek": plantweek, "leeftijd": leeftijd,
+                              "totaal": fmt_getal(totaal, 0) if totaal is not None else "", "tip": tip_vak,
+                              "cellen": cellen, "behandelingen": [beh.get((vak, d), []) for d in dagen_lijst]})
+            excel.append(excel_rij)
+        afd_rijen.append({"naam": f"Afd. {afdeling}", "vakken": vak_rijen})
+
+    excel_kw = []
+    for label, sleutel in (("EC (mS/cm)", "ec_gem"), ("pH", "ph_gem")):
+        rij = {"Afd.": None, "Vak": label, "Plantweek": "", "Leeftijd": "", "Totaal teelt (l/m²)": None}
+        for d in dagen_lijst:
+            k = kw_dag.get(d)
+            rij[format_datum(d)] = k.get(sleutel) if k else None
+        excel_kw.append(rij)
+    return ({"dagen": dagen_lijst, "vandaag": vandaag, "maximum": maximum, "toon_behandelingen": toon_beh,
+             "kwaliteit": kw_rijen, "afdelingen": afd_rijen}, pd.DataFrame(excel_kw + excel))
+
+
+DAGEN_KORT_WG = ["ma", "di", "wo", "do", "vr", "za", "zo"]
+
+
+def _wg_samenvatting(tuin, vakken_df, teelten, gift, kwaliteit, van, tot, afdelingen, vandaag):
+    """Tabel: de tuin (met EC/pH van het watersysteem) en daaronder de afdelingen, voor 7 dagen en de periode."""
+    gift_dag = {(int(r["vaknummer"]), wg.als_datum(r["datum"])): r["liter_per_m2"] for r in gift}
+    m2 = {int(r.vaknummer): r.oppervlakte_m2 for r in vakken_df.itertuples()}
+    vak_afd = {int(r.vaknummer): int(r.afdeling) for r in vakken_df.itertuples() if r.afdeling == r.afdeling}
+    gisteren = vandaag - timedelta(days=1)
+    week_van = gisteren - timedelta(days=6)
+    periode_tot = min(tot, gisteren)
+
+    def bezet(vak, dag):
+        return wg.teelt_op_dag(teelten.get(vak, []), dag, vandaag) is not None
+
+    def ec_ph(van_, tot_):
+        dagen_k = [k for k in kwaliteit if van_ <= wg.als_datum(k["datum"]) <= tot_]
+        return wg.gemiddelde([k["ec_gem"] for k in dagen_k]), wg.gemiddelde([k["ph_gem"] for k in dagen_k])
+
+    def markeer(waarde, band, decimalen):
+        if waarde is None:
+            return None
+        status = wg.band_status(waarde, band)
+        return fmt_getal(waarde, decimalen) + (" ▲" if status == "hoog" else " ▼" if status == "laag" else "")
+
+    def rij(naam, vakken_groep, met_kwaliteit):
+        w = wg.samenvatting(gift_dag, vakken_groep, m2, bezet, week_van, gisteren)
+        p = wg.samenvatting(gift_dag, vakken_groep, m2, bezet, van, periode_tot)
+        uit = {"Groep": naam, "Gift/dag 7 d": w["gift_per_dag"], "Gift/dag periode": p["gift_per_dag"],
+               "Giftdagen 7 d": w["giftdagen"], "Giftdagen periode": p["giftdagen"],
+               "Laatste giftdag": format_datum(p["laatste"] or w["laatste"]) if (p["laatste"] or w["laatste"]) else None}
+        if met_kwaliteit:
+            ec_w, ph_w = ec_ph(week_van, gisteren)
+            ec_p, ph_p = ec_ph(van, periode_tot)
+            uit.update({"EC 7 d": markeer(ec_w, EC_BAND.get(tuin["nummer"]), 2),
+                        "EC periode": markeer(ec_p, EC_BAND.get(tuin["nummer"]), 2),
+                        "pH 7 d": markeer(ph_w, PH_BAND.get(tuin["nummer"]), 1),
+                        "pH periode": markeer(ph_p, PH_BAND.get(tuin["nummer"]), 1)})
+        return uit
+
+    gekozen = [v for v, a in vak_afd.items() if a in afdelingen]
+    rijen = [rij(f"{tuin['naam']} (watersysteem 1)", gekozen, True)]
+    for afdeling in sorteer_afdelingen(sorted({vak_afd[v] for v in gekozen}), tuin["nummer"]):
+        rijen.append(rij(f"Afd. {afdeling}", [v for v in gekozen if vak_afd[v] == afdeling], False))
+    toon_tabel(pd.DataFrame(rijen), [
+        ("Groep", "", "tekst", None, 170),
+        ("Gift/dag 7 d", "l/m²/dag 7 d", "getal", "%.1f", 92),
+        ("Gift/dag periode", "l/m²/dag per.", "getal", "%.1f", 92),
+        ("Giftdagen 7 d", "Giftdg 7 d", "getal", "%d", 78),
+        ("Giftdagen periode", "Giftdg per.", "getal", "%d", 78),
+        ("Laatste giftdag", "Laatste gift", "datum", None, 92),
+        ("EC 7 d", "EC 7 d", "tekst", None, 70), ("EC periode", "EC per.", "tekst", None, 70),
+        ("pH 7 d", "pH 7 d", "tekst", None, 70), ("pH periode", "pH per.", "tekst", None, 70),
+    ], verberg_leeg=True)
+    st.caption(f"7 d = {format_datum(week_van)} t/m {format_datum(gisteren)}; per. = de gekozen periode (t/m "
+               f"gisteren). l/m²/dag = gemiddelde gift per bezet "
+               "vak per dag (m²-gewogen; lege vakken tellen niet mee). ▲/▼ = EC of pH boven/onder de band "
+               f"(EC {fmt_getal(EC_BAND[tuin['nummer']][0], 1)}–{fmt_getal(EC_BAND[tuin['nummer']][1], 1)}, "
+               f"pH {fmt_getal(PH_BAND[tuin['nummer']][0], 1)}–{fmt_getal(PH_BAND[tuin['nummer']][1], 1)}; "
+               "startwaarden in config.py, bijstellen zodra er meer historie is).")
+
+
+def _wg_dag_venster(tuin, dag, gift, kwaliteit, vakken_df):
+    """Popup met één dag: de gift per vak, EC/pH van het watersysteem en de opmerkingen van die dag."""
+    @st.dialog(f"{DAGEN_KORT_WG[dag.weekday()]} {format_datum(dag)} · {tuin['naam']}", width="large")
+    def _venster():
+        k = next((x for x in kwaliteit if wg.als_datum(x["datum"]) == dag), None)
+        if k:
+            toon_kengetallen([
+                {"label": "EC gemiddeld", "waarde": fmt_getal(k["ec_gem"], 2) if k["ec_gem"] is not None else LEEG,
+                 "help": "Tijdgewogen gemiddelde tijdens het doseren (mS/cm)."},
+                {"label": "EC min–max", "waarde": f"{fmt_getal(k['ec_min'], 2)}–{fmt_getal(k['ec_max'], 2)}"
+                 if k["ec_min"] is not None else LEEG},
+                {"label": "EC ingesteld", "waarde": fmt_getal(k["ec_doel"], 2) if k["ec_doel"] is not None else LEEG},
+                {"label": "pH gemiddeld", "waarde": fmt_getal(k["ph_gem"], 2) if k["ph_gem"] is not None else LEEG},
+                {"label": "pH min–max", "waarde": f"{fmt_getal(k['ph_min'], 2)}–{fmt_getal(k['ph_max'], 2)}"
+                 if k["ph_min"] is not None else LEEG},
+                {"label": "Recept", "waarde": str(k["recept"]) if k["recept"] is not None else LEEG},
+            ])
+        else:
+            st.caption("Geen EC/pH van deze dag (EC/pH wordt pas sinds 27-09-26 uit Priva gehaald).")
+        vak_afd = {int(r.vaknummer): int(r.afdeling) for r in vakken_df.itertuples() if r.afdeling == r.afdeling}
+        regels = [{"Afd.": vak_afd.get(int(r["vaknummer"])), "Vak": int(r["vaknummer"]),
+                   "Gift (l/m²)": r["liter_per_m2"] or None, "Beurten": r["beurten"],
+                   "Bron": WG_BRON.get(r["bron"], r["bron"])}
+                  for r in gift if wg.als_datum(r["datum"]) == dag]
+        regels.sort(key=lambda x: (_tv_volgorde(tuin["id"], x["Afd."], x["Vak"]), x["Vak"]))
+        st.write("**Gift per vak**")
+        if regels:
+            toon_tabel(pd.DataFrame(regels), [
+                ("Afd.", "Afd.", "getal", "%d", "small"), ("Vak", "Vak", "getal", "%d", "small"),
+                ("Gift (l/m²)", "Gift (l/m²)", "getal", "%.1f", "small"), ("Beurten", "Beurten", "getal", "%d", "small"),
+                ("Bron", "Bron", "tekst", None, "medium")], verberg_leeg=True)
+        else:
+            st.caption("Geen watergift geregistreerd op deze dag.")
+        opm = opm_logic.filter_opmerkingen(_opm_alle(vakstatus_dataversie()), tuinen={tuin["id"]}, van=dag, tot=dag)
+        st.write("**Opmerkingen van deze dag**")
+        toon_opmerkingenlijst(opm, f"wg_dag_opm_{tuin['id']}", "Geen opmerkingen op deze dag.")
+    _venster()
+
+
+def toon_watergift_vak(tuin_id, vaknummer, start, eind):
+    """Voor de vakpopup: de watergift per dag van de teelt, met gietbeurten, bron en EC/pH."""
+    rijen = get_watergift_vak(tuin_id, vaknummer, start, eind)
+    gegeven = [r for r in rijen if r[1]]
+    with st.expander(f"Watergift per dag ({len(gegeven)} giftdagen, "
+                     f"{fmt_getal(sum(r[1] for r in gegeven), 0)} l/m² totaal)"):
+        if not gegeven:
+            st.caption("Geen watergift geregistreerd in deze teelt.")
+            return
+        toon_tabel(pd.DataFrame([{"Datum": format_datum(d), "Gift (l/m²)": liter, "Beurten": beurten,
+                                  "Bron": WG_BRON.get(bron, bron), "EC": ec, "pH": ph}
+                                 for d, liter, beurten, bron, ec, ph in gegeven]), [
+            ("Datum", "Datum", "datum", None, "small"), ("Gift (l/m²)", "Gift (l/m²)", "getal", "%.1f", "small"),
+            ("Beurten", "Beurten", "getal", "%d", "small"), ("Bron", "Bron", "tekst", None, "medium"),
+            ("EC", "EC", "getal", "%.2f", "small"), ("pH", "pH", "getal", "%.2f", "small")], verberg_leeg=True)
+
+
+def _wg_excel(df, tuin, van, tot):
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as schrijver:
+        df.to_excel(schrijver, index=False, sheet_name=f"Watergift {tuin['naam']}"[:31])
+    return buffer.getvalue()
+
+
+def _pagina_watergift_1():
+    pagina_uitleg((
+        "Per vak per dag de watergift (l/m²), met EC en pH van het watersysteem erboven. Donkerder = meer water; "
+        "een stippelrand = ingestelde gift uit de oude Excel (vóór Priva), zonder = gemeten door Priva. Beweeg over "
+        "een cel voor de details, klik op een vak voor het vak en op een dag voor alles van die dag. EC/pH wordt "
+        "sinds 27-09-26 uit Priva gehaald; Priva bewaart zelf maar 5 dagen, dus ouder is er niet."))
+    vandaag = date.today()
+    deze_maandag = vandaag - timedelta(days=vandaag.weekday())
+    if "wg_eind" not in st.session_state:
+        st.session_state["wg_eind"] = deze_maandag
+    if st.session_state.get("wg_periode") not in WG_PERIODES:
+        st.session_state["wg_periode"] = "4 wk"
+
+    def _wg_blader(stappen):
+        nieuw = st.session_state["wg_eind"] + timedelta(weeks=stappen)
+        st.session_state["wg_eind"] = min(nieuw, deze_maandag)
+
+    weken = WG_PERIODES[st.session_state["wg_periode"]]
+    van, tot = wg.periode(st.session_state["wg_eind"], weken)
+    tuinen = [t for t in sorted(TUINEN, key=lambda t: t["nummer"])
+              if TUIN_WEERGAVE == "beide" or t["nummer"] == TUIN_WEERGAVE]
+    data = _nu_data(vakstatus_dataversie(), str(vandaag))
+    alle_afd = sorted({int(a) for a in data["vakken"]["afdeling"].dropna()})
+
+    rij = st.container(horizontal=True, vertical_alignment="bottom", gap="medium")
+    rij.segmented_control("Periode", list(WG_PERIODES), key="wg_periode", width="content")
+    with rij.container(width="content"):
+        st.markdown('<div style="font-size:14px;margin-bottom:0.3rem">Welke</div>', unsafe_allow_html=True)
+        nav = st.container(horizontal=True, vertical_alignment="center", gap="small", width="content")
+        nav.button("◀", key="wg_terug", on_click=_wg_blader, args=(-1,), help="Week eerder")
+        nav.markdown(f"**wk {van.isocalendar()[1]} – wk {tot.isocalendar()[1]}** "
+                     f"<span style='opacity:.7;font-size:13px'>({format_datum(van)} t/m {format_datum(tot)})</span>",
+                     unsafe_allow_html=True, width=300)
+        nav.button("▶", key="wg_verder", on_click=_wg_blader, args=(1,), help="Week later",
+                   disabled=st.session_state["wg_eind"] >= deze_maandag)
+    afdelingen = rij.multiselect("Afdelingen", alle_afd, default=alle_afd, key=f"wg_afd_{TUIN_WEERGAVE}",
+                                 format_func=lambda a: f"Afd. {a}", width=400)
+
+    for tuin in tuinen:
+        vakken_df = data["vakken"][data["vakken"]["tuin_id"] == tuin["id"]]
+        teelten_ruw = [t for t in data["teelten"].to_dict("records") if t["tuin_id"] == tuin["id"]]
+        # Ook de dagen sinds het planten van de oudste lopende teelt, voor de totalen per teelt.
+        starts = [vs.als_datum(t["datum_teelt_start"]) for t in teelten_ruw
+                  if not vs.als_datum(t["datum_oogst"]) and vs.als_datum(t["datum_teelt_start"]) <= vandaag]
+        ophaal_van = min([van] + starts)
+        d = _wg_data(tuin["id"], ophaal_van, tot, vakstatus_dataversie())
+        teelten = _wg_teelten(data, tuin["id"], d["eerste_emmer"])
+        tuin_afd = [a for a in afdelingen if a in set(vakken_df["afdeling"].dropna().astype(int))]
+        if len(tuinen) > 1:
+            st.subheader(tuin["naam"])
+        _wg_samenvatting(tuin, vakken_df, teelten, d["gift"], d["kwaliteit"], van, tot, tuin_afd, vandaag)
+        matrix, excel = _wg_matrix_gegevens(tuin, vakken_df, teelten, d["gift"], d["kwaliteit"], d["behandelingen"],
+                                            wg.dagen(van, tot), tuin_afd, vandaag)
+        klik = wg_matrix.toon(matrix, f"wg_matrix_{tuin['id']}")
+        st.download_button("Download Excel", _wg_excel(excel, tuin, van, tot),
+                           file_name=f"watergift_{tuin['naam'].replace(' ', '_').lower()}_{van:%d-%m-%y}_{tot:%d-%m-%y}.xlsx",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                           key=f"wg_excel_{tuin['id']}")
+        if klik and klik.startswith("dag:"):
+            _wg_dag_venster(tuin, date.fromisoformat(klik[4:]), d["gift"], d["kwaliteit"], vakken_df)
+        elif klik and klik.startswith("vak:"):
+            vak = int(klik[4:])
+            teelt = wg.lopende_teelt(teelten.get(vak, []), vandaag) or (teelten.get(vak) or [None])[-1]
+            if teelt:
+                _tl_detail_venster(teelt["id"], _tl_vakken(vakstatus_dataversie(), vandaag), vandaag)
+            else:
+                st.toast(f"Vak {vak} heeft nog geen teelt.")
+
 
 # --- VOORUITBLIK: wat er de komende weken te planten en te oogsten staat (beide tuinen) ---
 #
@@ -3824,6 +4154,17 @@ def _pagina_help_1():
       het totaal, per m². De kleine regel onder een getal is de vorige periode of dezelfde periode
       vorig jaar; het pijltje zegt of het beter (groen) of slechter (rood) is.
 
+    **Watergift**
+    - Per vak per dag de watergift (l/m²), met bovenaan EC en pH van het watersysteem. Donkerder = meer
+      water; stippelrand = ingestelde gift uit de oude Excel (vóór Priva), zonder = gemeten door Priva.
+      Groene streep links = plantdag, paarse stip = Florgib, oranje onderrand = oogst, gearceerd = vak leeg.
+    - Links per vak de plantweek, leeftijd en de totale watergift van de lopende teelt.
+    - Beweeg over een cel voor de details; klik op een vak voor het vak (met de watergift per dag) en op
+      een dag voor de gift per vak, EC/pH en de opmerkingen van die dag. "Download Excel" geeft de matrix.
+    - EC en pH komen sinds 27-09-26 mee met de Priva-ophaling; Priva bewaart zelf maar 5 dagen, dus
+      eerder is er niet. De band (▲/▼ en rood) staat per tuin in config.py.
+    - Later komen hier ook de behandelingen (gewasbescherming, biologie) bij, als smalle regel onder elk vak.
+
     **Opmerkingen**
     - Een opmerking maak je via *Opmerking* in de zijbalk, bij één of meer lopende vakken. Je ziet ze terug in
       de vakpopup (daar ook wijzigen of verwijderen), op de pagina Opmerkingen (zoeken op tuin, teelt, vak,
@@ -3865,6 +4206,10 @@ def pagina_tuinvergelijking():
 
 def pagina_opmerkingen():
     _pagina_opmerkingen_1()
+
+
+def pagina_watergift():
+    _pagina_watergift_1()
 
 
 def pagina_meer():
