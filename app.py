@@ -120,7 +120,7 @@ from ui import watergift_matrix as wg_matrix
 from ui.vergelijkingstabel import Kengetal, verloop_frame
 from config import (
     AFDELING_VOLGORDE, AFWIJKING_VENSTER_DAGEN, C_GRENZEN, FLORGIB_ACHTERSTAND_DAGEN,
-    OP_KOERS_MARGE, OPMERKING_CATEGORIEEN, APP_VERSIE, WATERSYSTEMEN, EC_BAND, PH_BAND,
+    OP_KOERS_MARGE, OPMERKING_CATEGORIEEN, APP_VERSIE, WATERSYSTEMEN, EC_BAND, PH_BAND, RONDE_STARTVAK,
 )
 
 # --- PAGINA-INSTELLINGEN ---
@@ -2726,7 +2726,7 @@ def _wg_teelten(data, tuin_id, eerste_emmer, stook):
     {vak: [teelt]} oud naar nieuw, met start, florgib, oogst, eerste_emmer en
     verwacht_oogst (nog niet geoogst: de prognose van het teeltmodel, anders de
     plandatum), plus de concept-planningen t/m volgende week (concept=True). Elke teelt krijgt
-    een kleur volgens zijn plantweek (logic.watergift.kleuren).
+    een ronde, kleur en tint (logic.watergift.rondes).
     """
     uit = {}
     for t in data["teelten"].to_dict("records"):
@@ -2761,7 +2761,7 @@ def _wg_teelten(data, tuin_id, eerste_emmer, stook):
             t["start"] <= (e["oogst"] or e["verwacht_oogst"] or t["start"]) and
             (t["verwacht_oogst"] or t["start"]) >= e["start"] for e in echt if e["start"])]
         lijst.sort(key=lambda t: t["start"] or date.min)
-    return wg.kleuren(uit, len(wg_matrix.TEELT_KLEUR))
+    return wg.rondes(uit, RONDE_STARTVAK.get(_tuinnummer_van.get(tuin_id), 2), len(wg_matrix.TEELT_KLEUR))
 
 
 def _wg_ec_ph_tekst(k):
@@ -2855,6 +2855,7 @@ def _wg_matrix_gegevens(tuin, vakken_df, teelten, gift, kwaliteit, behandelingen
                 else:
                     regels.append("vak leeg")
                 cellen.append({"liter": liter, "markering": mark, "kleur": teelt["kleur"] if teelt else None,
+                               "tint": teelt["tint"] if teelt else 0,
                                "concept": bool(teelt and teelt["concept"]), "tip": "\n".join(regels)})
                 excel_rij[format_datum(d)] = liter if liter else None
             vak_rijen.append({"vak": vak, "plantweek": plantweek, "leeftijd": leeftijd,
@@ -2944,7 +2945,7 @@ def _wg_excel(df, tuin, van, tot):
 def _pagina_watergift_1():
     pagina_uitleg((
         "Per vak per dag de watergift (l/m²), met EC en pH van het watersysteem erboven. Blauw = water (donkerder "
-        "= meer); elke teelt (plantweek) heeft een eigen achtergrondkleur, oranje = oogst (licht oranje = verwachte oogst), "
+        "= meer); elke teeltronde (tuin 3 vanaf vak 2, tuin 1 vanaf vak 1) heeft een eigen kleur, per teelt afwisselend licht en donker, oranje = oogst (licht oranje = verwachte oogst), "
         "gearceerd = concept-planning (alleen t/m volgende week), wit = vak leeg. Met Vooruitkijken loopt de matrix door t/m de verwachte oogst "
         "van de laatste lopende of bevestigde teelt. Beweeg over een cel voor de details, klik op een vak voor het vak en op een "
         "dag voor alles van die dag. EC/pH wordt sinds 27-09-26 uit Priva gehaald; Priva bewaart zelf maar 5 dagen. "
@@ -4144,7 +4145,7 @@ def _pagina_help_1():
 
     **Watergift**
     - Per vak per dag de watergift (l/m²), met bovenaan EC en pH van het watersysteem. Blauw = water
-      (donkerder = meer). Elke teelt heeft een eigen achtergrondkleur; groene streep links = plantdag,
+      (donkerder = meer). Elke teeltronde (tuin 3 vanaf vak 2, tuin 1 vanaf vak 1) heeft een eigen kleur, per teelt licht/donker; groene streep links = plantdag,
       paarse stip = Florgib (open ring = verwacht), oranje = oogst (licht oranje = verwachte oogst), gearceerd = concept-planning
       (alleen t/m volgende week), wit = vak leeg. Met Vooruitkijken loopt de matrix door t/m de verwachte oogst van de laatste lopende of
       bevestigde teelt.

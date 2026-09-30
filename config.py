@@ -46,6 +46,9 @@ OPMERKING_CATEGORIEEN = ("Groei", "Ziekte/plagen", "Water", "Klimaat", "Overig")
 # {tuinnummer: {watersysteem: vaknummers}}; None = alle vakken van die tuin.
 # Tuin 1 heeft ook een watersysteem 2, maar dat wordt niet gebruikt.
 WATERSYSTEMEN = {1: {1: None}, 3: {1: None}}
+# Het vak waarmee een teeltronde begint, per tuin (de kleur in de watergiftmatrix
+# wisselt per ronde; daarbinnen licht/donker per teelt).
+RONDE_STARTVAK = {1: 1, 3: 2}
 # Band voor EC (mS/cm) en pH van de gift, per tuin: daarbuiten wordt een
 # daggemiddelde rood in de matrix (opgegeven door Job, 30-09-26).
 EC_BAND = {1: (1.0, 2.0), 3: (1.0, 2.0)}

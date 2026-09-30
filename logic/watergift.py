@@ -102,39 +102,39 @@ def markering(teelt, dag, vandaag=None):
     return uit
 
 
-def kleuren(teelten, aantal=4):
+def rondes(teelten, startvak, aantal_kleuren=3):
     """
-    Geeft elke teelt een kleur 0..aantal-1 in "kleur", per plantweek: alle
-    vakken van dezelfde teelt krijgen dezelfde kleur. teelten = {vak: [teelt]}.
-
-    De plantweken krijgen op volgorde (oud → nieuw) een kleur die
-    1. anders is dan die van de vorige teelt in elk van zijn vakken (zo zijn
-       opeenvolgende teelten in een vak altijd te onderscheiden);
-    2. zo mogelijk ook anders is dan die van de plantweek ervoor (buurvakken);
-    3. het langst niet gebruikt is, zodat de kleuren gelijkmatig rouleren.
+    Deelt de teelten van een tuin in teeltrondes in: een ronde begint bij elke
+    planting van het startvak (tuin 3: vak 2) en loopt daarna de vakken door.
+    Elke teelt krijgt:
+    - "ronde": het rondenummer (0 = vóór de eerste bekende planting van het startvak);
+    - "kleur": ronde % aantal_kleuren, één kleur per ronde;
+    - "tint": 0/1, om en om per teelt (plantweek) binnen de ronde: licht/donker.
+    Valt een teelt op dezelfde dag als een planting van het startvak, dan horen
+    de vakken vlak na het startvak bij de nieuwe ronde en de laatste vakken bij
+    de oude. teelten = {vak: [teelt]}.
     """
     def week(t):
         return t["start"].isocalendar()[:2]
 
-    voorgangers = {}
-    for lijst in teelten.values():
-        volgorde = sorted((t for t in lijst if t["start"]), key=lambda t: t["start"])
-        for vorige, volgende in zip(volgorde, volgorde[1:]):
-            if week(vorige) != week(volgende):
-                voorgangers.setdefault(week(volgende), set()).add(week(vorige))
-    kleur_van, laatst_gebruikt = {}, {k: -1 for k in range(aantal)}
-    weken = sorted({week(t) for lijst in teelten.values() for t in lijst if t["start"]})
-    for i, w in enumerate(weken):
-        verboden = {kleur_van[v] for v in voorgangers.get(w, ()) if v in kleur_van}
-        buur = kleur_van.get(weken[i - 1]) if i else None
-        kandidaten = [k for k in range(aantal) if k not in verboden and k != buur] or \
-                     [k for k in range(aantal) if k not in verboden] or list(range(aantal))
-        kleur_van[w] = min(kandidaten, key=lambda k: (laatst_gebruikt[k], k))
-        laatst_gebruikt[kleur_van[w]] = i
+    starts = sorted(t["start"] for t in teelten.get(startvak, []) if t["start"])
+    helft = max(teelten or [startvak]) // 2
+    per_ronde = {}
+    for vak, lijst in teelten.items():
+        for t in lijst:
+            if not t["start"]:
+                continue
+            ronde = sum(1 for d in starts if d < t["start"])
+            if t["start"] in starts and (vak == startvak or 0 < vak - startvak <= helft):
+                ronde += 1
+            t["ronde"] = ronde
+            per_ronde.setdefault(ronde, set()).add(week(t))
+    volgorde = {r: {w: i for i, w in enumerate(sorted(weken))} for r, weken in per_ronde.items()}
     for lijst in teelten.values():
         for t in lijst:
             if t["start"]:
-                t["kleur"] = kleur_van[week(t)]
+                t["kleur"] = t["ronde"] % aantal_kleuren
+                t["tint"] = volgorde[t["ronde"]][week(t)] % 2
     return teelten
 
 

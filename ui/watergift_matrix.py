@@ -16,8 +16,13 @@ from utils.format import fmt_getal
 
 DAGEN_KORT = ["ma", "di", "wo", "do", "vr", "za", "zo"]
 TYPE_KLEUR = {"gewasbescherming": "#d64541", "biologie": "#2e9d5b", "voeding": "#8a6d3b"}
-# Achtergrond per teelt (plantweek, zie logic.watergift.kleuren), half doorzichtig voor licht en donker.
-TEELT_KLEUR = ("rgba(76,175,80,0.20)", "rgba(142,68,173,0.17)", "rgba(214,69,120,0.15)", "rgba(0,150,136,0.17)")
+# Achtergrond per teeltronde (logic.watergift.rondes): één kleur per ronde, per teelt om en om een lichte
+# en een donkere tint. Half doorzichtig, zodat het in licht en donker thema werkt.
+TEELT_KLEUR = (
+    ("rgba(76,175,80,0.08)", "rgba(76,175,80,0.18)"),       # groen
+    ("rgba(142,68,173,0.07)", "rgba(142,68,173,0.16)"),     # lila
+    ("rgba(96,125,139,0.09)", "rgba(96,125,139,0.20)"),     # grijsblauw
+)
 OOGST = "rgba(237,161,0,0.85)"
 OOGST_VERWACHT = "rgba(237,161,0,0.35)"
 
@@ -131,7 +136,7 @@ def _celstijl(cel, maximum):
     elif marks and "oogst_verwacht" in marks:
         stijl.append(f"background: {OOGST_VERWACHT}")
     elif cel.get("kleur") is not None:
-        kleur = TEELT_KLEUR[cel["kleur"] % len(TEELT_KLEUR)]
+        kleur = TEELT_KLEUR[cel["kleur"] % len(TEELT_KLEUR)][cel.get("tint", 0)]
         if cel.get("concept"):
             stijl.append(f"background: repeating-linear-gradient(135deg, {kleur} 0 4px, transparent 4px 8px)")
         else:
@@ -218,8 +223,9 @@ def bouw_html(m):
         '<div class="wg-legenda">'
         '<span><i style="background:rgba(42,120,214,0.25)"></i><i style="background:rgba(42,120,214,0.9)">'
         '</i>gift l/m² (licht → veel)</span>'
-        + '<span>' + "".join(f'<i style="background:{k}"></i>' for k in TEELT_KLEUR) + 'teelt (kleur per plantweek)</span>'
-        + f'<span><i style="background:repeating-linear-gradient(135deg,{TEELT_KLEUR[0]} 0 4px,transparent 4px 8px)">'
+        + '<span>' + "".join(f'<i style="background:{licht}"></i><i style="background:{donker}"></i>'
+                             for licht, donker in TEELT_KLEUR) + 'teeltronde (licht/donker per teelt)</span>'
+        + f'<span><i style="background:repeating-linear-gradient(135deg,{TEELT_KLEUR[0][1]} 0 4px,transparent 4px 8px)">'
         '</i>concept-planning</span>'
         '<span><i style="border:1px solid rgba(128,128,128,.3)"></i>vak leeg</span>'
         '<span><i style="box-shadow:inset 3px 0 0 #2E6A4C;border:1px solid rgba(128,128,128,.3)"></i>plantdag</span>'

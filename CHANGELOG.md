@@ -6,9 +6,9 @@ inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 ## [2.4.1] - 2026-09-30
 
 ### Gecorrigeerd
-- Watergift: teeltkleur per plantweek. Elke teelt heeft nu in al zijn vakken
-  dezelfde kleur, en opeenvolgende teelten in een vak verschillen altijd (de
-  kleur wordt per plantweek gekozen, niet meer per vak verschoven).
+- Watergift: teeltkleur per teeltronde (tuin 3 vanaf vak 2, tuin 1 vanaf
+  vak 1; `RONDE_STARTVAK` in config.py): één rustige kleur per ronde (groen,
+  lila, grijsblauw), daarbinnen per teelt afwisselend licht en donker.
 - Watergift: kruis bij het aanwijzen weer weg (maakte de pagina traag).
 
 ### Toegevoegd
