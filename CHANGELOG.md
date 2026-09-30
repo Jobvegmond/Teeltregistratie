@@ -3,6 +3,17 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.3.0] - 2026-09-30
+
+### Toegevoegd
+- **EC en pH van de gift** uit Priva (watersysteem 1, per tuin), in hetzelfde
+  verzoek als de watergift: daggemiddelde (tijdgewogen), min/max, ingestelde EC
+  en actief recept. Nieuwe tabel `water_kwaliteit_dag`; dekking onder Meer ›
+  Data importeren. Priva bewaart 5 dagen, dus de historie begint nu.
+- Aantal **gietbeurten** per vak-dag (kolom `beurten` in `watergift_dag`).
+- Lege tabellen `middel` en `behandeling` en de adapter
+  `integrations/behandelingen/` voor gewasbescherming en biologie (later).
+
 ## [2.2.0] - 2026-09-30
 
 ### Toegevoegd

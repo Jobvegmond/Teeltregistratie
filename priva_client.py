@@ -267,66 +267,12 @@ class PrivaHortiClient:
 
     def haal_watergift_dagwaarden(self, dagen_terug=MAX_DAGEN_TERUG):
         """
-        Haalt in één API-call de daggift (liter/m²) per vak van deze tuin op voor de
-        laatste afgeronde dagen, uit de oplopende meterstand KRAAN.VERBRUIKM2.
-
-        Geeft een lijst dicts terug, gesorteerd op (datum, vaknummer):
-            {"vaknummer": 25, "datum": date(2026, 9, 6), "liter_per_m2": 14.0}
-
-        De oudste dag van het venster wordt weggelaten: daarvoor ontbreekt een
-        meterstand van vóór middernacht, dus die zou te laag uitvallen.
+        Daggift (liter/m²) en gietbeurten per vak van de laatste afgeronde dagen:
+        [{"vaknummer", "datum", "liter_per_m2", "beurten"}]. Het rekenwerk (en
+        de EC/pH die in hetzelfde verzoek meekomt) staat in integrations/priva_water.py.
         """
-        begin, eind = self._venster(dagen_terug)
-        oudste_volledige_dag = (begin + LOKALE_OFFSET).date() + timedelta(days=1)
-        datapoints = [
-            {"deviceGroupId": "none", "deviceId": self.device_id,
-             "variableId": f"000001c2-{vak:04x}-0000-0000-{STAART_WATER_METERSTAND}"}
-            for vak in self.vakken
-        ]
-        payload = self._data_call(begin, eind, datapoints, "watergift")
-
-        resultaat = []
-        for entry in payload.get("data", []):
-            dp = entry.get("datapoint", {})
-            vid = dp.get("variableId") or dp.get("id") or ""
-            try:
-                vak = int(vid.split("-")[1], 16)
-            except (IndexError, ValueError):
-                continue
-
-            reeks = []
-            for meting in entry.get("measurements", []):
-                ruwe = meting.get("value")
-                if ruwe is None or ruwe == "":
-                    continue
-                try:
-                    reeks.append((
-                        datetime.fromisoformat(meting["timestampUtc"].replace("Z", "+00:00")),
-                        float(ruwe),
-                    ))
-                except (TypeError, ValueError):
-                    continue
-            reeks.sort()
-
-            per_dag = {}
-            for (t0, v0), (t1, v1) in zip(reeks, reeks[1:]):
-                toename = v1 - v0
-                if toename < WATER_RESET_DREMPEL:
-                    continue
-                datum = (t0 + LOKALE_OFFSET).date()
-                per_dag[datum] = per_dag.get(datum, 0.0) + max(0.0, toename)
-
-            for datum, liter in per_dag.items():
-                if datum < oudste_volledige_dag:
-                    continue
-                resultaat.append({
-                    "vaknummer": vak,
-                    "datum": datum,
-                    "liter_per_m2": round(liter, 1),
-                })
-
-        resultaat.sort(key=lambda r: (r["datum"], r["vaknummer"]))
-        return resultaat
+        from integrations.priva_water import haal_water_dagwaarden
+        return haal_water_dagwaarden(self, dagen_terug)[0]
 
 
 def _rond(waarde, decimalen):

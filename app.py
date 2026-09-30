@@ -43,6 +43,7 @@ from database import (
     laatste_priva_ophaling,
     importeer_watergift_uit_priva,
     get_watergift_dekking,
+    get_water_kwaliteit_dekking,
     get_watergift_dagen_voor_periode,
     verwerk_energie_csv,
     GAS_CALORISCHE_WAARDE_MJ_PER_M3,
@@ -3535,15 +3536,16 @@ def _pagina_import_1():
         if os.environ.get("PRIVA_CLIENT_ID"):
             st.caption(
                 f"Of haal de laatste afgeronde dagen rechtstreeks uit Priva voor {TUIN_NAAM}: "
-                "klimaat en watergift. Historische CSV-data blijft staan."
+                "klimaat, watergift en EC/pH van de gift. Historische CSV-data blijft staan."
             )
             if st.button("📡 Haal laatste dagen op uit Priva"):
                 try:
                     aantal_k, _ = importeer_klimaat_uit_priva(
                         gebruiker=huidige_gebruiker(), tuin_id=TUIN_ID)
-                    aantal_w, _ = importeer_watergift_uit_priva(
+                    aantal_w, _, aantal_ec = importeer_watergift_uit_priva(
                         gebruiker=huidige_gebruiker(), tuin_id=TUIN_ID)
-                    st.success(f"✅ {aantal_k} afdeling-dagen klimaat, {aantal_w} vak-dagen watergift opgehaald.")
+                    st.success(f"✅ {aantal_k} afdeling-dagen klimaat, {aantal_w} vak-dagen watergift en "
+                               f"{aantal_ec} dagen EC/pH opgehaald.")
                 except Exception as e:
                     st.error(f"❌ Kon niet uit Priva ophalen: {e}")
 
@@ -3551,6 +3553,14 @@ def _pagina_import_1():
             if water_dekking:
                 laatste_water = max(r[2] for r in water_dekking)
                 st.caption(f"Watergift: {len(water_dekking)} vakken, tot {format_datum(laatste_water)}.")
+            ec_dekking = get_water_kwaliteit_dekking(TUIN_ID)
+            if ec_dekking:
+                st.caption("EC/pH: " + "; ".join(
+                    f"watersysteem {systeem} {format_datum(eerste)} t/m {format_datum(laatste)} ({aantal} dagen"
+                    + (f", {ontbreekt} ontbrekend" if ontbreekt else "") + ")"
+                    for systeem, eerste, laatste, aantal, ontbreekt in ec_dekking))
+            else:
+                st.caption("EC/pH: nog niets opgehaald. Priva bewaart 5 dagen; eerdere EC/pH is niet op te halen.")
 
             # De automatische taak kan stilvallen zonder dat iemand het ziet;
             # Priva bewaart maar vijf dagen, dus dat moet snel opvallen.

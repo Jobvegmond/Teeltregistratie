@@ -91,7 +91,7 @@ def main():
         try:
             klimaat, klimaat_over = importeer_klimaat_uit_priva(
                 dagen_terug=args.dagen, gebruiker=GEBRUIKER, tuin_id=tuin["id"])
-            water, water_over = importeer_watergift_uit_priva(
+            water, water_over, ec_ph = importeer_watergift_uit_priva(
                 dagen_terug=args.dagen, gebruiker=GEBRUIKER, tuin_id=tuin["id"])
         except Exception as fout:
             print(f"[{stempel}] {tuin['naam']}: FOUT bij ophalen uit Priva: {fout}", file=sys.stderr)
@@ -100,7 +100,7 @@ def main():
         print(
             f"[{stempel}] {tuin['naam']}: klimaat {klimaat} afdeling-dagen "
             f"({klimaat_over} overgeslagen), watergift {water} vak-dagen "
-            f"({water_over} overgeslagen)."
+            f"({water_over} overgeslagen), EC/pH {ec_ph} dagen."
         )
 
     if mislukt:

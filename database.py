@@ -409,6 +409,8 @@ def init_db():
         # Priva. Zie ook WATERGIFT_BRONNEN.
         cursor.execute("ALTER TABLE watergift_dag ADD COLUMN IF NOT EXISTS bron TEXT")
         cursor.execute("UPDATE watergift_dag SET bron = 'priva' WHERE bron IS NULL")
+        # Aantal gietbeurten per vak-dag (alleen uit Priva; bij Excel leeg).
+        cursor.execute("ALTER TABLE watergift_dag ADD COLUMN IF NOT EXISTS beurten INTEGER")
 
         # Tuinen: tuin 3 (Hartweg 20) en tuin 1 (Hartweg 29). Alles wat er al
         # stond is van tuin 3; die blijft de standaard, zodat bestaande code
@@ -564,6 +566,40 @@ def init_db():
         # Prognoselogboek: per lopend vak per dag wat het teeltmodel voorspelde
         # (logic/prognoselog.py). Nooit bijwerken: de eerste regel van een dag blijft.
         cursor.execute(PROGNOSE_LOG_TABEL)
+
+        # EC en pH van de gift per watersysteem per dag (Priva; integrations/priva_water.py).
+        cursor.execute(WATER_KWALITEIT_TABEL)
+        # Gewasbescherming, biologie en voeding: nu nog leeg, later gevuld via
+        # integrations/behandelingen/. De pagina Watergift leest ze al.
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS middel (
+                id SERIAL PRIMARY KEY,
+                bron TEXT NOT NULL,
+                code TEXT NOT NULL,
+                naam TEXT,
+                type TEXT CHECK (type IN ('gewasbescherming', 'biologie', 'voeding')),
+                doel TEXT,
+                werkzaam TEXT,
+                eenheid TEXT,
+                UNIQUE (bron, code)
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS behandeling (
+                id SERIAL PRIMARY KEY,
+                tuin_id INTEGER REFERENCES tuinen (id),
+                vaknummer INTEGER NOT NULL,
+                datum TEXT NOT NULL,
+                middel_id INTEGER REFERENCES middel (id),
+                dosering REAL,
+                eenheid TEXT,
+                methode TEXT,
+                opmerking TEXT,
+                bron TEXT NOT NULL,
+                extern_id TEXT,
+                UNIQUE (bron, extern_id)
+            )
+        """)
 
         # Opmerkingen per vak (teelt), bijv. een afwijking in de groei.
         cursor.execute("""
@@ -1313,9 +1349,10 @@ def importeer_klimaat_uit_priva(dagen_terug=4, gebruiker=None, tuin_id=None):
 WATERGIFT_BRONNEN = ("priva", "excel")
 
 
-def upsert_watergift_dag(vaknummer, datum, liter_per_m2, bron="priva", tuin_id=None):
+def upsert_watergift_dag(vaknummer, datum, liter_per_m2, bron="priva", tuin_id=None, beurten=None):
     """
-    Slaat één vak-dag watergift op (of overschrijft bij een herhaalde ophaal).
+    Slaat één vak-dag watergift op (of overschrijft bij een herhaalde ophaal),
+    met het aantal gietbeurten als dat bekend is.
 
     `bron` is 'priva' (gemeten) of 'excel' (ingesteld, uit de oude registratie).
     Een gemeten waarde overschrijft altijd; een waarde uit Excel alleen als er
@@ -1324,23 +1361,63 @@ def upsert_watergift_dag(vaknummer, datum, liter_per_m2, bron="priva", tuin_id=N
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT INTO watergift_dag (tuin_id, vaknummer, datum, liter_per_m2, bron)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO watergift_dag (tuin_id, vaknummer, datum, liter_per_m2, bron, beurten)
+            VALUES (%s, %s, %s, %s, %s, %s)
             ON CONFLICT (tuin_id, vaknummer, datum)
-            DO UPDATE SET liter_per_m2 = EXCLUDED.liter_per_m2, bron = EXCLUDED.bron
+            DO UPDATE SET liter_per_m2 = EXCLUDED.liter_per_m2, bron = EXCLUDED.bron, beurten = EXCLUDED.beurten
             WHERE EXCLUDED.bron = 'priva' OR watergift_dag.bron = 'excel'
-        """, (_tuin_of_standaard(tuin_id), int(vaknummer), str(datum), liter_per_m2, bron))
+        """, (_tuin_of_standaard(tuin_id), int(vaknummer), str(datum), liter_per_m2, bron, beurten))
+        conn.commit()
+
+
+WATER_KWALITEIT_TABEL = """
+    CREATE TABLE IF NOT EXISTS water_kwaliteit_dag (
+        id SERIAL PRIMARY KEY,
+        tuin_id INTEGER NOT NULL REFERENCES tuinen (id),
+        watersysteem INTEGER NOT NULL,
+        datum TEXT NOT NULL,
+        ec_gem REAL, ec_min REAL, ec_max REAL,
+        ph_gem REAL, ph_min REAL, ph_max REAL,
+        ec_doel REAL, ph_doel REAL,
+        recept INTEGER,
+        metingen INTEGER,
+        bron TEXT NOT NULL DEFAULT 'priva',
+        bijgewerkt_op TIMESTAMPTZ DEFAULT now(),
+        UNIQUE (tuin_id, watersysteem, datum)
+    )
+"""
+WATER_KWALITEIT_KOLOMMEN = ("tuin_id", "watersysteem", "datum", "ec_gem", "ec_min", "ec_max", "ph_gem", "ph_min",
+                            "ph_max", "ec_doel", "ph_doel", "recept", "metingen", "bron")
+# Opnieuw ophalen overschrijft dezelfde dag: de laatste ophaling heeft de volledigste dag.
+WATER_KWALITEIT_UPSERT = (
+    f"INSERT INTO water_kwaliteit_dag ({', '.join(WATER_KWALITEIT_KOLOMMEN)}) "
+    f"VALUES ({', '.join(f'%({k})s' for k in WATER_KWALITEIT_KOLOMMEN)}) "
+    "ON CONFLICT (tuin_id, watersysteem, datum) DO UPDATE SET "
+    + ", ".join(f"{k} = EXCLUDED.{k}" for k in WATER_KWALITEIT_KOLOMMEN[3:])
+)
+
+
+def upsert_water_kwaliteit_dag(rij, tuin_id=None):
+    """Eén dagregel EC/pH van een watersysteem (dict uit integrations.priva_water.kwaliteit_rijen)."""
+    waarden = {k: rij.get(k) for k in WATER_KWALITEIT_KOLOMMEN}
+    waarden.update(tuin_id=_tuin_of_standaard(tuin_id), datum=str(rij["datum"]), bron=rij.get("bron") or "priva")
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(WATER_KWALITEIT_UPSERT, waarden)
         conn.commit()
 
 
 def importeer_watergift_uit_priva(dagen_terug=4, gebruiker=None, tuin_id=None):
     """
-    Haalt de daggift (liter/m²) per vak van de laatste afgeronde dagen op uit
-    de Priva Horti API en zet die via upsert in watergift_dag.
+    Haalt in één Priva-verzoek de daggift (liter/m², gietbeurten) per vak én de
+    EC/pH van het watersysteem op voor de laatste afgeronde dagen, en zet ze via
+    upsert in watergift_dag en water_kwaliteit_dag.
 
-    Geeft (aantal geschreven vak-dagen, aantal overgeslagen) terug.
+    Geeft (vak-dagen watergift, overgeslagen, dagen EC/pH) terug.
     """
-    rijen = priva_client_voor_tuin(tuin_id).haal_watergift_dagwaarden(dagen_terug)
+    from integrations.priva_water import haal_water_dagwaarden
+
+    rijen, kwaliteit = haal_water_dagwaarden(priva_client_voor_tuin(tuin_id), dagen_terug)
 
     verwerkt = 0
     overgeslagen = 0
@@ -1348,8 +1425,12 @@ def importeer_watergift_uit_priva(dagen_terug=4, gebruiker=None, tuin_id=None):
         if rij["datum"] >= date.today():
             overgeslagen += 1
             continue
-        upsert_watergift_dag(rij["vaknummer"], rij["datum"], rij["liter_per_m2"], tuin_id=tuin_id)
+        upsert_watergift_dag(rij["vaknummer"], rij["datum"], rij["liter_per_m2"], tuin_id=tuin_id,
+                             beurten=rij["beurten"])
         verwerkt += 1
+    kwaliteit = [k for k in kwaliteit if k["datum"] < date.today()]
+    for rij in kwaliteit:
+        upsert_water_kwaliteit_dag(rij, tuin_id=tuin_id)
 
     if rijen:
         eerste = min(r["datum"] for r in rijen)
@@ -1359,10 +1440,68 @@ def importeer_watergift_uit_priva(dagen_terug=4, gebruiker=None, tuin_id=None):
         periode = "geen data"
     log_wijziging(
         gebruiker, "opgehaald", "watergift_priva", None,
-        f"{verwerkt} vak-dagen uit Priva ({periode}), {overgeslagen} overgeslagen"
+        f"{verwerkt} vak-dagen uit Priva ({periode}), {overgeslagen} overgeslagen; "
+        f"{len(kwaliteit)} dagen EC/pH"
     )
 
-    return verwerkt, overgeslagen
+    return verwerkt, overgeslagen, len(kwaliteit)
+
+
+def get_water_kwaliteit_dekking(tuin_id=None):
+    """
+    Per watersysteem: (watersysteem, eerste dag, laatste dag, dagen met EC/pH,
+    ontbrekende dagen ertussen), laag naar hoog.
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT watersysteem, MIN(datum), MAX(datum), COUNT(*)
+            FROM water_kwaliteit_dag
+            WHERE tuin_id = %s
+            GROUP BY watersysteem
+            ORDER BY watersysteem
+        """, (_tuin_of_standaard(tuin_id),))
+        uit = []
+        for systeem, eerste, laatste, aantal in cursor.fetchall():
+            dagen = (datetime.strptime(str(laatste), "%Y-%m-%d") - datetime.strptime(str(eerste), "%Y-%m-%d")).days + 1
+            uit.append((systeem, str(eerste), str(laatste), aantal, dagen - aantal))
+        return uit
+
+
+# --- BEHANDELINGEN (gewasbescherming, biologie, voeding; nu nog leeg) ---
+
+def upsert_middel(middel, bron):
+    """Een middel (integrations.behandelingen.Middel) opslaan of bijwerken op (bron, code); geeft het id."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO middel (bron, code, naam, type, doel, werkzaam, eenheid)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (bron, code) DO UPDATE SET naam = EXCLUDED.naam, type = EXCLUDED.type,
+                doel = EXCLUDED.doel, werkzaam = EXCLUDED.werkzaam, eenheid = EXCLUDED.eenheid
+            RETURNING id
+        """, (bron, middel.code, middel.naam, middel.type, middel.doel, middel.werkzaam, middel.eenheid))
+        middel_id = cursor.fetchone()[0]
+        conn.commit()
+    return middel_id
+
+
+def upsert_behandeling(behandeling, middel_id, bron):
+    """Een behandeling (integrations.behandelingen.Behandeling) opslaan of bijwerken op (bron, extern_id)."""
+    tuin = next((t for t in get_tuinen() if t["nummer"] == behandeling.tuin_nummer), None)
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO behandeling (tuin_id, vaknummer, datum, middel_id, dosering, eenheid, methode, opmerking,
+                                     bron, extern_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (bron, extern_id) DO UPDATE SET tuin_id = EXCLUDED.tuin_id, vaknummer = EXCLUDED.vaknummer,
+                datum = EXCLUDED.datum, middel_id = EXCLUDED.middel_id, dosering = EXCLUDED.dosering,
+                eenheid = EXCLUDED.eenheid, methode = EXCLUDED.methode, opmerking = EXCLUDED.opmerking
+        """, (tuin["id"] if tuin else None, behandeling.vaknummer, str(behandeling.datum), middel_id,
+              behandeling.dosering, behandeling.eenheid, behandeling.methode, behandeling.opmerking, bron,
+              behandeling.extern_id))
+        conn.commit()
 
 
 def get_watergift_dagen_voor_periode(vaknummer, datum_start, datum_eind, tuin_id=None):
