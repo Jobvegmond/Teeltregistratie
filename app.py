@@ -91,6 +91,7 @@ from database import (
     get_oogst_emmers,
     voeg_opmerking_toe,
     get_opmerkingen,
+    get_alle_opmerkingen,
     wijzig_opmerking,
     verwijder_opmerking,
     get_vergelijking_data,
@@ -103,6 +104,7 @@ from logic import kengetallen as kg
 from logic import perioden
 from logic import planning_editor
 from logic import prognoselog
+from logic import opmerkingen as opm_logic
 from logic import tuinvergelijking as tuinvgl
 from logic import teeltvergelijking as teeltvgl
 from logic import teeltprognose as tp
@@ -715,6 +717,7 @@ PAGINA_DEFINITIES = [
     ("pagina_teeltoverzicht", "Teeltoverzicht", "teeltoverzicht", True),
     ("pagina_teeltvergelijking", "Teeltvergelijking", "teeltvergelijking", False),
     ("pagina_tuinvergelijking", "Tuin vergelijking", "tuinvergelijking", False),
+    ("pagina_opmerkingen", "Opmerkingen", "opmerkingen", False),
     ("pagina_meer", "Meer", "meer", False),
 ]
 
@@ -1604,6 +1607,87 @@ def toon_opmerkingen(teelt_id):
                         st.rerun(scope="fragment")
 
 
+OPM_KOLOMMEN = [
+    ("Datum", "Datum", "datum", None, "small"),
+    ("Tuin", "Tuin", "tekst", None, "small"),
+    ("Afd.", "Afd.", "getal", "%d", "small"),
+    ("Vak", "Vak", "getal", "%d", "small"),
+    ("Code", "Code", "tekst", None, "small"),
+    ("Teelt", "Teelt", "tekst", None, "small"),
+    ("Categorie", "Categorie", "tekst", None, "small"),
+    ("Opmerking", "Opmerking", "tekst", None, "large"),
+    ("Door", "Door", "tekst", None, "small"),
+]
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _opm_alle(versie):
+    """Alle opmerkingen met hun vak; `versie` (wijzigingenlog) is alleen de cachesleutel."""
+    return get_alle_opmerkingen()
+
+
+def _teelt_label(week):
+    return f"wk {week[1]} '{str(week[0])[2:]}"
+
+
+def toon_opmerkingenlijst(rijen, sleutel, leeg="Geen opmerkingen."):
+    """Opmerkingen als tabel (oud naar nieuw); een klik op een regel opent het vak."""
+    if not rijen:
+        st.caption(leeg)
+        return
+    df = pd.DataFrame([{
+        "Datum": format_datum(o["datum"]), "Tuin": _tuinnaam_van.get(o["tuin_id"], "?"),
+        "Afd.": o["afdeling"], "Vak": o["vaknummer"], "Code": o["code"] or "-",
+        "Teelt": _teelt_label(opm_logic.teelt_van(o)), "Categorie": o["categorie"] or "Overig",
+        "Opmerking": o["tekst"], "Door": o["gebruiker"] or "-",
+    } for o in rijen])
+    keuze = toon_tabel(df, OPM_KOLOMMEN, vast=("Datum", "Tuin", "Afd.", "Vak"), sleutel=sleutel)
+    gekozen = keuze.selection.rows if keuze else []
+    if gekozen and gekozen != st.session_state.get(f"{sleutel}_open"):
+        st.session_state[f"{sleutel}_open"] = gekozen
+        vandaag = date.today()
+        _tl_detail_venster(rijen[gekozen[0]]["teelt_id"], _tl_vakken(vakstatus_dataversie(), vandaag), vandaag)
+    elif not gekozen:
+        st.session_state[f"{sleutel}_open"] = None
+
+
+def _pagina_opmerkingen_1():
+    st.subheader("Opmerkingen", help=(
+        "Alle opmerkingen bij vakken. Filter op tuin, teelt (plantweek), vak, periode, categorie of een woord "
+        "uit de tekst. Klik op een regel om het vak te openen; daar kun je een opmerking ook wijzigen. "
+        "Nieuwe opmerkingen maak je via Opmerking in de zijbalk."))
+    alle = _opm_alle(vakstatus_dataversie())
+    if not alle:
+        st.info("Nog geen opmerkingen. Maak er een via Opmerking in de zijbalk.")
+        return
+    tuinen = sorted(TUINEN, key=lambda t: t["nummer"])
+    standaard_tuinen = [t["naam"] for t in tuinen if TUIN_WEERGAVE == "beide" or t["nummer"] == TUIN_WEERGAVE]
+    teelten = sorted({opm_logic.teelt_van(o) for o in alle})
+    vakken = sorted({o["vaknummer"] for o in alle})
+    eerste = min(opm_logic._datum(o["datum"]) for o in alle)
+    laatste = max(max(opm_logic._datum(o["datum"]) for o in alle), date.today())
+
+    k1, k2, k3 = st.columns(3)
+    tuin_namen = k1.multiselect("Tuin", [t["naam"] for t in tuinen], default=standaard_tuinen,
+                                key=f"opm_tuin_{TUIN_WEERGAVE}")
+    gekozen_teelten = k2.multiselect("Teelt (plantweek)", teelten, format_func=_teelt_label, key="opm_teelt",
+                                     placeholder="Alle teelten")
+    gekozen_vakken = k3.multiselect("Vak", vakken, key="opm_vak", placeholder="Alle vakken")
+    k4, k5, k6 = st.columns(3)
+    periode = k4.date_input("Periode", (eerste, laatste), format="DD-MM-YYYY", key="opm_periode")
+    categorieen = k5.multiselect("Categorie", OPMERKING_CATEGORIEEN, key="opm_categorie",
+                                 placeholder="Alle categorieën")
+    zoek = k6.text_input("Zoeken", key="opm_zoek", placeholder="Woord uit de tekst of code")
+    # Tijdens het kiezen van een periode is er even maar één datum.
+    van, tot = (periode + (periode[0],))[:2] if len(periode) else (None, None)
+
+    rijen = opm_logic.filter_opmerkingen(
+        alle, tuinen={t["id"] for t in tuinen if t["naam"] in tuin_namen}, teelten=set(gekozen_teelten),
+        vakken=set(gekozen_vakken), van=van, tot=tot, categorieen=set(categorieen), zoek=zoek)
+    st.caption(f"{len(rijen)} van {len(alle)} opmerkingen. Klik op een regel om het vak te openen.")
+    toon_opmerkingenlijst(rijen, "opm_lijst", "Geen opmerkingen die aan de filters voldoen.")
+
+
 def teelt_detail(s, klimaat, water, model=None):
     """
     De hele teelt van één vak: tijdlijn, voortgang (lopend), klimaat tegen de
@@ -2219,6 +2303,12 @@ def _pagina_tuinvgl_1():
         ).properties(height=240), use_container_width=True)
         st.caption("Uit de emmers (× 100 stelen), gestapeld per tuin: tuin 1 sinds 04-06-26, tuin 3 sinds 14-08-26.")
 
+    _tv_opm_van, _tv_opm_tot = perioden.periode_grenzen(_tv_sleutel, _tv_periode)
+    _tv_opm = opm_logic.filter_opmerkingen(_opm_alle(vakstatus_dataversie()), van=_tv_opm_van, tot=_tv_opm_tot)
+    _tv_deze = f"{'dit' if _tv_periode in ('Kwartaal', 'Jaar') else 'deze'} {_tv_enkel}"
+    st.write(f"**Opmerkingen in {_tv_deze}** ({len(_tv_opm)})" if _tv_opm else f"**Opmerkingen in {_tv_deze}**")
+    toon_opmerkingenlijst(_tv_opm, "tv_opm", f"Geen opmerkingen in {_tv_deze}.")
+
     _tv_uitklappers(_tv_g, _tv_van, _tv_tot, _tv_periode)
 
 # --- TEELTVERGELIJKING: een teelt = alle vakken uit één plantweek ---
@@ -2479,6 +2569,10 @@ def _pagina_teeltvgl_1():
 
         st.write("**Vakken van deze teelt**")
         _tl_vakkentabel(_tl_groep, _tl_vandaag)
+
+        _tl_opm = opm_logic.filter_opmerkingen(_opm_alle(_tl_versie), teelt_ids={t["id"] for t in _tl_groep})
+        st.write(f"**Opmerkingen bij deze teelt** ({len(_tl_opm)})" if _tl_opm else "**Opmerkingen bij deze teelt**")
+        toon_opmerkingenlijst(_tl_opm, "tl_opm", "Geen opmerkingen bij de vakken van deze teelt.")
 
 # --- VOORUITBLIK: wat er de komende weken te planten en te oogsten staat (beide tuinen) ---
 #
@@ -3591,6 +3685,12 @@ def _pagina_help_1():
       het totaal, per m². De kleine regel onder een getal is de vorige periode of dezelfde periode
       vorig jaar; het pijltje zegt of het beter (groen) of slechter (rood) is.
 
+    **Opmerkingen**
+    - Een opmerking maak je via *Opmerking* in de zijbalk, bij één of meer lopende vakken. Je ziet ze terug in
+      de vakpopup (daar ook wijzigen of verwijderen), op de pagina Opmerkingen (zoeken op tuin, teelt, vak,
+      periode, categorie of tekst), bij de gekozen teelt in Teeltvergelijking en bij de gekozen periode in
+      Tuin vergelijking.
+
     **Meer**
     - *Data importeren*: klimaat- en energiedata uit de Priva-export.
     - *Prognosekwaliteit*: hoe goed de oogstprognose en de plandatum achteraf klopten.
@@ -3622,6 +3722,10 @@ def pagina_teeltvergelijking():
 
 def pagina_tuinvergelijking():
     _pagina_tuinvgl_1()
+
+
+def pagina_opmerkingen():
+    _pagina_opmerkingen_1()
 
 
 def pagina_meer():

@@ -1865,6 +1865,23 @@ def get_opmerkingen(teelt_id):
         return [dict(zip(kolommen, r)) for r in cursor.fetchall()]
 
 
+def get_alle_opmerkingen():
+    """Alle opmerkingen met het vak erbij (tuin, afdeling, vaknummer, code, startdatum), als dicts."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT o.id, o.teelt_id, o.datum, o.categorie, o.tekst, o.gebruiker,
+                   v.tuin_id, v.afdeling, v.vaknummer, t.code, t.datum_teelt_start
+            FROM opmerkingen o
+            JOIN teelten t ON t.id = o.teelt_id
+            JOIN teeltvakken v ON v.id = t.teeltvak_id
+            ORDER BY o.datum, v.tuin_id, v.vaknummer, o.id
+        """)
+        kolommen = ("id", "teelt_id", "datum", "categorie", "tekst", "gebruiker",
+                    "tuin_id", "afdeling", "vaknummer", "code", "start")
+        return [dict(zip(kolommen, r)) for r in cursor.fetchall()]
+
+
 def wijzig_opmerking(opmerking_id, datum, categorie, tekst, gebruiker=None):
     with get_connection() as conn:
         cursor = conn.cursor()
