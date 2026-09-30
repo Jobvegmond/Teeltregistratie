@@ -74,25 +74,25 @@ class TestMatrixLogica(unittest.TestCase):
         self.assertEqual(wg.lopende_teelt(self.TEELTEN, self.VANDAAG)["code"], "264005")
 
     def test_vooruitkijken_met_verwachte_oogst(self):
-        teelten = wg.kleuren([
+        teelten = wg.kleuren({5: [
             {"start": date(2026, 9, 28), "florgib": None, "oogst": None, "eerste_emmer": None,
              "verwacht_oogst": date(2026, 12, 4), "concept": False},
             {"start": date(2026, 12, 14), "florgib": None, "oogst": None, "eerste_emmer": None,
-             "verwacht_oogst": date(2027, 2, 26), "concept": True}])
+             "verwacht_oogst": date(2027, 2, 26), "concept": True}]})[5]
         lopend = wg.teelt_op_dag(teelten, date(2026, 11, 1), self.VANDAAG)
-        self.assertEqual((lopend["kleur"], lopend["concept"]), (40 % 4, False))
+        self.assertFalse(lopend["concept"])
         self.assertEqual(wg.markering(lopend, date(2026, 12, 4), self.VANDAAG), {"oogst_verwacht"})
         self.assertIsNone(wg.teelt_op_dag(teelten, date(2026, 12, 10), self.VANDAAG))   # tussen oogst en concept
-        self.assertEqual(wg.teelt_op_dag(teelten, date(2027, 1, 5), self.VANDAAG)["kleur"], 51 % 4)
-        self.assertEqual(wg.laatste_eind({5: teelten}), date(2026, 12, 4))
+        self.assertNotEqual(wg.teelt_op_dag(teelten, date(2027, 1, 5), self.VANDAAG)["kleur"], lopend["kleur"])
+        self.assertEqual(wg.laatste_eind({5: teelten}), date(2026, 12, 4))  # concept telt standaard niet
         self.assertEqual(wg.laatste_eind({5: teelten}, met_concepten=True), date(2027, 2, 26))
 
     def test_echte_teelt_gaat_voor_concept(self):
-        teelten = wg.kleuren([
+        teelten = wg.kleuren({5: [
             {"start": date(2026, 9, 25), "florgib": None, "oogst": None, "eerste_emmer": None,
              "verwacht_oogst": date(2026, 12, 1), "concept": True},
             {"start": date(2026, 9, 28), "florgib": None, "oogst": None, "eerste_emmer": None,
-             "verwacht_oogst": date(2026, 12, 4), "concept": False}])
+             "verwacht_oogst": date(2026, 12, 4), "concept": False}]})[5]
         self.assertFalse(wg.teelt_op_dag(teelten, date(2026, 10, 15), self.VANDAAG)["concept"])
         concept = [dict(teelten[0])]
         self.assertIsNone(wg.lopende_teelt(concept, self.VANDAAG))     # een concept is geen lopende teelt
@@ -103,16 +103,21 @@ class TestMatrixLogica(unittest.TestCase):
         self.assertEqual(wg.markering(t, date(2026, 9, 30), self.VANDAAG), {"oogst"})
         self.assertIs(wg.teelt_op_dag([t], date(2026, 9, 30), self.VANDAAG), t)     # loopt door t/m vandaag
 
-    def test_kleur_per_plantweek_met_correctie(self):
+    def test_kleur_per_plantweek(self):
         def teelt(start):
             return {"start": start, "florgib": None, "oogst": None, "eerste_emmer": None}
-        vak_a = wg.kleuren([teelt(date(2026, 5, 25)), teelt(date(2026, 8, 24))])    # wk 22 en 35
-        vak_b = wg.kleuren([teelt(date(2026, 8, 25))])                             # ook wk 35
-        self.assertEqual(vak_a[1]["kleur"], vak_b[0]["kleur"])                     # zelfde teelt, zelfde kleur
-        vak_c = wg.kleuren([teelt(date(2026, 6, 1)), teelt(date(2026, 8, 24) + timedelta(weeks=1))])  # 23 en 36
-        self.assertNotEqual(vak_c[0]["kleur"], vak_c[1]["kleur"])                  # 13 wk: verschillend
-        vak_e = wg.kleuren([teelt(date(2026, 6, 1)), teelt(date(2026, 6, 1) + timedelta(weeks=12))])  # 23 en 35: 12 wk
-        self.assertNotEqual(vak_e[0]["kleur"], vak_e[1]["kleur"])                  # veelvoud van 4: schuift op
+        # vak 1: wk 23 → wk 35 (12 weken, het lastige geval); vak 2: wk 24 → wk 35; vak 3: wk 35 → wk 47
+        teelten = {1: [teelt(date(2026, 6, 1)), teelt(date(2026, 8, 24))],
+                   2: [teelt(date(2026, 6, 8)), teelt(date(2026, 8, 25))],
+                   3: [teelt(date(2026, 8, 26)), teelt(date(2026, 11, 16))]}
+        wg.kleuren(teelten)
+        # dezelfde teelt (wk 35) heeft in alle vakken dezelfde kleur
+        self.assertEqual(len({teelten[1][1]["kleur"], teelten[2][1]["kleur"], teelten[3][0]["kleur"]}), 1)
+        # opeenvolgende teelten in een vak verschillen
+        for lijst in teelten.values():
+            self.assertNotEqual(lijst[0]["kleur"], lijst[1]["kleur"])
+        # buurweken verschillen (wk 23 en 24)
+        self.assertNotEqual(teelten[1][0]["kleur"], teelten[2][0]["kleur"])
 
     def test_watergift_som_per_teelt(self):
         gift = {date(2026, 9, 27): 5.0, date(2026, 9, 28): 3.0, date(2026, 9, 29): None, date(2026, 9, 30): 2.5}

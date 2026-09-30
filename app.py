@@ -2759,8 +2759,7 @@ def _wg_teelten(data, tuin_id, eerste_emmer, stook):
             t["start"] <= (e["oogst"] or e["verwacht_oogst"] or t["start"]) and
             (t["verwacht_oogst"] or t["start"]) >= e["start"] for e in echt if e["start"])]
         lijst.sort(key=lambda t: t["start"] or date.min)
-        wg.kleuren(lijst, len(wg_matrix.TEELT_KLEUR))
-    return uit
+    return wg.kleuren(uit, len(wg_matrix.TEELT_KLEUR))
 
 
 def _wg_ec_ph_tekst(k):

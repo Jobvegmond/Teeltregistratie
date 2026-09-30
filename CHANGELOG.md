@@ -3,6 +3,13 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.4.1] - 2026-09-30
+
+### Gecorrigeerd
+- Watergift: teeltkleur per plantweek. Elke teelt heeft nu in al zijn vakken
+  dezelfde kleur, en opeenvolgende teelten in een vak verschillen altijd (de
+  kleur wordt per plantweek gekozen, niet meer per vak verschoven).
+
 ## [2.4.0] - 2026-09-30
 
 ### Toegevoegd

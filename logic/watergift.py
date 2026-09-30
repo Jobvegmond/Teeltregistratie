@@ -98,21 +98,40 @@ def markering(teelt, dag, vandaag=None):
     return uit
 
 
-def kleuren(teelten_vak, aantal=4):
+def kleuren(teelten, aantal=4):
     """
-    Geeft elke teelt van één vak een kleur 0..aantal-1 in "kleur": volgens de
-    plantweek, zodat alle vakken van dezelfde teelt dezelfde kleur hebben. Krijgt
-    een teelt dezelfde kleur als de vorige in dit vak (plantweken precies een
-    veelvoud van `aantal` uit elkaar), dan schuift hij één kleur op, zodat
-    opeenvolgende teelten in een vak altijd te onderscheiden zijn.
+    Geeft elke teelt een kleur 0..aantal-1 in "kleur", per plantweek: alle
+    vakken van dezelfde teelt krijgen dezelfde kleur. teelten = {vak: [teelt]}.
+
+    De plantweken krijgen op volgorde (oud → nieuw) een kleur die
+    1. anders is dan die van de vorige teelt in elk van zijn vakken (zo zijn
+       opeenvolgende teelten in een vak altijd te onderscheiden);
+    2. zo mogelijk ook anders is dan die van de plantweek ervoor (buurvakken);
+    3. het langst niet gebruikt is, zodat de kleuren gelijkmatig rouleren.
     """
-    vorige = None
-    for t in sorted(teelten_vak, key=lambda t: t["start"]):
-        kleur = t["start"].isocalendar()[1] % aantal
-        if kleur == vorige:
-            kleur = (kleur + 1) % aantal
-        t["kleur"] = vorige = kleur
-    return teelten_vak
+    def week(t):
+        return t["start"].isocalendar()[:2]
+
+    voorgangers = {}
+    for lijst in teelten.values():
+        volgorde = sorted((t for t in lijst if t["start"]), key=lambda t: t["start"])
+        for vorige, volgende in zip(volgorde, volgorde[1:]):
+            if week(vorige) != week(volgende):
+                voorgangers.setdefault(week(volgende), set()).add(week(vorige))
+    kleur_van, laatst_gebruikt = {}, {k: -1 for k in range(aantal)}
+    weken = sorted({week(t) for lijst in teelten.values() for t in lijst if t["start"]})
+    for i, w in enumerate(weken):
+        verboden = {kleur_van[v] for v in voorgangers.get(w, ()) if v in kleur_van}
+        buur = kleur_van.get(weken[i - 1]) if i else None
+        kandidaten = [k for k in range(aantal) if k not in verboden and k != buur] or \
+                     [k for k in range(aantal) if k not in verboden] or list(range(aantal))
+        kleur_van[w] = min(kandidaten, key=lambda k: (laatst_gebruikt[k], k))
+        laatst_gebruikt[kleur_van[w]] = i
+    for lijst in teelten.values():
+        for t in lijst:
+            if t["start"]:
+                t["kleur"] = kleur_van[week(t)]
+    return teelten
 
 
 def laatste_eind(teelten, met_concepten=False):
