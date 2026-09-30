@@ -569,6 +569,8 @@ def init_db():
 
         # EC en pH van de gift per watersysteem per dag (Priva; integrations/priva_water.py).
         cursor.execute(WATER_KWALITEIT_TABEL)
+        # EC van het uitgangswater (voorregeling), sinds versie 2.4.0.
+        cursor.execute("ALTER TABLE water_kwaliteit_dag ADD COLUMN IF NOT EXISTS ec_aanvoer REAL")
         # Gewasbescherming, biologie en voeding: nu nog leeg, later gevuld via
         # integrations/behandelingen/. De pagina Watergift leest ze al.
         cursor.execute("""
@@ -1379,6 +1381,7 @@ WATER_KWALITEIT_TABEL = """
         ec_gem REAL, ec_min REAL, ec_max REAL,
         ph_gem REAL, ph_min REAL, ph_max REAL,
         ec_doel REAL, ph_doel REAL,
+        ec_aanvoer REAL,
         recept INTEGER,
         metingen INTEGER,
         bron TEXT NOT NULL DEFAULT 'priva',
@@ -1387,7 +1390,7 @@ WATER_KWALITEIT_TABEL = """
     )
 """
 WATER_KWALITEIT_KOLOMMEN = ("tuin_id", "watersysteem", "datum", "ec_gem", "ec_min", "ec_max", "ph_gem", "ph_min",
-                            "ph_max", "ec_doel", "ph_doel", "recept", "metingen", "bron")
+                            "ph_max", "ec_doel", "ph_doel", "ec_aanvoer", "recept", "metingen", "bron")
 # Opnieuw ophalen overschrijft dezelfde dag: de laatste ophaling heeft de volledigste dag.
 WATER_KWALITEIT_UPSERT = (
     f"INSERT INTO water_kwaliteit_dag ({', '.join(WATER_KWALITEIT_KOLOMMEN)}) "
@@ -1473,7 +1476,7 @@ def get_watergift_overzicht(tuin_id, van, tot):
     Alles voor de pagina Watergift van één tuin over van..tot, in vier query's
     (nooit per vak of dag), als lijsten van dicts:
     - gift: vaknummer, datum, liter_per_m2, bron, beurten
-    - kwaliteit: watersysteem, datum, ec_gem, ph_gem, ec_min, ec_max, ph_min, ph_max, ec_doel, recept
+    - kwaliteit: watersysteem, datum, ec_gem, ph_gem, ec_min, ec_max, ph_min, ph_max, ec_doel, ec_aanvoer, recept
     - behandelingen: vaknummer, datum, code, naam, type, dosering, eenheid, methode
     - eerste_emmer: {teelt_id: eerste oogstdag}
     `van` mag vroeg liggen (bijv. de plantdag van de oudste lopende teelt) voor de totalen per teelt.
@@ -1490,7 +1493,7 @@ def get_watergift_overzicht(tuin_id, van, tot):
         """, (tuin_id, str(van), str(tot)))
         gift = rijen(cursor)
         cursor.execute("""
-            SELECT watersysteem, datum, ec_gem, ph_gem, ec_min, ec_max, ph_min, ph_max, ec_doel, recept
+            SELECT watersysteem, datum, ec_gem, ph_gem, ec_min, ec_max, ph_min, ph_max, ec_doel, ec_aanvoer, recept
             FROM water_kwaliteit_dag WHERE tuin_id = %s AND datum BETWEEN %s AND %s
         """, (tuin_id, str(van), str(tot)))
         kwaliteit = rijen(cursor)

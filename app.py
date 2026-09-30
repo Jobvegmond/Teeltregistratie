@@ -2798,6 +2798,18 @@ def _wg_matrix_gegevens(tuin, vakken_df, teelten, gift, kwaliteit, behandelingen
                            "buiten": bool(status), "tip": tip})
         kw_rijen.append({"label": f"{label} · watersysteem 1", "cellen": cellen})
 
+    # Uitgangswater (voorregeling) en wat er aan meststoffen bij komt (EC gift − EC uitgangswater).
+    for label, uitleg in (("EC uitgangswater", "gemeten EC van het water vóór bemesting (voorregeling)"),
+                          ("EC meststoffen", "EC gift − EC uitgangswater: wat er aan meststoffen bij komt")):
+        cellen = []
+        for d in dagen_lijst:
+            k = kw_dag.get(d) or {}
+            waarde = wg.ec_meststoffen(k) if label == "EC meststoffen" else k.get("ec_aanvoer")
+            cellen.append({"waarde": fmt_getal(waarde, 2) if waarde is not None else "", "buiten": False,
+                           "tip": f"{DAGEN_KORT_WG[d.weekday()]} {format_datum(d)} · {label}\n{uitleg}"
+                                  + (f"\n{fmt_getal(waarde, 2)} mS/cm" if waarde is not None else "\ngeen meting")})
+        kw_rijen.append({"label": label, "cellen": cellen})
+
     maximum = max([r["liter_per_m2"] or 0 for (v, d), r in gift_dag.items() if dagen_lijst[0] <= d <= dagen_lijst[-1]]
                   or [0])
     afd_rijen, excel = [], []
@@ -2851,11 +2863,12 @@ def _wg_matrix_gegevens(tuin, vakken_df, teelten, gift, kwaliteit, behandelingen
         afd_rijen.append({"naam": f"Afd. {afdeling}", "vakken": vak_rijen})
 
     excel_kw = []
-    for label, sleutel in (("EC (mS/cm)", "ec_gem"), ("pH", "ph_gem")):
+    for label, sleutel in (("EC (mS/cm)", "ec_gem"), ("pH", "ph_gem"), ("EC uitgangswater", "ec_aanvoer"),
+                           ("EC meststoffen", None)):
         rij = {"Afd.": None, "Vak": label, "Plantweek": "", "Leeftijd": "", "Totaal teelt (l/m²)": None}
         for d in dagen_lijst:
-            k = kw_dag.get(d)
-            rij[format_datum(d)] = k.get(sleutel) if k else None
+            k = kw_dag.get(d) or {}
+            rij[format_datum(d)] = wg.ec_meststoffen(k) if sleutel is None else k.get(sleutel)
         excel_kw.append(rij)
     return ({"dagen": dagen_lijst, "vandaag": vandaag, "maximum": maximum, "toon_behandelingen": toon_beh,
              "kwaliteit": kw_rijen, "afdelingen": afd_rijen}, pd.DataFrame(excel_kw + excel))
@@ -2876,6 +2889,10 @@ def _wg_dag_venster(tuin, dag, gift, kwaliteit, vakken_df):
                 {"label": "EC min–max", "waarde": f"{fmt_getal(k['ec_min'], 2)}–{fmt_getal(k['ec_max'], 2)}"
                  if k["ec_min"] is not None else LEEG},
                 {"label": "EC ingesteld", "waarde": fmt_getal(k["ec_doel"], 2) if k["ec_doel"] is not None else LEEG},
+                {"label": "EC uitgangswater", "waarde": fmt_getal(k["ec_aanvoer"], 2) if k["ec_aanvoer"] is not None
+                 else LEEG, "help": "Gemeten EC van het water vóór bemesting (voorregeling)."},
+                {"label": "EC meststoffen", "waarde": fmt_getal(wg.ec_meststoffen(k), 2)
+                 if wg.ec_meststoffen(k) is not None else LEEG, "help": "EC gift − EC uitgangswater."},
                 {"label": "pH gemiddeld", "waarde": fmt_getal(k["ph_gem"], 2) if k["ph_gem"] is not None else LEEG},
                 {"label": "pH min–max", "waarde": f"{fmt_getal(k['ph_min'], 2)}–{fmt_getal(k['ph_max'], 2)}"
                  if k["ph_min"] is not None else LEEG},

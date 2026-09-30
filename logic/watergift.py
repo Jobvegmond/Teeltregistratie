@@ -154,6 +154,13 @@ def samenvatting(gift, vakken_afd, m2, bezet, van, tot):
             "laatste": max(giftdagen) if giftdagen else None}
 
 
+def ec_meststoffen(kwaliteit):
+    """Wat er aan meststoffen bij komt: EC van de gift min de EC van het uitgangswater, of None."""
+    if kwaliteit.get("ec_gem") is None or kwaliteit.get("ec_aanvoer") is None:
+        return None
+    return round(kwaliteit["ec_gem"] - kwaliteit["ec_aanvoer"], 2)
+
+
 def gemiddelde(waarden):
     waarden = [w for w in waarden if w is not None]
     return sum(waarden) / len(waarden) if waarden else None

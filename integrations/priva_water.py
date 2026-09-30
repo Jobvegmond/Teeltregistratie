@@ -5,8 +5,9 @@ Watergift en waterkwaliteit uit de Priva Horti API, in één verzoek per tuin.
   (kraan = vak). Daggift = de toename over de dag; een gietbeurt = een reeks
   toenames zonder pauze langer dan BEURT_PAUZE.
 - EC en pH per watersysteem: gemeten (EC_BOX.GEM_EC, PH_BOX.GEM_PH) en
-  ingesteld (DOS_EC_CTL.REGEL_EC, DOS_PH_CTL.REGEL_PH), plus het actieve
-  recept. De EC/pH per kraan (KRAAN.GEMID_EC/PH) is in Priva een kopie van het
+  ingesteld (DOS_EC_CTL.REGEL_EC, DOS_PH_CTL.REGEL_PH), het actieve recept en
+  de gemeten EC van het uitgangswater (voorregeling, EC_M_SENSOR.GEM_EC); het
+  verschil met de gift-EC is wat er aan meststoffen bij komt. De EC/pH per kraan (KRAAN.GEMID_EC/PH) is in Priva een kopie van het
   watersysteem, dus die halen we niet apart op. Daggemiddelde = tijdgewogen
   over de metingen (Priva logt bij verandering), elke meting telt tot de
   volgende maar hooguit MAX_GEWICHT, zodat een stilstand 's nachts het
@@ -27,12 +28,13 @@ STAART_PH = "000000005752"         # PH_BOX.GEM_PH        gemeten pH
 STAART_EC_DOEL = "000000005667"    # DOS_EC_CTL.REGEL_EC  berekende (ingestelde) EC
 STAART_PH_DOEL = "000000005669"    # DOS_PH_CTL.REGEL_PH  berekende (ingestelde) pH
 STAART_RECEPT = "00000000579a"     # WATDIS.RECEPT_NR     actief recept
+STAART_EC_AANVOER = "0000000056ae"  # EC_M_SENSOR.GEM_EC  gemeten EC van het uitgangswater (voorregeling)
 GEEN_RECEPT = 32767                # Priva: geen recept actief
 BEURT_PAUZE = timedelta(minutes=10)
 MAX_GEWICHT = timedelta(minutes=10)
 
 GROOTHEDEN = {STAART_EC: "ec", STAART_PH: "ph", STAART_EC_DOEL: "ec_doel", STAART_PH_DOEL: "ph_doel",
-              STAART_RECEPT: "recept"}
+              STAART_RECEPT: "recept", STAART_EC_AANVOER: "ec_aanvoer"}
 
 
 def watersysteem_variabele(systeem, staart):
@@ -122,6 +124,7 @@ def kwaliteit_rijen(reeksen, systeem, vanaf, tot):
     # De ingestelde waarde staat op 0 zolang er niet gedoseerd wordt; die tellen niet mee.
     ec_doel = tijdgewogen_per_dag([(t, w) for t, w in reeksen.get("ec_doel", []) if w > 0])
     ph_doel = tijdgewogen_per_dag([(t, w) for t, w in reeksen.get("ph_doel", []) if w > 0])
+    aanvoer = tijdgewogen_per_dag([(t, w) for t, w in reeksen.get("ec_aanvoer", []) if w > 0])
     recept = recept_per_dag(reeksen.get("recept", []))
     rijen = []
     for dag in sorted(set(ec) | set(ph)):
@@ -136,6 +139,7 @@ def kwaliteit_rijen(reeksen, systeem, vanaf, tot):
             "ph_max": p["max"] if p else None,
             "ec_doel": round(ec_doel[dag]["gem"], 2) if dag in ec_doel else None,
             "ph_doel": round(ph_doel[dag]["gem"], 2) if dag in ph_doel else None,
+            "ec_aanvoer": round(aanvoer[dag]["gem"], 3) if dag in aanvoer else None,
             "recept": recept.get(dag), "metingen": (e["n"] if e else 0) + (p["n"] if p else 0),
         })
     return rijen

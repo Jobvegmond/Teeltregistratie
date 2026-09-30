@@ -113,6 +113,10 @@ class TestMatrixLogica(unittest.TestCase):
         uit = wg.samenvatting(gift, [1, 2], {1: 550, 2: 550}, bezet, date(2026, 9, 28), date(2026, 9, 29))
         self.assertEqual((uit["gift_per_dag"], uit["giftdagen"], uit["laatste"]), (2.0, 1, date(2026, 9, 28)))
 
+    def test_ec_meststoffen(self):
+        self.assertEqual(wg.ec_meststoffen({"ec_gem": 1.41, "ec_aanvoer": 0.12}), 1.29)
+        self.assertIsNone(wg.ec_meststoffen({"ec_gem": 1.41, "ec_aanvoer": None}))
+
     def test_band(self):
         self.assertEqual(wg.band_status(1.1, (1.2, 1.7)), "laag")
         self.assertEqual(wg.band_status(1.8, (1.2, 1.7)), "hoog")

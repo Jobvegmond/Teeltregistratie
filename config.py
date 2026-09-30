@@ -46,12 +46,10 @@ OPMERKING_CATEGORIEEN = ("Groei", "Ziekte/plagen", "Water", "Klimaat", "Overig")
 # {tuinnummer: {watersysteem: vaknummers}}; None = alle vakken van die tuin.
 # Tuin 1 heeft ook een watersysteem 2, maar dat wordt niet gebruikt.
 WATERSYSTEMEN = {1: {1: None}, 3: {1: None}}
-# Band voor EC (mS/cm) en pH van de gift, per tuin: daarbuiten wordt een waarde
-# gemarkeerd. Startwaarden op basis van de eerste Priva-dagen (27–29-09-26:
-# tuin 3 EC 1,37–1,42 / pH 5,96–6,18; tuin 1 EC 1,55–1,82 / pH 5,29–5,90);
-# bijstellen zodra er een paar weken historie is.
-EC_BAND = {1: (1.3, 2.0), 3: (1.2, 1.7)}
-PH_BAND = {1: (5.2, 6.3), 3: (5.5, 6.5)}
+# Band voor EC (mS/cm) en pH van de gift, per tuin: daarbuiten wordt een
+# daggemiddelde rood in de matrix (opgegeven door Job, 30-09-26).
+EC_BAND = {1: (1.0, 2.0), 3: (1.0, 2.0)}
+PH_BAND = {1: (4.8, 6.0), 3: (4.8, 6.0)}
 
 # --- VERSIE ---
 # Staat rechtsboven in de app. Ophogen bij elke wijziging op main (zie CHANGELOG.md):
