@@ -9,6 +9,11 @@ inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 - Watergift: teeltkleur per plantweek. Elke teelt heeft nu in al zijn vakken
   dezelfde kleur, en opeenvolgende teelten in een vak verschillen altijd (de
   kleur wordt per plantweek gekozen, niet meer per vak verschoven).
+- Watergift: kruis bij het aanwijzen weer weg (maakte de pagina traag).
+
+### Toegevoegd
+- Watergift: verwachte Florgib (teeltmodel) als open paarse ring, zolang er
+  nog geen Florgib geregistreerd is.
 
 ## [2.4.0] - 2026-09-30
 

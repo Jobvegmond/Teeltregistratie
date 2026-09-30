@@ -78,7 +78,9 @@ def teelt_op_dag(teelten_vak, dag, vandaag):
 def markering(teelt, dag, vandaag=None):
     """
     Wat er die dag in de teelt gebeurt, als deelverzameling van {"plant",
-    "florgib", "oogst", "oogst_verwacht"}, of None als het vak leeg is.
+    "florgib", "florgib_verwacht", "oogst", "oogst_verwacht"}, of None als het
+    vak leeg is. florgib_verwacht: de dag waarop het teeltmodel de Florgib
+    verwacht, zolang er nog geen Florgib geregistreerd is.
     - oogst: van de eerste emmer t/m de oogstdatum (nog niet afgerond: t/m vandaag);
     - oogst_verwacht: de verwachte oogstdag van een teelt die nog niet geoogst wordt.
     """
@@ -89,6 +91,8 @@ def markering(teelt, dag, vandaag=None):
         uit.add("plant")
     if teelt["florgib"] and dag == teelt["florgib"]:
         uit.add("florgib")
+    elif not teelt["florgib"] and teelt.get("florgib_verwacht") and dag == teelt["florgib_verwacht"]:
+        uit.add("florgib_verwacht")
     begin_oogst = teelt.get("eerste_emmer") or teelt["oogst"]
     eind_oogst = teelt["oogst"] or vandaag
     if begin_oogst and eind_oogst and begin_oogst <= dag <= eind_oogst:

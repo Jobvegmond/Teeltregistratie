@@ -119,6 +119,13 @@ class TestMatrixLogica(unittest.TestCase):
         # buurweken verschillen (wk 23 en 24)
         self.assertNotEqual(teelten[1][0]["kleur"], teelten[2][0]["kleur"])
 
+    def test_verwachte_florgib(self):
+        t = {"start": date(2026, 9, 1), "florgib": None, "florgib_verwacht": date(2026, 10, 5), "oogst": None,
+             "eerste_emmer": None}
+        self.assertEqual(wg.markering(t, date(2026, 10, 5), self.VANDAAG), {"florgib_verwacht"})
+        t["florgib"] = date(2026, 10, 3)                                   # geregistreerd: dan geen verwachting meer
+        self.assertEqual(wg.markering(t, date(2026, 10, 5), self.VANDAAG), set())
+
     def test_watergift_som_per_teelt(self):
         gift = {date(2026, 9, 27): 5.0, date(2026, 9, 28): 3.0, date(2026, 9, 29): None, date(2026, 9, 30): 2.5}
         self.assertEqual(wg.totaal_sinds_planten(gift, date(2026, 9, 28), self.VANDAAG), 5.5)

@@ -54,10 +54,7 @@ table.wg td.vandaag { position: relative; }
 table.wg td.vandaag::before { content: ""; position: absolute; inset: 0; pointer-events: none;
     background: rgba(46,106,76,0.16); border-left: 1px solid rgba(46,106,76,0.55);
     border-right: 1px solid rgba(46,106,76,0.55); }
-/* Kruis bij het aanwijzen: twee doorzichtige balken die alleen verschuiven (soepel, ook bij 3 maanden). */
-.wg-kruis { position: absolute; pointer-events: none; background: rgba(46,106,76,0.13); z-index: 1; display: none; }
-table.wg thead th.hl { background: #2E6A4C; color: #fff; }
-table.wg td.vak.hl { background: #2E6A4C; color: #fff; }
+
 table.wg thead th.vandaag { color: #fff; background: #2E6A4C; border-radius: 4px 4px 0 0; }
 table.wg tr.afdgrens td { border-top: 3px solid rgba(128,128,128,0.55); }
 table.wg tr.kw td.l { text-align: left; padding-left: 6px; font-weight: 600; }
@@ -65,7 +62,9 @@ table.wg tr.kw td { font-size: 11px; }
 table.wg tr.kw td.buiten { color: #d64541; font-weight: 700; }
 table.wg tr.beh td { height: 12px; font-size: 9px; border-bottom: 1px solid rgba(128,128,128,0.2); }
 table.wg tr.beh span { display: inline-block; padding: 0 2px; border-radius: 3px; color: #fff; margin: 0 1px; }
-table.wg td.florgib { position: relative; }
+table.wg td.florgib, table.wg td.florgib-v { position: relative; }
+table.wg td.florgib-v::after { content: ""; position: absolute; top: 2px; right: 2px; width: 6px; height: 6px;
+                                border-radius: 50%; border: 1.5px solid #8e44ad; box-sizing: border-box; }
 table.wg td.florgib::after { content: ""; position: absolute; top: 2px; right: 2px; width: 6px; height: 6px;
                               border-radius: 50%; background: #8e44ad; }
 .wg-legenda { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 11px; margin: 6px 2px 0; opacity: 0.85; }
@@ -95,44 +94,6 @@ export default function(component) {
         } else if (scroll) {
             scroll.scrollLeft = links;
         }
-    }
-    const scroll = houder.querySelector('.wg-scroll');
-    const tabel = scroll && scroll.querySelector('table.wg');
-    if (tabel && !scroll.querySelector('.wg-kruis')) {
-        const kol = document.createElement('div');
-        const rij = document.createElement('div');
-        kol.className = rij.className = 'wg-kruis';
-        scroll.appendChild(kol);
-        scroll.appendChild(rij);
-        const kop = tabel.querySelector('thead tr.dg');
-        const dagen = kop.cells.length - 4;
-        let oudKop = null, oudVak = null;
-        const wis = () => {
-            kol.style.display = rij.style.display = 'none';
-            if (oudKop) oudKop.classList.remove('hl');
-            if (oudVak) oudVak.classList.remove('hl');
-            oudKop = oudVak = null;
-        };
-        tabel.addEventListener('mouseover', (e) => {
-            const td = e.target.closest('tbody td');
-            if (!td || td.classList.contains('l')) { wis(); return; }
-            const tr = td.parentElement;
-            const dag = td.cellIndex - (tr.cells.length - dagen);
-            const th = kop.cells[4 + dag];
-            kol.style.left = (tabel.offsetLeft + td.offsetLeft) + 'px';
-            kol.style.width = td.offsetWidth + 'px';
-            kol.style.top = tabel.offsetTop + 'px';
-            kol.style.height = tabel.offsetHeight + 'px';
-            rij.style.left = tabel.offsetLeft + 'px';
-            rij.style.width = tabel.offsetWidth + 'px';
-            rij.style.top = (tabel.offsetTop + tr.offsetTop) + 'px';
-            rij.style.height = tr.offsetHeight + 'px';
-            kol.style.display = rij.style.display = 'block';
-            const vak = tr.querySelector('td.vak');
-            if (oudKop !== th) { if (oudKop) oudKop.classList.remove('hl'); if (th) th.classList.add('hl'); oudKop = th; }
-            if (oudVak !== vak) { if (oudVak) oudVak.classList.remove('hl'); if (vak) vak.classList.add('hl'); oudVak = vak; }
-        });
-        tabel.addEventListener('mouseleave', wis);
     }
     houder.onclick = (e) => {
         const el = e.target.closest('[data-klik]');
@@ -240,6 +201,8 @@ def bouw_html(m):
                 klas = ["c"]
                 if c.get("markering") and "florgib" in c["markering"]:
                     klas.append("florgib")
+                elif c.get("markering") and "florgib_verwacht" in c["markering"]:
+                    klas.append("florgib-v")
                 regel += (f'<td class="{dagklasse(d, " ".join(klas))}" style="{_celstijl(c, m["maximum"])}"'
                           f'{klik} title="{escape(c["tip"])}">{_getal(c.get("liter") or None)}</td>')
             rijen.append(f'<tr class="afdgrens">{regel}</tr>' if i == 0 else f"<tr>{regel}</tr>")
@@ -261,6 +224,8 @@ def bouw_html(m):
         '<span><i style="border:1px solid rgba(128,128,128,.3)"></i>vak leeg</span>'
         '<span><i style="box-shadow:inset 3px 0 0 #2E6A4C;border:1px solid rgba(128,128,128,.3)"></i>plantdag</span>'
         '<span><i style="border-radius:50%;width:8px;height:8px;background:#8e44ad"></i>Florgib</span>'
+        '<span><i style="border-radius:50%;width:8px;height:8px;border:1.5px solid #8e44ad;box-sizing:border-box">'
+        '</i>verwachte Florgib</span>'
         f'<span><i style="background:{OOGST}"></i>oogst</span>'
         f'<span><i style="background:{OOGST_VERWACHT}"></i>verwachte oogst</span>'
         '<span><i style="background:#2E6A4C"></i>vandaag</span>'

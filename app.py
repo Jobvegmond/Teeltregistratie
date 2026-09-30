@@ -2734,10 +2734,12 @@ def _wg_teelten(data, tuin_id, eerste_emmer, stook):
             continue
         start, oogst = vs.als_datum(t["datum_teelt_start"]), vs.als_datum(t["datum_oogst"])
         verwacht = None
+        u = stook.get(int(t["id"])) or {}
         if not oogst and start:
-            verwacht = (stook.get(int(t["id"])) or {}).get("prognose") or bereken_verwachte_oogstdatum(start)[1]
+            verwacht = u.get("prognose") or bereken_verwachte_oogstdatum(start)[1]
         uit.setdefault(int(t["vaknummer"]), []).append({
             "id": int(t["id"]), "code": t["code"], "start": start, "florgib": vs.als_datum(t["datum_half"]),
+            "florgib_verwacht": u.get("florgib_verwacht"),
             "oogst": oogst, "verwacht_oogst": verwacht, "concept": False,
             "eerste_emmer": vs.als_datum(eerste_emmer.get(int(t["id"])))})
     # Concept-planningen alleen voor de eerstvolgende week (t/m zondag volgende week): verder vooruit is
@@ -2845,7 +2847,8 @@ def _wg_matrix_gegevens(tuin, vakken_df, teelten, gift, kwaliteit, behandelingen
                         regels.append(ec_ph)
                 if teelt:
                     soort = "concept-planning" if teelt["concept"] else f"teelt {teelt['code'] or '-'}"
-                    extra = [t for t, zit in (("plantdag", "plant"), ("Florgib", "florgib"), ("oogst", "oogst"),
+                    extra = [t for t, zit in (("plantdag", "plant"), ("Florgib", "florgib"),
+                                              ("verwachte Florgib", "florgib_verwacht"), ("oogst", "oogst"),
                                               ("verwachte oogst", "oogst_verwacht")) if mark and zit in mark]
                     regels.append(soort + f" · plantweek {teelt['start'].isocalendar()[1]}"
                                   + (f" · {', '.join(extra)}" if extra else ""))
@@ -4142,7 +4145,7 @@ def _pagina_help_1():
     **Watergift**
     - Per vak per dag de watergift (l/m²), met bovenaan EC en pH van het watersysteem. Blauw = water
       (donkerder = meer). Elke teelt heeft een eigen achtergrondkleur; groene streep links = plantdag,
-      paarse stip = Florgib, oranje = oogst (licht oranje = verwachte oogst), gearceerd = concept-planning
+      paarse stip = Florgib (open ring = verwacht), oranje = oogst (licht oranje = verwachte oogst), gearceerd = concept-planning
       (alleen t/m volgende week), wit = vak leeg. Met Vooruitkijken loopt de matrix door t/m de verwachte oogst van de laatste lopende of
       bevestigde teelt.
     - Links per vak de plantweek, leeftijd en de totale watergift van de lopende teelt.
