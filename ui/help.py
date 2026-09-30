@@ -38,7 +38,7 @@ def uitleg_inhoud(wat=None, lezen=None, bron=None, kleuren=None):
 
 def uitleg(wat=None, lezen=None, bron=None, kleuren=None, plek=None):
     """De knop "Uitleg" met de popover; `plek` = de container waarin de knop staat (standaard de pagina)."""
-    with (plek or st).popover("Uitleg", icon=":material/help:", width="content"):
+    with (plek or st).popover("Uitleg", icon=":material/help:", width=112):
         with st.container(width=560):
             uitleg_inhoud(wat, lezen, bron, kleuren)
 

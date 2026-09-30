@@ -105,3 +105,13 @@ def kort_label(sleutel, periode_naam, soort):
     if periode_naam == "Maand":
         return MAANDNAMEN_KORT[ander[1] - 1]
     return f"K{ander[1]}"
+
+
+def reeks(van, tot, periode_naam):
+    """Alle perioden (sleutels, laag → hoog) van de periode van `van` t/m die van `tot`."""
+    sleutel, eind = periode_sleutel(van, periode_naam)[0], periode_sleutel(tot, periode_naam)[0]
+    uit = [sleutel]
+    while sleutel < eind:
+        sleutel = verschuif(sleutel, periode_naam, 1)
+        uit.append(sleutel)
+    return uit

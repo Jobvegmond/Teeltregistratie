@@ -41,6 +41,11 @@ class TestPerioden(unittest.TestCase):
         self.assertEqual(p.kort_label((2026, 1), "Maand", "vorige"), "dec")
         self.assertEqual(p.kort_label((2026, 1), "Kwartaal", "vorige"), "K4")
 
+    def test_reeks(self):
+        self.assertEqual(p.reeks(date(2026, 8, 20), date(2026, 10, 2), "Maand"), [(2026, 8), (2026, 9), (2026, 10)])
+        self.assertEqual(p.reeks(date(2025, 12, 27), date(2026, 1, 4), "Week"), [(2025, 52), (2026, 1), (2026, 2)])
+        self.assertEqual(p.reeks(date(2026, 5, 1), date(2026, 5, 2), "Jaar"), [(2026,)])
+
     def test_week_53_bestaat_niet_elk_jaar(self):
         # 2026 heeft week 53; 2025 niet: dan de laatste week van 2025.
         self.assertEqual(p.vergelijk_venster((2026, 53), "Week", "vorig_jaar", date(2027, 2, 1))[:2],
