@@ -3,7 +3,15 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
-## [2.5.0] - 2026-09-30
+## [2.5.1] - 2026-09-30
+
+### Gewijzigd
+- Teeltvergelijking: **Stelen per m²** vervangen door totalen: **Geplant**
+  (planten, onder Vakken) en **Geoogste stelen** (emmers × 100, anders
+  geplant × (1 − uitval); ⏳ = met de emmers tot nu van lopende vakken).
+  In de vakkentabel de kolommen Planten en Geoogst (st).
+
+ - 2026-09-30
 
 Eén UI-standaard voor de hele app (docs/ui-standaard.md): overal dezelfde
 paginaopbouw, hetzelfde element per soort keuze en uitleg op één manier.
