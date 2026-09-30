@@ -69,7 +69,9 @@ class TestMatrixLogica(unittest.TestCase):
         self.assertEqual(wg.markering(wg.teelt_op_dag(self.TEELTEN, date(2026, 8, 31), self.VANDAAG),
                                       date(2026, 8, 31)), {"florgib"})
         self.assertEqual(wg.markering(wg.teelt_op_dag(self.TEELTEN, date(2026, 9, 23), self.VANDAAG),
-                                      date(2026, 9, 23)), {"oogst"})
+                                      date(2026, 9, 23)), set())                    # alleen de laatste oogstdag
+        self.assertEqual(wg.markering(wg.teelt_op_dag(self.TEELTEN, date(2026, 9, 25), self.VANDAAG),
+                                      date(2026, 9, 25)), {"oogst"})
         self.assertIsNone(wg.teelt_op_dag(self.TEELTEN, date(2026, 9, 26), self.VANDAAG))   # leeg tussen de teelten
         self.assertEqual(wg.lopende_teelt(self.TEELTEN, self.VANDAAG)["code"], "264005")
 
@@ -99,8 +101,9 @@ class TestMatrixLogica(unittest.TestCase):
 
     def test_oogst_loopt_tot_vandaag_bij_eerste_emmer(self):
         t = {"start": date(2026, 8, 3), "florgib": None, "oogst": None, "eerste_emmer": date(2026, 9, 28),
-             "verwacht_oogst": date(2026, 9, 29)}
-        self.assertEqual(wg.markering(t, date(2026, 9, 30), self.VANDAAG), {"oogst"})
+             "laatste_emmer": date(2026, 9, 29), "verwacht_oogst": date(2026, 9, 29)}
+        self.assertEqual(wg.markering(t, date(2026, 9, 29), self.VANDAAG), {"oogst"})       # laatste emmerdag
+        self.assertEqual(wg.markering(t, date(2026, 9, 30), self.VANDAAG), set())
         self.assertIs(wg.teelt_op_dag([t], date(2026, 9, 30), self.VANDAAG), t)     # loopt door t/m vandaag
 
     def test_rondes_vanaf_startvak(self):

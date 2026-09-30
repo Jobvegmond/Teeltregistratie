@@ -81,7 +81,7 @@ def markering(teelt, dag, vandaag=None):
     "florgib", "florgib_verwacht", "oogst", "oogst_verwacht"}, of None als het
     vak leeg is. florgib_verwacht: de dag waarop het teeltmodel de Florgib
     verwacht, zolang er nog geen Florgib geregistreerd is.
-    - oogst: van de eerste emmer t/m de oogstdatum (nog niet afgerond: t/m vandaag);
+    - oogst: de laatste oogstdag (oogstdatum; nog niet afgerond: de laatste emmerdag);
     - oogst_verwacht: de verwachte oogstdag van een teelt die nog niet geoogst wordt.
     """
     if teelt is None:
@@ -93,9 +93,8 @@ def markering(teelt, dag, vandaag=None):
         uit.add("florgib")
     elif not teelt["florgib"] and teelt.get("florgib_verwacht") and dag == teelt["florgib_verwacht"]:
         uit.add("florgib_verwacht")
-    begin_oogst = teelt.get("eerste_emmer") or teelt["oogst"]
-    eind_oogst = teelt["oogst"] or vandaag
-    if begin_oogst and eind_oogst and begin_oogst <= dag <= eind_oogst:
+    # Alleen de laatste oogstdag: de oogstdatum, of zolang het vak niet is afgerond de laatste emmerdag.
+    if dag == (teelt["oogst"] or teelt.get("laatste_emmer")):
         uit.add("oogst")
     elif not teelt["oogst"] and not teelt.get("eerste_emmer") and dag == teelt.get("verwacht_oogst"):
         uit.add("oogst_verwacht")

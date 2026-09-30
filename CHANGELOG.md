@@ -10,6 +10,9 @@ inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
   vak 1; `RONDE_STARTVAK` in config.py): één rustige kleur per ronde (groen,
   lila, grijsblauw), daarbinnen per teelt afwisselend licht en donker.
 - Watergift: kruis bij het aanwijzen weer weg (maakte de pagina traag).
+- Watergift: gift in één vaste blauwe kleur met witte tekst (geen kleurschaal
+  meer); oranje alleen nog op de laatste oogstdag (oogstdatum, of de laatste
+  emmerdag zolang het vak niet is afgerond).
 
 ### Toegevoegd
 - Watergift: verwachte Florgib (teeltmodel) als open paarse ring, zolang er

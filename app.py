@@ -2739,7 +2739,7 @@ def _wg_teelten(data, tuin_id, eerste_emmer, stook):
             verwacht = u.get("prognose") or bereken_verwachte_oogstdatum(start)[1]
         uit.setdefault(int(t["vaknummer"]), []).append({
             "id": int(t["id"]), "code": t["code"], "start": start, "florgib": vs.als_datum(t["datum_half"]),
-            "florgib_verwacht": u.get("florgib_verwacht"),
+            "florgib_verwacht": u.get("florgib_verwacht"), "laatste_emmer": vs.als_datum(t["laatste_emmers"]),
             "oogst": oogst, "verwacht_oogst": verwacht, "concept": False,
             "eerste_emmer": vs.als_datum(eerste_emmer.get(int(t["id"])))})
     # Concept-planningen alleen voor de eerstvolgende week (t/m zondag volgende week): verder vooruit is
@@ -2944,8 +2944,7 @@ def _wg_excel(df, tuin, van, tot):
 
 def _pagina_watergift_1():
     pagina_uitleg((
-        "Per vak per dag de watergift (l/m²), met EC en pH van het watersysteem erboven. Blauw = water (donkerder "
-        "= meer); elke teeltronde (tuin 3 vanaf vak 2, tuin 1 vanaf vak 1) heeft een eigen kleur, per teelt afwisselend licht en donker, oranje = oogst (licht oranje = verwachte oogst), "
+        "Per vak per dag de watergift (l/m²), met EC en pH van het watersysteem erboven. Blauw = watergift; elke teeltronde (tuin 3 vanaf vak 2, tuin 1 vanaf vak 1) heeft een eigen kleur, per teelt afwisselend licht en donker, oranje = laatste oogstdag (licht oranje = verwachte oogst), "
         "gearceerd = concept-planning (alleen t/m volgende week), wit = vak leeg. Met Vooruitkijken loopt de matrix door t/m de verwachte oogst "
         "van de laatste lopende of bevestigde teelt. Beweeg over een cel voor de details, klik op een vak voor het vak en op een "
         "dag voor alles van die dag. EC/pH wordt sinds 27-09-26 uit Priva gehaald; Priva bewaart zelf maar 5 dagen. "
@@ -4144,9 +4143,8 @@ def _pagina_help_1():
       vorig jaar; het pijltje zegt of het beter (groen) of slechter (rood) is.
 
     **Watergift**
-    - Per vak per dag de watergift (l/m²), met bovenaan EC en pH van het watersysteem. Blauw = water
-      (donkerder = meer). Elke teeltronde (tuin 3 vanaf vak 2, tuin 1 vanaf vak 1) heeft een eigen kleur, per teelt licht/donker; groene streep links = plantdag,
-      paarse stip = Florgib (open ring = verwacht), oranje = oogst (licht oranje = verwachte oogst), gearceerd = concept-planning
+    - Per vak per dag de watergift (l/m²), met bovenaan EC en pH van het watersysteem. Blauw = watergift. Elke teeltronde (tuin 3 vanaf vak 2, tuin 1 vanaf vak 1) heeft een eigen kleur, per teelt licht/donker; groene streep links = plantdag,
+      paarse stip = Florgib (open ring = verwacht), oranje = laatste oogstdag (licht oranje = verwachte oogst), gearceerd = concept-planning
       (alleen t/m volgende week), wit = vak leeg. Met Vooruitkijken loopt de matrix door t/m de verwachte oogst van de laatste lopende of
       bevestigde teelt.
     - Links per vak de plantweek, leeftijd en de totale watergift van de lopende teelt.

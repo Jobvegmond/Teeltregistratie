@@ -24,6 +24,7 @@ TEELT_KLEUR = (
     ("rgba(96,125,139,0.09)", "rgba(96,125,139,0.20)"),     # grijsblauw
 )
 OOGST = "rgba(237,161,0,0.85)"
+GIFT = "#5b9bd5"                   # cel met watergift: vaste middenblauwe achtergrond, witte tekst
 OOGST_VERWACHT = "rgba(237,161,0,0.35)"
 
 # Vaste breedtes van de linkerkolommen (px), zodat ze bij zijwaarts scrollen blijven staan.
@@ -120,8 +121,8 @@ def _getal(waarde, decimalen=None):
 
 def _celstijl(cel, maximum):
     """
-    Achtergrond: oogst oranje (verwacht: licht oranje), anders water blauw (licht →
-    donker naar de gift), anders de kleur van de teeltronde (concept: gearceerd),
+    Achtergrond: oogst oranje (verwacht: licht oranje), anders een gift donkerblauw
+    met witte tekst, anders de kleur van de teeltronde (concept: gearceerd),
     en een leeg vak wit. Plantdag = groene streep links.
     """
     stijl = []
@@ -129,10 +130,7 @@ def _celstijl(cel, maximum):
     if marks and "oogst" in marks:
         stijl.append(f"background: {OOGST}")
     elif cel.get("liter"):
-        sterkte = 0.15 + 0.75 * min(1.0, cel["liter"] / maximum) if maximum else 0.5
-        stijl.append(f"background: rgba(42,120,214,{sterkte:.2f})")
-        if sterkte > 0.55:
-            stijl.append("color: #fff")
+        stijl.append(f"background: {GIFT}; color: #fff; font-weight: 600")
     elif marks and "oogst_verwacht" in marks:
         stijl.append(f"background: {OOGST_VERWACHT}")
     elif cel.get("kleur") is not None:
@@ -221,8 +219,7 @@ def bouw_html(m):
 
     legenda = (
         '<div class="wg-legenda">'
-        '<span><i style="background:rgba(42,120,214,0.25)"></i><i style="background:rgba(42,120,214,0.9)">'
-        '</i>gift l/m² (licht → veel)</span>'
+        f'<span><i style="background:{GIFT}"></i>watergift (l/m²)</span>'
         + '<span>' + "".join(f'<i style="background:{licht}"></i><i style="background:{donker}"></i>'
                              for licht, donker in TEELT_KLEUR) + 'teeltronde (licht/donker per teelt)</span>'
         + f'<span><i style="background:repeating-linear-gradient(135deg,{TEELT_KLEUR[0][1]} 0 4px,transparent 4px 8px)">'
@@ -232,7 +229,7 @@ def bouw_html(m):
         '<span><i style="border-radius:50%;width:8px;height:8px;background:#8e44ad"></i>Florgib</span>'
         '<span><i style="border-radius:50%;width:8px;height:8px;border:1.5px solid #8e44ad;box-sizing:border-box">'
         '</i>verwachte Florgib</span>'
-        f'<span><i style="background:{OOGST}"></i>oogst</span>'
+        f'<span><i style="background:{OOGST}"></i>laatste oogstdag</span>'
         f'<span><i style="background:{OOGST_VERWACHT}"></i>verwachte oogst</span>'
         '<span><i style="background:#2E6A4C"></i>vandaag</span>'
         '</div>')
