@@ -41,6 +41,12 @@ AFWIJKING_VENSTER_DAGEN = 14    # "huidige stooklijn" = gemiddelde afwijking van
 # --- OPMERKINGEN PER VAK ---
 OPMERKING_CATEGORIEEN = ("Groei", "Ziekte/plagen", "Water", "Klimaat", "Overig")
 
+# --- WATERGIFT ---
+# Welk Priva-watersysteem het water (en dus de EC/pH) levert, per tuin:
+# {tuinnummer: {watersysteem: vaknummers}}; None = alle vakken van die tuin.
+# Tuin 1 heeft ook een watersysteem 2, maar dat wordt niet gebruikt.
+WATERSYSTEMEN = {1: {1: None}, 3: {1: None}}
+
 # --- VERSIE ---
 # Staat rechtsboven in de app. Ophogen bij elke wijziging op main (zie CHANGELOG.md):
 # derde getal bij een correctie, tweede bij iets nieuws, eerste bij een grote omzetting.
