@@ -24,6 +24,15 @@ CSS = """
 [data-testid="stMain"] [data-testid="stNumberInput"],
 [data-testid="stMain"] [data-testid="stSelectSlider"] { max-width: 360px; }
 [data-testid="stMain"] [data-testid="stTextArea"] { max-width: 720px; }
+/* Paginaopbouw (ui/layout.py): titel met de knop Uitleg ernaast, sectiekoppen, filterbalk. */
+.st-key-vem_paginakop { margin: 0.1rem 0 0.2rem; }
+.vem-paginatitel { font-size: 1.35rem; font-weight: 700; line-height: 1.2; }
+.vem-sectie { font-size: 1rem; font-weight: 600; margin: 0.6rem 0 0.1rem; }
+.vem-sectie span { font-weight: 400; opacity: 0.65; }
+[class*="st-key-filterbalk_"] { flex-wrap: wrap; row-gap: 0.5rem; margin-bottom: 0.4rem; }
+[class*="st-key-filterbalk_"] [data-testid="stCheckbox"] { padding-bottom: 0.45rem; }
+/* ◀ [label ▾] ▶ (ui/filters.bladeraar): het label als vette knop met vaste minimumbreedte. */
+[class*="st-key-bladeraar_"] [data-testid="stPopover"] button { min-width: 9rem; font-weight: 600; }
 .vt-wrap { max-width: 900px; margin: 0.25rem 0 0.4rem; }
 .vt-wrap.vt-breed { max-width: none; overflow-x: auto; }
 table.vt {

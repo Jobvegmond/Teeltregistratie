@@ -116,7 +116,8 @@ from logic import teeltvergelijking as teeltvgl
 from logic import teeltprognose as tp
 from logic.afdelingen import sorteer_afdelingen
 from logic.lichtlijn import formule_tekst, t_ideaal
-from ui import styles, vergelijkingstabel
+from ui import filters, layout, legend, styles, vergelijkingstabel
+from ui import help as uitleg_help
 from ui import watergift_matrix as wg_matrix
 from ui.vergelijkingstabel import Kengetal, verloop_frame
 from config import (
@@ -839,44 +840,46 @@ authenticator.logout("Uitloggen", location="sidebar")
 # het registratieformulier. Zo kun je niet per ongeluk op de verkeerde tuin
 # registreren, en kun je de tuinen wel naast elkaar leggen.
 TUINEN = get_tuinen()
-_standaard_tuin = get_standaard_tuin_van_gebruiker(st.session_state.get("username"))
 if "tuin_nummer" not in st.session_state:
-    st.session_state["tuin_nummer"] = _standaard_tuin
+    st.session_state["tuin_nummer"] = get_standaard_tuin_van_gebruiker(st.session_state.get("username"))
 
 _tuin_labels = {t["nummer"]: t["naam"] for t in TUINEN}
 _tuinnummer_van = {t["id"]: t["nummer"] for t in TUINEN}
 _tuinnaam_van = {t["id"]: t["naam"] for t in TUINEN}
 _tuin_nummers = [t["nummer"] for t in TUINEN]
-# "Beide" toont in Teeltoverzicht de twee tuinen onder elkaar. Wat per tuin
-# werkt (registratie in de zijbalk, Planning, Stek, import) volgt dan de
-# werk-tuin, die je in de zijbalk kiest.
-if "tuin_weergave" not in st.session_state:
-    st.session_state["tuin_weergave"] = st.session_state["tuin_nummer"]
-if len(_tuin_nummers) > 1:
-    _keuze = st.segmented_control(
-        "Tuin", _tuin_nummers + ["beide"], label_visibility="collapsed", key="tuin_keuze",
-        format_func=lambda n: "Beide" if n == "beide" else _tuin_labels.get(n, f"Tuin {n}"),
-        default=st.session_state["tuin_weergave"], width="content",
-    )
-    if _keuze:
-        st.session_state["tuin_weergave"] = _keuze
-        if _keuze != "beide":
-            st.session_state["tuin_nummer"] = _keuze
-TUIN_WEERGAVE = st.session_state["tuin_weergave"]
-if TUIN_WEERGAVE == "beide":
-    _werk = st.sidebar.segmented_control(
-        "Werk-tuin (registratie, Planning, Stek, import)", _tuin_nummers, key="werk_tuin",
-        format_func=lambda n: _tuin_labels.get(n, f"Tuin {n}"), default=st.session_state["tuin_nummer"],
-    )
-    if _werk:
-        st.session_state["tuin_nummer"] = _werk
+# De tuinkeuze staat alleen hier in de kop (ui/filters.tuin). Per pagina: "vrij" = Tuin 1 / Tuin 3 /
+# Beide; "een" = de pagina werkt per tuin (Beide kan niet); "beide" = de pagina gaat altijd over beide
+# tuinen (keuze uitgeschakeld). De registratie in de zijbalk volgt de kop; bij Beide kies je daar een tuin.
+TUIN_MODUS = {
+    "planning": ("een", "Planning werkt per tuin."),
+    "stek": ("een", "Stek werkt per tuin."),
+    "meer": ("een", "Import en prognosekwaliteit werken per tuin."),
+    "tuinvergelijking": ("beide", "Tuin vergelijking zet altijd beide tuinen naast elkaar."),
+}
+_tuin_modus, _tuin_reden = TUIN_MODUS.get(_pagina.url_path, ("vrij", None))
+_tuin_rij = st.container(horizontal=True, vertical_alignment="center", gap="small", key="vem_tuinkeuze")
+TUIN_WEERGAVE, _ = filters.tuin([(t["nummer"], t["naam"]) for t in sorted(TUINEN, key=lambda t: t["nummer"])],
+                                modus=_tuin_modus, reden=_tuin_reden, plek=_tuin_rij)
+if _tuin_modus == "een" and st.session_state["tuin_weergave"] == "beide":
+    _tuin_rij.caption(f"Beide kan hier niet: {_tuin_reden[:-1].lower()}")
+elif _tuin_modus == "beide":
+    _tuin_rij.caption(_tuin_reden)
+if TUIN_WEERGAVE == "beide" and _tuin_modus == "vrij" and len(_tuin_nummers) > 1:
+    # Registreren kan maar in één tuin: bij Beide kies je die bovenaan de registratie.
+    st.session_state["w_tuin_registratie"] = st.session_state["tuin_nummer"]
+
+    def _registratietuin():
+        if st.session_state.get("w_tuin_registratie"):
+            st.session_state["tuin_nummer"] = st.session_state["w_tuin_registratie"]
+
+    st.sidebar.segmented_control("Registreren in", _tuin_nummers, key="w_tuin_registratie",
+                                 on_change=_registratietuin, format_func=lambda n: _tuin_labels.get(n, f"Tuin {n}"))
 
 TUIN_NUMMER = st.session_state["tuin_nummer"]
 TUIN_ID = get_tuin_id(TUIN_NUMMER)
 TUIN_NAAM = _tuin_labels.get(TUIN_NUMMER, f"Tuin {TUIN_NUMMER}")
 # Vanaf hier werken alle databasefuncties zonder expliciete tuin op deze tuin.
 zet_actieve_tuin(TUIN_ID)
-st.sidebar.caption(f"🏡 {TUIN_NAAM}")
 
 
 def huidige_gebruiker():
