@@ -2397,6 +2397,8 @@ TL_KENGETALLEN = [
              verschil=False),
     Kengetal("florgib", "Florgib", "Teelt", uitleg="Eerste en laatste Florgib-datum (app, anders klimaatregistratie).",
              formaat=_tl_tekst, verschil=False),
+    Kengetal("geplant", "Geplant", "Teelt", "st", 0, "Totaal aantal planten in de vakken van de teelt.",
+             n_eenheid="vakken"),
     Kengetal("fase1", "Fase 1 (planten → Florgib)", "Teelt", "d", 0, "Dagen van planten tot de Florgib.",
              n_eenheid="vakken"),
     Kengetal("oogst", "Oogst", "Teelt", uitleg="Eerste en laatste oogstdatum; ⏳ = met de prognose van het teeltmodel (Teeltoverzicht) "
@@ -2419,9 +2421,9 @@ TL_KENGETALLEN = [
              n_eenheid="vakken"),
     Kengetal("water", "Water", "Input (per m²)", "l/m²", 0, "Watergift van het vak van planten tot de oogst.",
              n_eenheid="vakken"),
-    Kengetal("stelen_m2", "Stelen per m²", "Resultaat", "", 1,
-             "Geoogste stelen (emmers × 100, anders geplant × (1 − uitval)) per m² vak. Alleen afgeronde vakken.",
-             n_eenheid="vakken"),
+    Kengetal("geoogst", "Geoogste stelen", "Resultaat", "st", 0,
+             "Totaal geoogste stelen: emmers × 100, anders geplant × (1 − uitval). ⏳ = met lopende vakken "
+             "(de emmers tot nu).", n_eenheid="vakken"),
     Kengetal("uitval", "Uitval", "Resultaat", "%", 1, "Uit de emmers, anders het vastgelegde percentage.",
              n_eenheid="vakken"),
     Kengetal("lengte", "Oogstlengte", "Resultaat", "cm", 1, "Lengte bij de oogst.", n_eenheid="vakken"),
@@ -2440,7 +2442,8 @@ TL_KENGETALLEN = [
 # Kolommen van de vakkentabel: (sleutel, kop, decimalen)
 TL_KOLOMMEN = [("fase1", "Fase 1 (d)", 0), ("fase2", "Fase 2 (d)", 0), ("teeltduur", "Duur (d)", 0),
                ("lichtsom", "Licht/dag", 0), ("temp", "Etmaal °C", 1), ("afwijking", "Afw. lichtlijn", 1),
-               ("warmte", "Warmte MJ/m²", 0), ("water", "Water l/m²", 0), ("stelen_m2", "Stelen/m²", 1),
+               ("warmte", "Warmte MJ/m²", 0), ("water", "Water l/m²", 0), ("geplant", "Planten", 0),
+               ("geoogst", "Geoogst (st)", 0),
                ("uitval", "Uitval %", 1), ("lengte", "Lengte cm", 1), ("gewicht", "Gewicht g", 0),
                ("stek", "Stekcijfer", 0)]
 
@@ -2571,7 +2574,8 @@ def _tl_vakkentabel(groep, vandaag, markeer=()):
     kleuren = pd.DataFrame("", index=df.index, columns=df.columns)
     for sleutel, kop, _ in TL_KOLOMMEN:
         richting = kg.RICHTING.get(sleutel, 0)
-        if not richting:
+        # Totalen (geplant, geoogst) hangen af van de grootte van het vak: niet kleuren.
+        if not richting or sleutel in teeltvgl.SOMMEN:
             continue
         afwijking = teeltvgl.afwijking_van_gemiddelde(groep, sleutel)
         for i, t in enumerate(groep):

@@ -7,7 +7,7 @@ rekenwerk; tests in tests/test_kengetallen.py.
 
 # +1 = hoger is beter, −1 = lager is beter. Wat hier niet staat is neutraal
 # (grijs, geen beste tuin): teeltduur, klimaat, lengtefactor, bezetting.
-RICHTING = {"stelen": 1, "stelen_m2": 1, "gewicht": 1, "lengte": 1,
+RICHTING = {"stelen": 1, "geoogst": 1, "gewicht": 1, "lengte": 1,
             "uitval": -1, "water": -1, "warmte": -1, "gas": -1}
 
 

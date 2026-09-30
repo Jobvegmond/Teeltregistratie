@@ -9,8 +9,10 @@ tests/test_teeltvergelijking.py.
   Loopt de teelt nog, dan kan het venster van vorig jaar worden afgekapt op
   dezelfde teeltdag (teeltdag), zodat je hetzelfde stuk teelt vergelijkt.
 - Lopende vakken tellen mee voor klimaat en input (gemarkeerd ⏳); resultaten
-  die pas bij de oogst bekend zijn (stelen/m², uitval, lengte, gewicht,
-  lengtefactor) alleen van afgeronde vakken.
+  die pas bij de oogst bekend zijn (uitval, lengte, gewicht, lengtefactor)
+  alleen van afgeronde vakken.
+- Geplant en geoogst zijn totalen (planten, stelen) over de vakken, niet per
+  m². Geoogst telt ook de emmers van lopende vakken mee (⏳).
 - Oogstdatum van een lopend vak = de prognose uit het teeltmodel (⏳).
 - Florgib: de datum in de app, anders die uit teelt_historie (klimaatregistratie).
 - Warmte per vak alleen als (vrijwel) elke dag van het venster gemeten is.
@@ -21,11 +23,12 @@ from datetime import date, datetime, timedelta
 from logic.lichtlijn import t_ideaal
 
 KLIMAAT_INPUT = {"lichtsom", "temp", "afwijking", "warmte", "water"}
-ALLEEN_AFGEROND = {"stelen_m2", "uitval", "lengte", "gewicht", "lengte_fg", "lengtefactor"}
+ALLEEN_AFGEROND = {"uitval", "lengte", "gewicht", "lengte_fg", "lengtefactor"}
 MET_PROGNOSE = {"fase2", "teeltduur"}
-NUMERIEK = ["fase1", "fase2", "teeltduur", "lichtsom", "temp", "afwijking", "warmte", "water", "stelen_m2",
+NUMERIEK = ["fase1", "fase2", "teeltduur", "lichtsom", "temp", "afwijking", "warmte", "water",
             "uitval", "lengte", "gewicht", "lengte_fg", "lengtefactor", "stek"]
-SOMMEN = {"aantal", "stek_matig"}
+# Totalen over de vakken (niet gewogen naar m²).
+SOMMEN = {"aantal", "stek_matig", "geplant", "geoogst"}
 STEK_MATIG = {"matig", "slecht"}
 MIN_ENERGIEDEKKING = 0.9
 
@@ -104,7 +107,7 @@ def teelt(k, m2, prognose=None, florgib_historie=None):
         "fase1": (half - start).days if half else None,
         "fase2": (eind - half).days if eind and half else None,
         "teeltduur": (eind - start).days if eind else None,
-        "stelen_m2": stelen / m2 if stelen and m2 else None,
+        "geplant": planten, "geoogst": stelen,
         # Uitval pas als het vak afgerond is: tijdens het oogsten lijkt een vak anders bijna helemaal uitgevallen.
         "uitval": uitval if oogst else None,
         "lengte": lengte, "gewicht": _getal(k.get("oogstgewicht")), "lengte_fg": lengte_fg,
@@ -176,6 +179,12 @@ def samenvatting(vakken):
                 markering.add(sleutel)
     if vakken:
         delen["aantal"] = (float(len(vakken)), 1.0, len(afgerond), None)
+    for sleutel in ("geplant", "geoogst"):
+        rijen = [t for t in vakken if t[sleutel] is not None]
+        if rijen:
+            delen[sleutel] = (float(sum(t[sleutel] for t in rijen)), 1.0, len(rijen), len(vakken))
+    if any(not t["afgerond"] and t["geoogst"] for t in vakken):
+        markering.add("geoogst")
     stek = [t for t in vakken if t["stek_matig"] is not None]
     if stek:
         delen["stek_matig"] = (float(sum(1 for t in stek if t["stek_matig"])), 1.0, len(stek), None)
@@ -210,6 +219,8 @@ def _ontbreekt(sleutel, vakken):
         return "Geen vakken in deze teelt"
     if sleutel in ALLEEN_AFGEROND and not any(t["afgerond"] for t in vakken):
         return "Nog geen afgeronde vakken"
+    if sleutel == "geoogst":
+        return "Nog geen emmers geregistreerd"
     if sleutel == "warmte":
         return "Warmte niet (vrijwel) elke dag van de teelt geregistreerd"
     if sleutel in KLIMAAT_INPUT:

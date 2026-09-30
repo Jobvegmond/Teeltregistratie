@@ -42,7 +42,7 @@ class TestVak(unittest.TestCase):
         self.assertAlmostEqual(t["afwijking"], 19.0 - t_ideaal(800.0))
         self.assertAlmostEqual(t["water"], 2.0 * 51)                 # 03-08 t/m 22-09 = 51 dagen
         self.assertAlmostEqual(t["warmte"], 51.0)
-        self.assertAlmostEqual(t["stelen_m2"], 60.0)
+        self.assertAlmostEqual(t["geoogst"], 30000.0)
         self.assertFalse(t["gedeeltelijk"])
 
     def test_lopend_vak_tot_gisteren_met_prognose_en_florgib_uit_historie(self):
@@ -71,8 +71,20 @@ class TestVak(unittest.TestCase):
 
     def test_stelen_uit_uitval_als_er_geen_emmers_zijn(self):
         t = vak(regel(5, 1, 1, "2026-08-03", oogst="2026-09-22", aantal_planten=50000, uitval_pct=10.0), m2=883.2)
-        self.assertAlmostEqual(t["stelen_m2"], 45000 / 883.2)
-        self.assertIsNone(vak(regel(6, 1, 1, "2026-08-03", oogst="2026-09-22", aantal_planten=50000))["stelen_m2"])
+        self.assertAlmostEqual(t["geoogst"], 45000)
+        self.assertEqual(t["geplant"], 50000)
+        self.assertIsNone(vak(regel(6, 1, 1, "2026-08-03", oogst="2026-09-22", aantal_planten=50000))["geoogst"])
+
+    def test_geplant_en_geoogst_zijn_totalen(self):
+        # Niet gewogen naar m²: gewoon opgeteld. Lopend vak telt mee met de emmers tot nu (⏳).
+        vakken = [vak(regel(10, 3, 1, "2026-08-03", oogst="2026-09-22", aantal_planten=30000, stelen=28000.0)),
+                  vak(regel(11, 3, 2, "2026-08-04", aantal_planten=20000, stelen=5000.0)),
+                  vak(regel(12, 3, 3, "2026-08-04", aantal_planten=20000))]
+        u = tv.tabelwaarden(vakken, [("Tuin 3", 3)])
+        self.assertEqual(u["waarden"]["Tuin 3"]["geplant"], 70000)
+        self.assertEqual(u["waarden"]["Tuin 3"]["geoogst"], 33000)
+        self.assertEqual(u["n"]["Tuin 3"]["geoogst"], 2)
+        self.assertIn("geoogst", u["markering"]["Tuin 3"])
 
 
 class TestSamenvatting(unittest.TestCase):
