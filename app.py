@@ -3661,6 +3661,18 @@ def _stek_mailhtml(rapport, totaal_geplant):
 
 
 def _pagina_stek_1():
+    layout.pagina_kop(
+        "Stek",
+        wat="Per pootweek het geleverde stek per vak, en het weekrapport voor de stekleverancier.",
+        lezen=["Kies de pootweek met ◀ ▶ of klik op het label. Standaard de huidige week; is daar nog niets "
+               "gepoot, dan de laatste week waarin wel.",
+               "Hele week invullen: het stek van een week komt meestal uit één partij. Vul het één keer in; wijkt "
+               "een vak af, pas het dan in de tabel aan en sla op.",
+               "Weekrapport: kopieer de tabel, open de mail (onderwerp en ontvangers staan klaar) en plak hem boven "
+               "je handtekening. Het rapport toont ook wat nog niet is opgeslagen."],
+        bron="Te poten komt uit de teeltregistratie; de stekuitval rekent de app zelf uit (bakjes × 600 stekken). "
+             "De pootweek is de plantweek van het vak (ma t/m zo, zoals de teeltcode).",
+    )
     stekweken = get_stekweken()
     if not stekweken:
         st.info("Er zijn nog geen vakken gestart.")
@@ -3668,24 +3680,18 @@ def _pagina_stek_1():
         vandaag_stek = date.today()
         deze_maandag = vandaag_stek - timedelta(days=vandaag_stek.weekday())
         # Standaard de huidige week; is daar nog niets gepoot, dan de laatste week waarin wel.
-        standaard_stekweek = next((m for m in stekweken if m <= deze_maandag), stekweken[-1])
+        standaard_stekweek = next((m for m in stekweken if m <= deze_maandag), stekweken[-1])  # stekweken: nieuw → oud
 
         def _stekweek_label(maandag):
             jaar_s, week_s = get_isojaar_week(maandag)
-            return (f"Week {week_s} - {jaar_s} "
-                    f"({format_datum(maandag)} t/m {format_datum(maandag + timedelta(days=6))})")
+            return f"Pootweek {week_s} '{str(jaar_s)[2:]} · {format_datum(maandag)} t/m {format_datum(maandag + timedelta(days=6))}"
 
-        stek_maandag = st.selectbox(
-            "Pootweek", stekweken, index=stekweken.index(standaard_stekweek),
-            format_func=_stekweek_label, key="stek_week",
-        )
+        stek_maandag = filters.bladeraar(
+            f"stek_week_t{TUIN_NUMMER}", sorted(stekweken), standaard_stekweek, format_func=_stekweek_label,
+            huidig=deze_maandag if deze_maandag in stekweken else None, plek=layout.filterbalk("stek"),
+            naam="pootweek", breedte=330, spring_label="Spring naar pootweek")
         stek_jaar, stek_week = get_isojaar_week(stek_maandag)
         rijen_stek = get_stek_voor_week(stek_maandag)
-
-        st.caption(
-            "Vul per vak het geleverde stek in. Te poten komt uit de teeltregistratie; "
-            "de uitval rekent de app zelf uit (bakjes × 600 stekken)."
-        )
         # Het stek van een week komt uit dezelfde partij, dus de beoordeling is
         # meestal voor alle vakken gelijk: hier één keer invullen, daarna in de
         # tabel per vak aanpassen als een vak afwijkt.
@@ -3695,7 +3701,7 @@ def _pagina_stek_1():
             return waarden.pop() if len(waarden) == 1 else None
 
         with st.container(border=True, width=760):
-            st.write("**Hele week invullen**")
+            layout.sectie("Hele week invullen")
             kol1, kol2, kol3 = st.columns(3)
             totaal_bakjes = kol1.number_input(
                 "Totaal geleverde bakjes", min_value=0.0, step=0.25, format="%.2f",
@@ -3723,11 +3729,8 @@ def _pagina_stek_1():
                 "Opmerking", value=_gedeeld("opmerking") or "",
                 key=f"stek_week_opmerking_{stek_maandag}",
             )
-            st.caption(
-                f"Vult alle {len(rijen_stek)} vakken van deze week in één keer. "
-                f"'{NIET_WIJZIGEN}' laat staan wat er per vak staat; wijkt een vak af, "
-                "pas het dan in de tabel hieronder aan."
-            )
+            uitleg_help.voetnoot(f"Vult alle {len(rijen_stek)} vakken in één keer; '{NIET_WIJZIGEN}' laat staan "
+                                 "wat er per vak staat.")
             if st.button("📋 Invullen voor alle vakken", key=f"stek_week_vullen_{stek_maandag}",
                          disabled=not rijen_stek):
                 verdeling = (verdeel_bakjes(totaal_bakjes, [r["aantal_planten"] for r in rijen_stek])
@@ -3749,6 +3752,7 @@ def _pagina_stek_1():
                 st.session_state["stek_melding"] = f"Ingevuld voor {len(rijen_stek)} vakken."
                 st.rerun()
 
+        layout.sectie("Stek per vak")
         df_stek = pd.DataFrame(
             [{
                 "Datum": f"{_DAGEN_STEK[date.fromisoformat(r['datum'][:10]).weekday()]} {format_datum(r['datum'])}",
@@ -3817,8 +3821,6 @@ def _pagina_stek_1():
             col_status.warning("Wijzigingen nog niet opgeslagen.")
 
         # Het rapport volgt het invulblad direct, ook vóór het opslaan.
-        st.markdown("---")
-        st.write(f"**📧 Weekrapport voor de stekleverancier — week {stek_week}**")
         # Alles als tekst, al in de Nederlandse schrijfwijze: deze tabel gaat
         # één op één de mail in, dus wat hier staat is wat de leverancier ziet.
         _uitval_stek = [
@@ -3843,10 +3845,11 @@ def _pagina_stek_1():
             "Totaal beoordeling": [_stek_getal(v) for v in bewerkt_stek["Beoordeling"]],
             "Opmerkingen": [(_leeg_naar_none(v) or "") for v in bewerkt_stek["Opmerking"]],
         }, columns=STEK_RAPPORT_KOLOMMEN)
-        toon_tabel(rapport_stek, [
-            (k, k, "tekst", None, "large" if k == "Opmerkingen" else "small")
-            for k in STEK_RAPPORT_KOLOMMEN
-        ])
+        with layout.uitklap(f"Weekrapport voor de stekleverancier (week {stek_week})"):
+            toon_tabel(rapport_stek, [
+                (k, k, "tekst", None, "large" if k == "Opmerkingen" else "small")
+                for k in STEK_RAPPORT_KOLOMMEN
+            ])
 
         excel_buffer = io.BytesIO()
         with pd.ExcelWriter(excel_buffer, engine="openpyxl") as schrijver:
@@ -3860,29 +3863,7 @@ def _pagina_stek_1():
         totaal_geplant = sum(v for v in bewerkt_stek["Te poten"] if pd.notna(v))
         mailhtml_stek = _stek_mailhtml(rapport_stek, totaal_geplant)
 
-        col_kopie, col_mail, col_excel = st.columns([2, 2, 2])
-        with col_kopie:
-            kopieerknop(mailhtml_stek, "📋 Kopieer de tabel")
-        col_mail.link_button(
-            "✉️ Mail opstellen",
-            f"mailto:{urllib.parse.quote(leverancier_email)}"
-            f"?cc={urllib.parse.quote(leverancier_cc)}"
-            f"&subject={urllib.parse.quote(onderwerp_stek)}",
-        )
-        col_excel.download_button(
-            "⬇️ Excel", excel_buffer.getvalue(),
-            file_name=f"Stekresultaten week {stek_week:02d}-{stek_jaar}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            key="stek_download",
-        )
-        st.caption(
-            f"Kopieer de tabel, open de mail — onderwerp *{onderwerp_stek}*, ontvangers staan klaar — "
-            "en plak hem boven je handtekening. Totaal geplant: "
-            f"{_stek_getal(totaal_geplant)}."
-        )
-        if niet_opgeslagen:
-            st.caption("Let op: het rapport toont ook wat nog niet is opgeslagen.")
-        with st.expander("⚙️ Ontvangers van de mail"):
+        with layout.uitklap("Ontvangers van de mail"):
             nieuw_email = st.text_input(
                 "Aan (meerdere adressen scheiden met een komma)", value=leverancier_email,
                 key="stek_email_invoer",
@@ -3896,6 +3877,21 @@ def _pagina_stek_1():
                     set_instelling("stek_leverancier_cc", nieuw_cc.strip() or None,
                                    gebruiker=huidige_gebruiker())
                 st.rerun()
+
+        # Export: tabel kopiëren (voor in de mail), mail opstellen, Excel.
+        with st.container(horizontal=True, vertical_alignment="center", gap="small"):
+            with st.container(width=190):
+                kopieerknop(mailhtml_stek, "📋 Kopieer de tabel")
+            st.link_button(
+                "✉️ Mail opstellen",
+                f"mailto:{urllib.parse.quote(leverancier_email)}"
+                f"?cc={urllib.parse.quote(leverancier_cc)}"
+                f"&subject={urllib.parse.quote(onderwerp_stek)}",
+            )
+            layout.export(excel_buffer.getvalue(), f"Stekresultaten week {stek_week:02d}-{stek_jaar}.xlsx",
+                          sleutel="stek_download")
+        uitleg_help.voetnoot(f"Onderwerp: {onderwerp_stek} · totaal geplant {_stek_getal(totaal_geplant)}"
+                             + (" · let op: ook wat nog niet is opgeslagen" if niet_opgeslagen else ""))
 
 
 # --- DATA IMPORTEREN (onder Meer) ---
