@@ -105,6 +105,7 @@ from logic import perioden
 from logic import planning_editor
 from logic import prognoselog
 from logic import opmerkingen as opm_logic
+from logic import selectie
 from logic import tuinvergelijking as tuinvgl
 from logic import teeltvergelijking as teeltvgl
 from logic import teeltprognose as tp
@@ -930,6 +931,7 @@ def toon_oogstregistraties_beheer(teelt_id, teelt_info):
 st.sidebar.header("Registratie")
 
 FLORGIB, OOGST, OPMERKING, WIJZIGEN = "Florgib lengte", "Oogst", "Opmerking", "Wijzigen of verwijderen"
+WIJZIG_ONDERDELEN = ["Startdatum en planten", "Florgib", "Oogst", "Opmerkingen"]
 actie = st.sidebar.radio("Wat wil je doen?", [FLORGIB, OOGST, OPMERKING, WIJZIGEN])
 
 # Elke actie krijgt een eigen plek in de zijbalk; de plekken van de andere twee
@@ -1135,132 +1137,165 @@ with _paneel[actie].container():
         alle_teelten = get_alle_teelten_voor_selectie()
 
         if alle_teelten:
-            keuzes = {label: teelt_id for teelt_id, label in alle_teelten}
-            geselecteerd_label = st.selectbox(
-                "Vak", list(keuzes.keys()), key="wijzig_selectie"
-            )
-            geselecteerd_id = keuzes[geselecteerd_label]
+            # Kiezen met drie losse velden (vak → week → jaar) in plaats van één
+            # lange lijst; elk veld toont alleen wat bij de eerdere keuze bestaat.
+            # Standaard: de meest recente teelt van het gekozen vak.
+            k_vak, k_week, k_jaar = st.columns([1, 1, 1.3])
+            vak_keuze = k_vak.selectbox("Vak", selectie.vakken(alle_teelten), key="wijzig_vak")
+            recent = selectie.laatste(alle_teelten, vak=vak_keuze)
+            weken_vak = selectie.weken(alle_teelten, vak=vak_keuze)
+            week_keuze = k_week.selectbox("Week", weken_vak, index=weken_vak.index(recent["week"]),
+                                          key=f"wijzig_week_{vak_keuze}")
+            jaren_vak = selectie.jaren(alle_teelten, week_keuze, vak=vak_keuze)
+            jaar_keuze = k_jaar.selectbox("Jaar", jaren_vak, index=len(jaren_vak) - 1,
+                                          key=f"wijzig_jaar_{vak_keuze}_{week_keuze}")
+            passend = selectie.gekozen(alle_teelten, vak=vak_keuze, week=week_keuze, jaar=jaar_keuze)
+            if len(passend) > 1:   # zelden: twee teelten in één vak in dezelfde week
+                passend = [st.selectbox("Code", passend, format_func=lambda t: t["code"] or f"ID{t['id']}",
+                                        key=f"wijzig_dubbel_{vak_keuze}_{week_keuze}_{jaar_keuze}")]
+            geselecteerd_id = passend[0]["id"]
             huidige = get_teelt_by_id(geselecteerd_id)
+            st.caption(f"Vak {huidige['vaknummer']} · {huidige['code'] or '-'} · "
+                       f"{'afgerond' if huidige['datum_oogst'] else 'lopend'}")
 
-            st.caption(f"Vak {huidige['vaknummer']} · {huidige['code'] or '-'}")
-
-            # Het ras staat buiten het formulier, zodat "Ander ras" meteen een
-            # invoerveld toont in plaats van er altijd een te laten staan.
-            rassen = get_rassen()
-            huidig_ras = huidige["ras"] or STANDAARD_RAS
-            if huidig_ras not in rassen:
-                rassen = rassen + [huidig_ras]
-            gekozen_ras = st.selectbox(
-                "Ras", rassen + [ANDER_RAS], index=rassen.index(huidig_ras),
-                key=f"wijzig_ras_{geselecteerd_id}",
-            )
-            if gekozen_ras == ANDER_RAS:
-                gekozen_ras = st.text_input(
-                    "Naam van het ras", key=f"wijzig_ras_nieuw_{geselecteerd_id}"
-                ).strip()
-
-            # Helper om string-datums om te zetten naar date-objecten voor de widgets
             def naar_date(waarde):
+                """String-datum uit de database naar een date voor de invoervelden."""
                 if waarde:
                     return datetime.strptime(waarde, "%Y-%m-%d").date()
                 return None
 
-            with st.form("wijzig_form"):
-                nieuwe_start = st.date_input(
-                    "Startdatum",
-                    value=naar_date(huidige["datum_teelt_start"]) or datetime.today().date(),
-                    format="DD-MM-YYYY"
-                )
-                st.caption(f"Week {get_weeknummer(nieuwe_start)}")
+            def bewaar(**nieuw):
+                """Eén onderdeel wijzigen; de overige velden van de teelt blijven zoals ze waren."""
+                w = {"start": huidige["datum_teelt_start"], "datum_half": huidige["datum_half"],
+                     "lengte_half": huidige["lengte_half"], "florgib_gram": huidige["florgib_gram"],
+                     "datum_oogst": huidige["datum_oogst"], "lengte_eind": huidige["lengte_eind"],
+                     "gewicht": huidige["oogstgewicht"], "rijpheid": huidige["rijpheid"],
+                     "planten": huidige["aantal_planten"]}
+                w.update(nieuw)
+                update_teelt_volledig(
+                    geselecteerd_id, w["start"], w["datum_half"], w["lengte_half"], w["datum_oogst"],
+                    w["lengte_eind"], w["gewicht"], w["rijpheid"], w["planten"], huidige["vaknummer"],
+                    gebruiker=huidige_gebruiker(), florgib_gram=w["florgib_gram"])
 
-                nieuw_aantal_planten = st.number_input(
-                    "Planten", min_value=0, step=1,
-                    value=int(huidige["aantal_planten"]) if huidige["aantal_planten"] else 0
-                )
+            onderdeel = st.selectbox("Wat wil je wijzigen?", WIJZIG_ONDERDELEN, key="wijzig_onderdeel")
 
-                half_ingevuld = st.checkbox("Florgib bekend", value=huidige["datum_half"] is not None)
-                nieuwe_datum_half = st.date_input(
-                    "Datum Florgib",
-                    value=naar_date(huidige["datum_half"]) or datetime.today().date(),
-                    disabled=not half_ingevuld,
-                    format="DD-MM-YYYY"
+            if onderdeel == "Startdatum en planten":
+                # Het ras staat buiten het formulier, zodat "Ander ras" meteen een
+                # invoerveld toont in plaats van er altijd een te laten staan.
+                rassen = get_rassen()
+                huidig_ras = huidige["ras"] or STANDAARD_RAS
+                if huidig_ras not in rassen:
+                    rassen = rassen + [huidig_ras]
+                gekozen_ras = st.selectbox(
+                    "Ras", rassen + [ANDER_RAS], index=rassen.index(huidig_ras),
+                    key=f"wijzig_ras_{geselecteerd_id}",
                 )
-                nieuwe_lengte_half = st.number_input(
-                    "Florgib lengte (cm)",
-                    min_value=0.0, format="%.1f",
-                    value=float(huidige["lengte_half"]) if huidige["lengte_half"] else 0.0,
-                    disabled=not half_ingevuld
-                )
-                nieuw_florgib_gram = st.number_input(
-                    "Florgib (g) per vak",
-                    min_value=0.0, step=0.5, format="%.1f",
-                    value=float(huidige["florgib_gram"]) if huidige["florgib_gram"] else 0.0,
-                    disabled=not half_ingevuld
-                )
-
-                oogst_ingevuld = st.checkbox("Oogst bekend", value=huidige["datum_oogst"] is not None)
-                nieuwe_datum_oogst = st.date_input(
-                    "Oogstdatum",
-                    value=naar_date(huidige["datum_oogst"]) or datetime.today().date(),
-                    disabled=not oogst_ingevuld,
-                    format="DD-MM-YYYY"
-                )
-                nieuwe_lengte_eind = st.number_input(
-                    "Oogstlengte (cm)",
-                    min_value=0.0, format="%.1f",
-                    value=float(huidige["lengte_eind"]) if huidige["lengte_eind"] else 0.0,
-                    disabled=not oogst_ingevuld
-                )
-                nieuw_gewicht = st.number_input(
-                    "Oogstgewicht (g)",
-                    min_value=0, step=1,
-                    value=int(round(huidige["oogstgewicht"])) if huidige["oogstgewicht"] else 0,
-                    disabled=not oogst_ingevuld
-                )
-                nieuwe_rijpheid_bereik = st.select_slider(
-                    "Rijpheid", options=RIJPHEID_OPTIES,
-                    value=rijpheid_tekst_naar_bereik(huidige["rijpheid"]),
-                    help="1 = rauw, 4 = rijp.",
-                    disabled=not oogst_ingevuld
-                )
-
-                opslaan = st.form_submit_button("Opslaan")
-
-                if opslaan:
-                    try:
-                        update_teelt_volledig(
-                            geselecteerd_id,
-                            nieuwe_start,
-                            nieuwe_datum_half if half_ingevuld else None,
-                            nieuwe_lengte_half if half_ingevuld else None,
-                            nieuwe_datum_oogst if oogst_ingevuld else None,
-                            nieuwe_lengte_eind if oogst_ingevuld else None,
-                            nieuw_gewicht if oogst_ingevuld else None,
-                            rijpheid_bereik_naar_tekst(nieuwe_rijpheid_bereik) if oogst_ingevuld else None,
-                            nieuw_aantal_planten if nieuw_aantal_planten else None,
-                            huidige["vaknummer"],
-                            gebruiker=huidige_gebruiker(),
-                            florgib_gram=(nieuw_florgib_gram or None) if half_ingevuld else None,
-                        )
+                if gekozen_ras == ANDER_RAS:
+                    gekozen_ras = st.text_input(
+                        "Naam van het ras", key=f"wijzig_ras_nieuw_{geselecteerd_id}"
+                    ).strip()
+                with st.form(f"wijzig_start_{geselecteerd_id}"):
+                    nieuwe_start = st.date_input(
+                        "Startdatum", value=naar_date(huidige["datum_teelt_start"]) or date.today(),
+                        format="DD-MM-YYYY")
+                    nieuw_aantal_planten = st.number_input(
+                        "Planten", min_value=0, step=1,
+                        value=int(huidige["aantal_planten"]) if huidige["aantal_planten"] else 0)
+                    if st.form_submit_button("Opslaan"):
+                        bewaar(start=nieuwe_start, planten=nieuw_aantal_planten or None)
                         if gekozen_ras and gekozen_ras != huidig_ras:
                             zet_ras(geselecteerd_id, gekozen_ras, gebruiker=huidige_gebruiker())
                         st.success("Opgeslagen.")
                         st.rerun()
-                    except Exception as e:
-                        st.error(str(e))
 
-            # Oogstregistraties (emmers) staan hier ook, zodat je ze ook voor
-            # een afgeronde teelt nog kunt corrigeren.
-            st.markdown("---")
-            st.caption("Oogstmomenten")
-            with st.container():
+            elif onderdeel == "Florgib":
+                with st.form(f"wijzig_florgib_{geselecteerd_id}"):
+                    half_ingevuld = st.checkbox("Florgib bekend", value=huidige["datum_half"] is not None)
+                    nieuwe_datum_half = st.date_input(
+                        "Datum Florgib", value=naar_date(huidige["datum_half"]) or date.today(),
+                        format="DD-MM-YYYY")
+                    nieuwe_lengte_half = st.number_input(
+                        "Florgib lengte (cm)", min_value=0.0, format="%.1f",
+                        value=float(huidige["lengte_half"]) if huidige["lengte_half"] else 0.0)
+                    nieuw_florgib_gram = st.number_input(
+                        "Florgib (g) per vak", min_value=0.0, step=0.5, format="%.1f",
+                        value=float(huidige["florgib_gram"]) if huidige["florgib_gram"] else 0.0)
+                    st.caption("Vink 'Florgib bekend' uit om de Florgib te wissen.")
+                    if st.form_submit_button("Opslaan"):
+                        bewaar(datum_half=nieuwe_datum_half if half_ingevuld else None,
+                               lengte_half=nieuwe_lengte_half if half_ingevuld else None,
+                               florgib_gram=(nieuw_florgib_gram or None) if half_ingevuld else None)
+                        st.success("Opgeslagen.")
+                        st.rerun()
+
+            elif onderdeel == "Oogst":
+                with st.form(f"wijzig_oogst_{geselecteerd_id}"):
+                    oogst_ingevuld = st.checkbox("Oogst bekend (vak afgerond)",
+                                                 value=huidige["datum_oogst"] is not None)
+                    nieuwe_datum_oogst = st.date_input(
+                        "Oogstdatum", value=naar_date(huidige["datum_oogst"]) or date.today(),
+                        format="DD-MM-YYYY")
+                    nieuwe_lengte_eind = st.number_input(
+                        "Oogstlengte (cm)", min_value=0.0, format="%.1f",
+                        value=float(huidige["lengte_eind"]) if huidige["lengte_eind"] else 0.0)
+                    nieuw_gewicht = st.number_input(
+                        "Oogstgewicht (g)", min_value=0, step=1,
+                        value=int(round(huidige["oogstgewicht"])) if huidige["oogstgewicht"] else 0)
+                    nieuwe_rijpheid_bereik = st.select_slider(
+                        "Rijpheid", options=RIJPHEID_OPTIES,
+                        value=rijpheid_tekst_naar_bereik(huidige["rijpheid"]), help="1 = rauw, 4 = rijp.")
+                    st.caption("Vink 'Oogst bekend' uit om het vak weer als lopend te zetten.")
+                    if st.form_submit_button("Opslaan"):
+                        bewaar(datum_oogst=nieuwe_datum_oogst if oogst_ingevuld else None,
+                               lengte_eind=nieuwe_lengte_eind if oogst_ingevuld else None,
+                               gewicht=nieuw_gewicht if oogst_ingevuld else None,
+                               rijpheid=rijpheid_bereik_naar_tekst(nieuwe_rijpheid_bereik) if oogst_ingevuld
+                               else None)
+                        st.success("Opgeslagen.")
+                        st.rerun()
+                # Oogstregistraties (emmers) staan hier ook, zodat je ze ook voor
+                # een afgeronde teelt nog kunt corrigeren.
+                st.caption("Oogstmomenten")
                 toon_oogstregistraties_beheer(geselecteerd_id, huidige)
 
-            # Verwijderen staat buiten het formulier, met expliciete bevestiging
+            elif onderdeel == "Opmerkingen":
+                opmerkingen_vak = {o["id"]: o for o in get_opmerkingen(geselecteerd_id)}
+                if not opmerkingen_vak:
+                    st.caption("Nog geen opmerkingen bij dit vak. Maak er een via Opmerking hierboven.")
+                else:
+                    opm_id = st.selectbox(
+                        "Opmerking", list(opmerkingen_vak), key=f"wijzig_opm_{geselecteerd_id}",
+                        format_func=lambda i: f"{format_datum(opmerkingen_vak[i]['datum'])} · "
+                                              f"{opmerkingen_vak[i]['categorie'] or 'Overig'} · "
+                                              f"{opmerkingen_vak[i]['tekst'][:30]}")
+                    o = opmerkingen_vak[opm_id]
+                    with st.form(f"wijzig_opm_form_{opm_id}"):
+                        opm_datum = st.date_input("Datum", vs.als_datum(o["datum"]), format="DD-MM-YYYY")
+                        opm_categorie = st.selectbox(
+                            "Categorie", OPMERKING_CATEGORIEEN,
+                            index=OPMERKING_CATEGORIEEN.index(o["categorie"])
+                            if o["categorie"] in OPMERKING_CATEGORIEEN else len(OPMERKING_CATEGORIEEN) - 1)
+                        opm_tekst = st.text_area("Opmerking", o["tekst"])
+                        opm_weg = st.checkbox("Deze opmerking verwijderen")
+                        if st.form_submit_button("Opslaan"):
+                            if opm_weg:
+                                verwijder_opmerking(opm_id, gebruiker=huidige_gebruiker())
+                                st.success("Opmerking verwijderd.")
+                                st.rerun()
+                            elif not opm_tekst.strip():
+                                st.warning("Een opmerking kan niet leeg zijn; vink verwijderen aan om hem weg te halen.")
+                            elif (str(opm_datum), opm_categorie, opm_tekst.strip()) != (
+                                    str(vs.als_datum(o["datum"])), o["categorie"], o["tekst"]):
+                                wijzig_opmerking(opm_id, opm_datum, opm_categorie, opm_tekst.strip(),
+                                                 gebruiker=huidige_gebruiker())
+                                st.success("Opmerking opgeslagen.")
+                                st.rerun()
+
+            # Het hele vak verwijderen staat los van de onderdelen, met expliciete bevestiging.
             st.markdown("---")
             bevestig_verwijderen = st.checkbox(
-                "Definitief verwijderen",
-                key="bevestig_verwijderen"
+                "Dit vak (deze teelt) definitief verwijderen",
+                key=f"bevestig_verwijderen_{geselecteerd_id}"
             )
             if st.button("🗑️ Verwijderen", disabled=not bevestig_verwijderen):
                 delete_teelt(geselecteerd_id, gebruiker=huidige_gebruiker())
@@ -2443,8 +2478,8 @@ def _tl_detail_venster(teelt_id, vakken, vandaag):
     _venster()
 
 
-def _tl_vakkentabel(groep, vandaag):
-    """De vakken van de teelt naast elkaar; een klik op een regel opent het vak."""
+def _tl_vakkentabel(groep, vandaag, markeer=()):
+    """De vakken van de teelt naast elkaar; een klik op een regel opent het vak. `markeer`: ids om op te lichten."""
     groep = sorted(groep, key=lambda t: _tv_volgorde(t["tuin_id"], t["afdeling"], t["vak"]))
     rijen = []
     for t in groep:
@@ -2470,6 +2505,11 @@ def _tl_vakkentabel(groep, vandaag):
             if a is not None and abs(a) >= 0.05:
                 beter = a * richting > 0
                 kleuren.loc[i, kop] = f"background-color: {'rgba(46,160,67,0.18)' if beter else 'rgba(214,69,65,0.18)'}"
+
+    for i, t in enumerate(groep):
+        if t["id"] in markeer:
+            for kop in ("Tuin", "Afd.", "Vak", "Code"):
+                kleuren.loc[i, kop] = "background-color: rgba(237,161,0,0.30); font-weight: 600"
 
     def _opmaak(sleutel, decimalen):
         def formatteer(x):
@@ -2512,23 +2552,73 @@ def _pagina_teeltvgl_1():
     if not _tl_lijst:
         st.info("Nog geen vakken.")
     else:
+        # Kiezen met losse velden: tuin, vak, week, jaar. Met een vak erbij toont
+        # de pagina de teelt (plantweek) waar dat vak in zit en markeert het vak.
+        _tl_items = [{"id": t["id"], "tuin_id": t["tuin_id"], "vak": t["vak"],
+                      "jaar": teeltvgl.plantweek(t["start"])[0], "week": teeltvgl.plantweek(t["start"])[1]}
+                     for t in _tl_alle]
+        _tl_tuin_id = {t["nummer"]: t["id"] for t in TUINEN}
+        _tl_tuin_opties = ["beide"] + sorted(_tl_tuin_id)
         if st.session_state.get("tl_week") not in _tl_lijst:
             st.session_state["tl_week"] = teeltvgl.standaard_plantweek(_tl_weken)
+        if st.session_state.get("tl_tuin") not in _tl_tuin_opties:
+            st.session_state["tl_tuin"] = TUIN_WEERGAVE if TUIN_WEERGAVE in _tl_tuin_opties else "beide"
+
+        def _tl_tuin():
+            keuze = st.session_state["tl_tuin"]
+            return None if keuze == "beide" else _tl_tuin_id[keuze]
+
+        def _tl_zet(week):
+            st.session_state.update(tl_week=week, tl_wk=week[1], tl_jaar=week[0])
+
+        def _tl_na_tuin():
+            st.session_state["tl_vak"] = None
+
+        def _tl_na_vak():
+            recent = selectie.laatste(_tl_items, _tl_tuin(), st.session_state["tl_vak"])
+            if recent:
+                _tl_zet((recent["jaar"], recent["week"]))
+
+        def _tl_plantweken():
+            """De plantweken (oud naar nieuw) met vakken in de gekozen tuin."""
+            return sorted({(i["jaar"], i["week"]) for i in selectie.gekozen(_tl_items, _tl_tuin())})
 
         def _tl_blader(stappen):
-            i = _tl_lijst.index(st.session_state["tl_week"]) - stappen   # lijst loopt van nieuw naar oud
-            st.session_state["tl_week"] = _tl_lijst[max(0, min(i, len(_tl_lijst) - 1))]
+            huidig, lijst = st.session_state["tl_week"], _tl_plantweken()
+            verder = [w for w in lijst if (w > huidig if stappen > 0 else w < huidig)]
+            if verder:
+                st.session_state["tl_vak"] = None
+                _tl_zet(verder[0] if stappen > 0 else verder[-1])
 
-        _tl_k1, _tl_k2, _tl_k3 = st.columns([0.35, 3, 0.35], vertical_alignment="bottom")
-        _tl_k1.button("◀", key="tl_terug", on_click=_tl_blader, args=(-1,), help="Vorige teelt",
-                      disabled=st.session_state["tl_week"] == _tl_lijst[-1])
-        _tl_k2.selectbox(
-            "Teelt", _tl_lijst, key="tl_week",
-            format_func=lambda w: f"Teelt wk {w[1]} - {w[0]} · {_vakken_tekst(_tl_weken[w][0])}, "
-                                  f"{_tl_weken[w][1]} afgerond")
-        _tl_k3.button("▶", key="tl_verder", on_click=_tl_blader, args=(1,), help="Volgende teelt",
-                      disabled=st.session_state["tl_week"] == _tl_lijst[0])
+        _tl_k = st.columns([1, 1, 1, 1, 0.35, 0.35], vertical_alignment="bottom")
+        _tl_k[0].selectbox("Tuin", _tl_tuin_opties, key="tl_tuin", on_change=_tl_na_tuin,
+                           format_func=lambda n: "Beide" if n == "beide" else f"Tuin {n}")
+        _tl_vakopties = [None] + selectie.vakken(_tl_items, _tl_tuin())
+        st.session_state["tl_vak"] = selectie.geldig(st.session_state.get("tl_vak"), _tl_vakopties, None)
+        _tl_k[1].selectbox("Vak", _tl_vakopties, key="tl_vak", on_change=_tl_na_vak,
+                           format_func=lambda v: "Alle vakken" if v is None else f"Vak {v}")
+        _tl_weekopties = selectie.weken(_tl_items, _tl_tuin(), st.session_state["tl_vak"])
+        st.session_state["tl_wk"] = selectie.geldig(
+            st.session_state.get("tl_wk"), _tl_weekopties,
+            selectie.geldig(st.session_state["tl_week"][1], _tl_weekopties, _tl_weekopties[-1]))
+        _tl_k[2].selectbox("Week", _tl_weekopties, key="tl_wk", format_func=lambda w: f"wk {w}")
+        _tl_jaaropties = selectie.jaren(_tl_items, st.session_state["tl_wk"], _tl_tuin(), st.session_state["tl_vak"])
+        st.session_state["tl_jaar"] = selectie.geldig(
+            st.session_state.get("tl_jaar"), _tl_jaaropties,
+            selectie.geldig(st.session_state["tl_week"][0], _tl_jaaropties, _tl_jaaropties[-1]))
+        _tl_k[3].selectbox("Jaar", _tl_jaaropties, key="tl_jaar")
+        st.session_state["tl_week"] = (st.session_state["tl_jaar"], st.session_state["tl_wk"])
+        _tl_pw = _tl_plantweken()
+        _tl_k[4].button("◀", key="tl_terug", on_click=_tl_blader, args=(-1,), help="Vorige teelt",
+                        disabled=not _tl_pw or st.session_state["tl_week"] <= _tl_pw[0])
+        _tl_k[5].button("▶", key="tl_verder", on_click=_tl_blader, args=(1,), help="Volgende teelt",
+                        disabled=not _tl_pw or st.session_state["tl_week"] >= _tl_pw[-1])
+        _tl_markeer = {i["id"] for i in selectie.gekozen(
+            _tl_items, _tl_tuin(), st.session_state["tl_vak"], st.session_state["tl_wk"], st.session_state["tl_jaar"])
+        } if st.session_state["tl_vak"] is not None else set()
         _tl_week = st.session_state["tl_week"]
+        st.caption(f"Teelt wk {_tl_week[1]} - {_tl_week[0]} · {_vakken_tekst(_tl_weken[_tl_week][0])}, "
+                   f"{_tl_weken[_tl_week][1]} afgerond (beide tuinen)")
         _tl_vorig = teeltvgl.vorig_jaar(_tl_week)
         _tl_tuinen = [(t["naam"], t["id"]) for t in sorted(TUINEN, key=lambda t: t["nummer"])]
         _tl_groep = [teeltvgl.met_dagdata(t, _tl_dd, _tl_gisteren)
@@ -2567,10 +2657,11 @@ def _pagina_teeltvgl_1():
                 label_toen=f"wk {_tl_vorig[1]} '{str(_tl_vorig[0])[2:]}"),
             sleutel="tl_verloop", verloop=_tl_verloop, verloop_titel="Verloop over 12 plantweken")
 
-        st.write("**Vakken van deze teelt**")
-        _tl_vakkentabel(_tl_groep, _tl_vandaag)
+        _tl_groep_tuin = [t for t in _tl_groep if _tl_tuin() is None or t["tuin_id"] == _tl_tuin()]
+        st.write("**Vakken van deze teelt**" + ("" if _tl_tuin() is None else f" ({_tuinnaam_van[_tl_tuin()]})"))
+        _tl_vakkentabel(_tl_groep_tuin, _tl_vandaag, markeer=_tl_markeer)
 
-        _tl_opm = opm_logic.filter_opmerkingen(_opm_alle(_tl_versie), teelt_ids={t["id"] for t in _tl_groep})
+        _tl_opm = opm_logic.filter_opmerkingen(_opm_alle(_tl_versie), teelt_ids={t["id"] for t in _tl_groep_tuin})
         st.write(f"**Opmerkingen bij deze teelt** ({len(_tl_opm)})" if _tl_opm else "**Opmerkingen bij deze teelt**")
         toon_opmerkingenlijst(_tl_opm, "tl_opm", "Geen opmerkingen bij de vakken van deze teelt.")
 
@@ -3157,7 +3248,7 @@ def _pagina_stek_1():
             waarden = {r[veld] for r in rijen_stek if r[veld] not in (None, "")}
             return waarden.pop() if len(waarden) == 1 else None
 
-        with st.container(border=True):
+        with st.container(border=True, width=760):
             st.write("**Hele week invullen**")
             kol1, kol2, kol3 = st.columns(3)
             totaal_bakjes = kol1.number_input(
@@ -3647,8 +3738,11 @@ def _pagina_help_1():
       "Vak afronden" aan bij de laatste emmers.
     - *Oogst › Lengte en gewicht*: voor vakken die nog niet zijn afgerond. Rijpheid loopt van
       1 (rauw) tot 4 (rijp).
-    - *Wijzigen of verwijderen*: emmers van een afgerond vak corrigeren, of het ras omzetten
-      (elk vak begint als Cameron; een nieuw ras typ je bij "Ander ras").
+    - *Opmerking*: een opmerking bij één of meer lopende vakken (zie Opmerkingen hieronder).
+    - *Wijzigen of verwijderen*: kies het vak met drie velden (vak, week, jaar; standaard de
+      laatste teelt van dat vak) en daarna wat je wilt wijzigen: startdatum, planten en ras;
+      Florgib; oogst en emmers; of opmerkingen. Onderaan kun je het hele vak verwijderen.
+      Elk vak begint als Cameron; een nieuw ras typ je bij "Ander ras".
 
     **Teeltoverzicht** (startpagina)
     - De vakkenmatrix per afdeling, in teeltvolgorde. De kleur van een vak is de prognose:
@@ -3679,6 +3773,9 @@ def _pagina_help_1():
     **Teeltvergelijking**
     - Per teelt (plantweek): bovenaan per tuin samengevat, daaronder de vakken naast elkaar.
       Vergelijking met vorig jaar gebeurt op dezelfde teeltdag.
+    - Kies met tuin, vak, week en jaar. Kies je een vak, dan toont de pagina de teelt waar dat
+      vak in zit en licht het vak op in de lijst. De tuinkeuze bepaalt de vakkenlijst en de
+      opmerkingen; de vergelijkingstabel toont altijd beide tuinen. ◀ ▶ bladert per teelt.
 
     **Tuin vergelijking**
     - Wat er in een week (of maand, kwartaal, jaar) in de kas gebeurde: tuin 1 naast tuin 3 en

@@ -804,28 +804,25 @@ def markeer_teelt_afgerond(teelt_id, datum_oogst, gebruiker=None):
 
 def get_alle_teelten_voor_selectie(tuin_id=None):
     """
-    Geeft ALLE teelten terug (ook afgeronde), met een duidelijk label.
-    Handig voor de 'wijzigen/verwijderen'-selectbox.
-    Retourneert lijst van tuples: (teelt_id, label)
+    ALLE teelten van een tuin (ook afgeronde) voor "Wijzigen of verwijderen",
+    als dicts: id, tuin_id, vak, jaar en week (ISO, van de startdatum), code.
     """
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT t.id, v.vaknummer, t.datum_teelt_start, t.code
+            SELECT t.id, v.tuin_id, v.vaknummer, t.datum_teelt_start, t.code
             FROM teelten t
             JOIN teeltvakken v ON t.teeltvak_id = v.id
-            WHERE v.tuin_id = %s
+            WHERE v.tuin_id = %s AND t.datum_teelt_start IS NOT NULL
             ORDER BY t.datum_teelt_start, v.vaknummer
         """, (_tuin_of_standaard(tuin_id),))
         rijen = cursor.fetchall()
 
     resultaat = []
-    for teelt_id, vaknummer, start_datum, code in rijen:
-        plantweek = get_weeknummer(start_datum)
-        vak_deel = vaknummer if vaknummer is not None else "?"
-        code_deel = code if code else f"ID{teelt_id}"
-        label = f"Week {plantweek} - Vak {vak_deel} - {code_deel}"
-        resultaat.append((teelt_id, label))
+    for teelt_id, tuin, vaknummer, start_datum, code in rijen:
+        jaar, week = get_isojaar_week(start_datum)
+        resultaat.append({"id": teelt_id, "tuin_id": tuin, "vak": vaknummer, "jaar": jaar, "week": week,
+                          "code": code})
     return resultaat
 
 

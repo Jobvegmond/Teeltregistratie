@@ -14,6 +14,16 @@ import streamlit as st
 ACHTERGROND = {"light": "#ffffff", "dark": "#0e1117"}
 
 CSS = """
+/* Keuze- en invoervelden op het hoofdscherm niet breder dan nodig: op een
+   breed scherm oogt een smal veld strakker. De zijbalk en popups houden hun
+   eigen breedte. */
+[data-testid="stMain"] [data-testid="stSelectbox"],
+[data-testid="stMain"] [data-testid="stMultiSelect"],
+[data-testid="stMain"] [data-testid="stDateInput"],
+[data-testid="stMain"] [data-testid="stTextInput"],
+[data-testid="stMain"] [data-testid="stNumberInput"],
+[data-testid="stMain"] [data-testid="stSelectSlider"] { max-width: 360px; }
+[data-testid="stMain"] [data-testid="stTextArea"] { max-width: 720px; }
 .vt-wrap { max-width: 900px; margin: 0.25rem 0 0.4rem; }
 .vt-wrap.vt-breed { max-width: none; overflow-x: auto; }
 table.vt {
