@@ -3,6 +3,32 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.4.1] - 2026-09-30
+
+### Gecorrigeerd
+- Watergift: teeltkleur per teeltronde (tuin 3 vanaf vak 2, tuin 1 vanaf
+  vak 1; `RONDE_STARTVAK` in config.py): één rustige kleur per ronde (groen,
+  lila, grijsblauw), daarbinnen per teelt afwisselend licht en donker.
+- Watergift: kruis bij het aanwijzen weer weg (maakte de pagina traag).
+- Watergift: gift in één vaste blauwe kleur met witte tekst (geen kleurschaal
+  meer); oranje alleen nog op de laatste oogstdag (oogstdatum, of de laatste
+  emmerdag zolang het vak niet is afgerond).
+
+### Toegevoegd
+- Watergift: verwachte Florgib (teeltmodel) als open paarse ring, zolang er
+  nog geen Florgib geregistreerd is.
+- **EC, pH en flow per gietbeurt**, gerekend zoals Priva (gemiddelde over de
+  beurt; gecontroleerd tegen het kraanoverzicht van 29-09): nieuwe tabel
+  `watergift_beurt`, EC/pH per vak-dag in `watergift_dag` en per dag
+  (`ec_gift`, `ph_gift`) in `water_kwaliteit_dag`, alle gewogen naar de liters.
+  Matrix: EC/pH-regels en tooltips uit de giften; dagpopup met elke gietbeurt.
+- Tabellen ronden getallen nu af in plaats van af te kappen (21,89 → 21,9).
+
+### Gecorrigeerd
+- Watergift: een gietbeurt begint bij de eerste wijziging van de meterstand,
+  niet bij de vorige (tot 12 uur oude) stand; ook de dag van de liters volgt
+  daaruit.
+
 ## [2.4.0] - 2026-09-30
 
 ### Toegevoegd

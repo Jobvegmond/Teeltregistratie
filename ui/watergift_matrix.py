@@ -16,9 +16,15 @@ from utils.format import fmt_getal
 
 DAGEN_KORT = ["ma", "di", "wo", "do", "vr", "za", "zo"]
 TYPE_KLEUR = {"gewasbescherming": "#d64541", "biologie": "#2e9d5b", "voeding": "#8a6d3b"}
-# Achtergrond per teelt (plantweek, zie logic.watergift.kleuren), half doorzichtig voor licht en donker.
-TEELT_KLEUR = ("rgba(76,175,80,0.20)", "rgba(142,68,173,0.17)", "rgba(214,69,120,0.15)", "rgba(0,150,136,0.17)")
+# Achtergrond per teeltronde (logic.watergift.rondes): één kleur per ronde, per teelt om en om een lichte
+# en een donkere tint. Half doorzichtig, zodat het in licht en donker thema werkt.
+TEELT_KLEUR = (
+    ("rgba(76,175,80,0.08)", "rgba(76,175,80,0.18)"),       # groen
+    ("rgba(142,68,173,0.07)", "rgba(142,68,173,0.16)"),     # lila
+    ("rgba(96,125,139,0.09)", "rgba(96,125,139,0.20)"),     # grijsblauw
+)
 OOGST = "rgba(237,161,0,0.85)"
+GIFT = "#5b9bd5"                   # cel met watergift: vaste middenblauwe achtergrond, witte tekst
 OOGST_VERWACHT = "rgba(237,161,0,0.35)"
 
 # Vaste breedtes van de linkerkolommen (px), zodat ze bij zijwaarts scrollen blijven staan.
@@ -54,10 +60,7 @@ table.wg td.vandaag { position: relative; }
 table.wg td.vandaag::before { content: ""; position: absolute; inset: 0; pointer-events: none;
     background: rgba(46,106,76,0.16); border-left: 1px solid rgba(46,106,76,0.55);
     border-right: 1px solid rgba(46,106,76,0.55); }
-/* Kruis bij het aanwijzen: twee doorzichtige balken die alleen verschuiven (soepel, ook bij 3 maanden). */
-.wg-kruis { position: absolute; pointer-events: none; background: rgba(46,106,76,0.13); z-index: 1; display: none; }
-table.wg thead th.hl { background: #2E6A4C; color: #fff; }
-table.wg td.vak.hl { background: #2E6A4C; color: #fff; }
+
 table.wg thead th.vandaag { color: #fff; background: #2E6A4C; border-radius: 4px 4px 0 0; }
 table.wg tr.afdgrens td { border-top: 3px solid rgba(128,128,128,0.55); }
 table.wg tr.kw td.l { text-align: left; padding-left: 6px; font-weight: 600; }
@@ -65,7 +68,9 @@ table.wg tr.kw td { font-size: 11px; }
 table.wg tr.kw td.buiten { color: #d64541; font-weight: 700; }
 table.wg tr.beh td { height: 12px; font-size: 9px; border-bottom: 1px solid rgba(128,128,128,0.2); }
 table.wg tr.beh span { display: inline-block; padding: 0 2px; border-radius: 3px; color: #fff; margin: 0 1px; }
-table.wg td.florgib { position: relative; }
+table.wg td.florgib, table.wg td.florgib-v { position: relative; }
+table.wg td.florgib-v::after { content: ""; position: absolute; top: 2px; right: 2px; width: 6px; height: 6px;
+                                border-radius: 50%; border: 1.5px solid #8e44ad; box-sizing: border-box; }
 table.wg td.florgib::after { content: ""; position: absolute; top: 2px; right: 2px; width: 6px; height: 6px;
                               border-radius: 50%; background: #8e44ad; }
 .wg-legenda { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 11px; margin: 6px 2px 0; opacity: 0.85; }
@@ -96,44 +101,6 @@ export default function(component) {
             scroll.scrollLeft = links;
         }
     }
-    const scroll = houder.querySelector('.wg-scroll');
-    const tabel = scroll && scroll.querySelector('table.wg');
-    if (tabel && !scroll.querySelector('.wg-kruis')) {
-        const kol = document.createElement('div');
-        const rij = document.createElement('div');
-        kol.className = rij.className = 'wg-kruis';
-        scroll.appendChild(kol);
-        scroll.appendChild(rij);
-        const kop = tabel.querySelector('thead tr.dg');
-        const dagen = kop.cells.length - 4;
-        let oudKop = null, oudVak = null;
-        const wis = () => {
-            kol.style.display = rij.style.display = 'none';
-            if (oudKop) oudKop.classList.remove('hl');
-            if (oudVak) oudVak.classList.remove('hl');
-            oudKop = oudVak = null;
-        };
-        tabel.addEventListener('mouseover', (e) => {
-            const td = e.target.closest('tbody td');
-            if (!td || td.classList.contains('l')) { wis(); return; }
-            const tr = td.parentElement;
-            const dag = td.cellIndex - (tr.cells.length - dagen);
-            const th = kop.cells[4 + dag];
-            kol.style.left = (tabel.offsetLeft + td.offsetLeft) + 'px';
-            kol.style.width = td.offsetWidth + 'px';
-            kol.style.top = tabel.offsetTop + 'px';
-            kol.style.height = tabel.offsetHeight + 'px';
-            rij.style.left = tabel.offsetLeft + 'px';
-            rij.style.width = tabel.offsetWidth + 'px';
-            rij.style.top = (tabel.offsetTop + tr.offsetTop) + 'px';
-            rij.style.height = tr.offsetHeight + 'px';
-            kol.style.display = rij.style.display = 'block';
-            const vak = tr.querySelector('td.vak');
-            if (oudKop !== th) { if (oudKop) oudKop.classList.remove('hl'); if (th) th.classList.add('hl'); oudKop = th; }
-            if (oudVak !== vak) { if (oudVak) oudVak.classList.remove('hl'); if (vak) vak.classList.add('hl'); oudVak = vak; }
-        });
-        tabel.addEventListener('mouseleave', wis);
-    }
     houder.onclick = (e) => {
         const el = e.target.closest('[data-klik]');
         if (el) setTriggerValue('klik', el.getAttribute('data-klik'));
@@ -154,8 +121,8 @@ def _getal(waarde, decimalen=None):
 
 def _celstijl(cel, maximum):
     """
-    Achtergrond: oogst oranje (verwacht: licht oranje), anders water blauw (licht →
-    donker naar de gift), anders de kleur van de teeltronde (concept: gearceerd),
+    Achtergrond: oogst oranje (verwacht: licht oranje), anders een gift donkerblauw
+    met witte tekst, anders de kleur van de teeltronde (concept: gearceerd),
     en een leeg vak wit. Plantdag = groene streep links.
     """
     stijl = []
@@ -163,14 +130,11 @@ def _celstijl(cel, maximum):
     if marks and "oogst" in marks:
         stijl.append(f"background: {OOGST}")
     elif cel.get("liter"):
-        sterkte = 0.15 + 0.75 * min(1.0, cel["liter"] / maximum) if maximum else 0.5
-        stijl.append(f"background: rgba(42,120,214,{sterkte:.2f})")
-        if sterkte > 0.55:
-            stijl.append("color: #fff")
+        stijl.append(f"background: {GIFT}; color: #fff; font-weight: 600")
     elif marks and "oogst_verwacht" in marks:
         stijl.append(f"background: {OOGST_VERWACHT}")
     elif cel.get("kleur") is not None:
-        kleur = TEELT_KLEUR[cel["kleur"] % len(TEELT_KLEUR)]
+        kleur = TEELT_KLEUR[cel["kleur"] % len(TEELT_KLEUR)][cel.get("tint", 0)]
         if cel.get("concept"):
             stijl.append(f"background: repeating-linear-gradient(135deg, {kleur} 0 4px, transparent 4px 8px)")
         else:
@@ -240,6 +204,8 @@ def bouw_html(m):
                 klas = ["c"]
                 if c.get("markering") and "florgib" in c["markering"]:
                     klas.append("florgib")
+                elif c.get("markering") and "florgib_verwacht" in c["markering"]:
+                    klas.append("florgib-v")
                 regel += (f'<td class="{dagklasse(d, " ".join(klas))}" style="{_celstijl(c, m["maximum"])}"'
                           f'{klik} title="{escape(c["tip"])}">{_getal(c.get("liter") or None)}</td>')
             rijen.append(f'<tr class="afdgrens">{regel}</tr>' if i == 0 else f"<tr>{regel}</tr>")
@@ -253,15 +219,17 @@ def bouw_html(m):
 
     legenda = (
         '<div class="wg-legenda">'
-        '<span><i style="background:rgba(42,120,214,0.25)"></i><i style="background:rgba(42,120,214,0.9)">'
-        '</i>gift l/m² (licht → veel)</span>'
-        + '<span>' + "".join(f'<i style="background:{k}"></i>' for k in TEELT_KLEUR) + 'teelt (kleur per plantweek)</span>'
-        + f'<span><i style="background:repeating-linear-gradient(135deg,{TEELT_KLEUR[0]} 0 4px,transparent 4px 8px)">'
+        f'<span><i style="background:{GIFT}"></i>watergift (l/m²)</span>'
+        + '<span>' + "".join(f'<i style="background:{licht}"></i><i style="background:{donker}"></i>'
+                             for licht, donker in TEELT_KLEUR) + 'teeltronde (licht/donker per teelt)</span>'
+        + f'<span><i style="background:repeating-linear-gradient(135deg,{TEELT_KLEUR[0][1]} 0 4px,transparent 4px 8px)">'
         '</i>concept-planning</span>'
         '<span><i style="border:1px solid rgba(128,128,128,.3)"></i>vak leeg</span>'
         '<span><i style="box-shadow:inset 3px 0 0 #2E6A4C;border:1px solid rgba(128,128,128,.3)"></i>plantdag</span>'
         '<span><i style="border-radius:50%;width:8px;height:8px;background:#8e44ad"></i>Florgib</span>'
-        f'<span><i style="background:{OOGST}"></i>oogst</span>'
+        '<span><i style="border-radius:50%;width:8px;height:8px;border:1.5px solid #8e44ad;box-sizing:border-box">'
+        '</i>verwachte Florgib</span>'
+        f'<span><i style="background:{OOGST}"></i>laatste oogstdag</span>'
         f'<span><i style="background:{OOGST_VERWACHT}"></i>verwachte oogst</span>'
         '<span><i style="background:#2E6A4C"></i>vandaag</span>'
         '</div>')

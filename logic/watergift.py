@@ -78,8 +78,10 @@ def teelt_op_dag(teelten_vak, dag, vandaag):
 def markering(teelt, dag, vandaag=None):
     """
     Wat er die dag in de teelt gebeurt, als deelverzameling van {"plant",
-    "florgib", "oogst", "oogst_verwacht"}, of None als het vak leeg is.
-    - oogst: van de eerste emmer t/m de oogstdatum (nog niet afgerond: t/m vandaag);
+    "florgib", "florgib_verwacht", "oogst", "oogst_verwacht"}, of None als het
+    vak leeg is. florgib_verwacht: de dag waarop het teeltmodel de Florgib
+    verwacht, zolang er nog geen Florgib geregistreerd is.
+    - oogst: de laatste oogstdag (oogstdatum; nog niet afgerond: de laatste emmerdag);
     - oogst_verwacht: de verwachte oogstdag van een teelt die nog niet geoogst wordt.
     """
     if teelt is None:
@@ -89,30 +91,50 @@ def markering(teelt, dag, vandaag=None):
         uit.add("plant")
     if teelt["florgib"] and dag == teelt["florgib"]:
         uit.add("florgib")
-    begin_oogst = teelt.get("eerste_emmer") or teelt["oogst"]
-    eind_oogst = teelt["oogst"] or vandaag
-    if begin_oogst and eind_oogst and begin_oogst <= dag <= eind_oogst:
+    elif not teelt["florgib"] and teelt.get("florgib_verwacht") and dag == teelt["florgib_verwacht"]:
+        uit.add("florgib_verwacht")
+    # Alleen de laatste oogstdag: de oogstdatum, of zolang het vak niet is afgerond de laatste emmerdag.
+    if dag == (teelt["oogst"] or teelt.get("laatste_emmer")):
         uit.add("oogst")
     elif not teelt["oogst"] and not teelt.get("eerste_emmer") and dag == teelt.get("verwacht_oogst"):
         uit.add("oogst_verwacht")
     return uit
 
 
-def kleuren(teelten_vak, aantal=4):
+def rondes(teelten, startvak, aantal_kleuren=3):
     """
-    Geeft elke teelt van één vak een kleur 0..aantal-1 in "kleur": volgens de
-    plantweek, zodat alle vakken van dezelfde teelt dezelfde kleur hebben. Krijgt
-    een teelt dezelfde kleur als de vorige in dit vak (plantweken precies een
-    veelvoud van `aantal` uit elkaar), dan schuift hij één kleur op, zodat
-    opeenvolgende teelten in een vak altijd te onderscheiden zijn.
+    Deelt de teelten van een tuin in teeltrondes in: een ronde begint bij elke
+    planting van het startvak (tuin 3: vak 2) en loopt daarna de vakken door.
+    Elke teelt krijgt:
+    - "ronde": het rondenummer (0 = vóór de eerste bekende planting van het startvak);
+    - "kleur": ronde % aantal_kleuren, één kleur per ronde;
+    - "tint": 0/1, om en om per teelt (plantweek) binnen de ronde: licht/donker.
+    Valt een teelt op dezelfde dag als een planting van het startvak, dan horen
+    de vakken vlak na het startvak bij de nieuwe ronde en de laatste vakken bij
+    de oude. teelten = {vak: [teelt]}.
     """
-    vorige = None
-    for t in sorted(teelten_vak, key=lambda t: t["start"]):
-        kleur = t["start"].isocalendar()[1] % aantal
-        if kleur == vorige:
-            kleur = (kleur + 1) % aantal
-        t["kleur"] = vorige = kleur
-    return teelten_vak
+    def week(t):
+        return t["start"].isocalendar()[:2]
+
+    starts = sorted(t["start"] for t in teelten.get(startvak, []) if t["start"])
+    helft = max(teelten or [startvak]) // 2
+    per_ronde = {}
+    for vak, lijst in teelten.items():
+        for t in lijst:
+            if not t["start"]:
+                continue
+            ronde = sum(1 for d in starts if d < t["start"])
+            if t["start"] in starts and (vak == startvak or 0 < vak - startvak <= helft):
+                ronde += 1
+            t["ronde"] = ronde
+            per_ronde.setdefault(ronde, set()).add(week(t))
+    volgorde = {r: {w: i for i, w in enumerate(sorted(weken))} for r, weken in per_ronde.items()}
+    for lijst in teelten.values():
+        for t in lijst:
+            if t["start"]:
+                t["kleur"] = t["ronde"] % aantal_kleuren
+                t["tint"] = volgorde[t["ronde"]][week(t)] % 2
+    return teelten
 
 
 def laatste_eind(teelten, met_concepten=False):
