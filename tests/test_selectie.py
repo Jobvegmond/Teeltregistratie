@@ -25,6 +25,16 @@ class TestSelectie(unittest.TestCase):
         self.assertEqual(sel.weken(ITEMS, vak=10), [33, 34, 45])     # beide tuinen
         self.assertEqual(sel.weken(ITEMS), [33, 34, 45])
 
+    def test_weken_in_de_tijd(self):
+        items = [item(1, 3, 1, 2025, 50), item(2, 3, 2, 2025, 52), item(3, 3, 3, 2026, 1), item(4, 3, 4, 2026, 2),
+                 item(5, 3, 5, 2025, 2)]
+        # week 2 kwam ook in 2025 voor, maar telt op zijn laatste keer (2026)
+        self.assertEqual(sel.weken(items), [50, 52, 1, 2])
+
+    def test_vakken_in_week(self):
+        self.assertEqual(sel.vakken(ITEMS, tuin=3, week=33), [10, 11])
+        self.assertEqual(sel.vakken(ITEMS, tuin=3, week=45), [10])
+
     def test_jaren_bij_week(self):
         self.assertEqual(sel.jaren(ITEMS, 33, tuin=3, vak=10), [2025, 2026])
         self.assertEqual(sel.jaren(ITEMS, 45, tuin=3, vak=10), [2026])

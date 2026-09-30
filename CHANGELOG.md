@@ -3,6 +3,41 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.2.0] - 2026-09-30
+
+### Toegevoegd
+- **Versienummer** rechtsboven in de kop (`APP_VERSIE` in `config.py`). Ophogen
+  bij elke wijziging op main: derde getal bij een correctie, tweede bij iets
+  nieuws, eerste bij een grote omzetting.
+- **Nieuwe kop** "Teeltregistratie · Van Egmond Matricaria" met week, datum en
+  versie, en daaronder een eigen navigatiebalk met een knop per pagina (de
+  huidige gevuld groen). De losse paginatitel is weg; de uitleg staat als ⓘ.
+
+### Gewijzigd
+- Wijzigen of verwijderen: kiezen in de volgorde **week → vak → jaar**; weken in
+  de tijd (recentste onderaan).
+- Teeltvergelijking: kiezen met **tuin → week → vak → jaar**, in één compacte rij.
+- Keuzerijen (Teeltvergelijking, Tuin vergelijking, vakkenregister, Opmerkingen)
+  links uitgelijnd met vaste breedtes in plaats van over het hele scherm.
+- Vakkenregister › Afgerond: **laatst geoogst bovenaan**.
+
+## [2.1.0] - 2026-09-30
+
+### Toegevoegd
+- **Opmerkingen per vak** (zijbalk › Opmerking), terug te zien in de vakpopup,
+  op de pagina Opmerkingen (filters op tuin, teelt, vak, periode, categorie,
+  tekst), bij de gekozen teelt (Teeltvergelijking) en periode (Tuin vergelijking).
+- Wijzigen of verwijderen per onderdeel: startdatum en planten (met ras),
+  Florgib, oogst, opmerkingen.
+
+## [2.0.0] - 2026-09-29
+
+### Gewijzigd
+- **Herindeling**: losse pagina's (Planning, Stek, Teeltoverzicht,
+  Teeltvergelijking, Tuin vergelijking, Meer) met eigen adres; Teeltoverzicht =
+  vakkenmatrix + vakkenregister; Planning met één concepttabel.
+- **Prognoselogboek** en Meer › Prognosekwaliteit.
+
 ## [Niet uitgebracht] - 2026-08-28
 
 ### Toegevoegd

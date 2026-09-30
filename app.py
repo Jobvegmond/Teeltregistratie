@@ -115,7 +115,7 @@ from ui import styles, vergelijkingstabel
 from ui.vergelijkingstabel import Kengetal, verloop_frame
 from config import (
     AFDELING_VOLGORDE, AFWIJKING_VENSTER_DAGEN, C_GRENZEN, FLORGIB_ACHTERSTAND_DAGEN,
-    OP_KOERS_MARGE, OPMERKING_CATEGORIEEN,
+    OP_KOERS_MARGE, OPMERKING_CATEGORIEEN, APP_VERSIE,
 )
 
 # --- PAGINA-INSTELLINGEN ---
@@ -218,14 +218,33 @@ st.markdown("""
     [class*="st-key-nu_rij_"] { grid-template-columns: minmax(0, 1fr); margin-top: 0.5rem; }
 }
 
-/* Compacte kop: titel links, week + datum rechts, altijd op één regel. */
+/* Kop: naam van de app en het bedrijf links, week, datum en versie rechts. */
 .vem-kop {
-    display: flex; justify-content: space-between; align-items: baseline;
-    gap: 0.75rem; margin: 0 0 0.75rem 0; padding-bottom: 0.4rem;
-    border-bottom: 1px solid rgba(128, 128, 128, 0.25);
+    display: flex; justify-content: space-between; align-items: center; gap: 1rem;
+    margin: 0 0 0.6rem 0; padding: 0.9rem 1.3rem; border-radius: 12px;
+    background: linear-gradient(100deg, #2E6A4C 0%, #3d8761 100%); color: #fff;
 }
-.vem-titel { font-size: 1.15rem; font-weight: 600; }
-.vem-week { font-size: 0.85rem; opacity: 0.7; white-space: nowrap; }
+.vem-merk { display: flex; flex-direction: column; line-height: 1.2; }
+.vem-titel { font-size: 1.45rem; font-weight: 700; letter-spacing: 0.01em; }
+.vem-bedrijf { font-size: 0.9rem; opacity: 0.85; }
+.vem-meta { display: flex; flex-direction: column; align-items: flex-end; line-height: 1.35; white-space: nowrap; }
+.vem-week { font-size: 0.9rem; font-weight: 600; }
+.vem-versie { font-size: 0.75rem; opacity: 0.75; }
+@media (max-width: 700px) { .vem-titel { font-size: 1.15rem; } .vem-kop { padding: 0.7rem 0.9rem; } }
+
+/* Navigatiebalk onder de kop: knoppen per pagina, de huidige gevuld groen. */
+.st-key-vem_nav {
+    gap: 0.3rem; flex-wrap: wrap; margin-bottom: 0.4rem; padding-bottom: 0.45rem;
+    border-bottom: 2px solid rgba(46, 106, 76, 0.25);
+}
+.st-key-vem_nav [data-testid="stPageLink"] a {
+    padding: 0.3rem 0.95rem; border-radius: 999px; border: 1px solid rgba(46, 106, 76, 0.35);
+    background: transparent;
+}
+.st-key-vem_nav [data-testid="stPageLink"] a:hover { background: rgba(46, 106, 76, 0.10); }
+.st-key-vem_nav_actief [data-testid="stPageLink"] a { background: #2E6A4C; border-color: #2E6A4C; }
+.st-key-vem_nav_actief [data-testid="stPageLink"] a,
+.st-key-vem_nav_actief [data-testid="stPageLink"] a * { color: #fff !important; }
 
 /* Minder lege ruimte boven de inhoud; nog wel onder de vaste Streamlit-balk (3.75rem). */
 [data-testid="stMainBlockContainer"], .block-container { padding-top: 3.75rem !important; }
@@ -744,10 +763,13 @@ _DAGEN_KORT = ["ma", "di", "wo", "do", "vr", "za", "zo"]
 _vandaag_kop = date.today()
 st.markdown(
     '<div class="vem-kop">'
-    '<span class="vem-titel">🌱 Teeltregistratie</span>'
+    '<div class="vem-merk"><span class="vem-titel">Teeltregistratie</span>'
+    '<span class="vem-bedrijf">Van Egmond Matricaria</span></div>'
+    '<div class="vem-meta">'
     f'<span class="vem-week">Week {_vandaag_kop.isocalendar()[1]} · '
     f'{_DAGEN_KORT[_vandaag_kop.weekday()]} {format_datum(_vandaag_kop)}</span>'
-    '</div>',
+    f'<span class="vem-versie">versie {APP_VERSIE}</span>'
+    '</div></div>',
     unsafe_allow_html=True,
 )
 
@@ -788,7 +810,15 @@ if _auth_status is None:
 # Vanaf hier is de gebruiker ingelogd. De navigatie staat vóór alles wat een
 # st.rerun() kan geven (tuinkeuze, zijbalk): een herhaalde run onthoudt dan de
 # gekozen pagina. Uitgevoerd wordt de pagina pas onderaan (_pagina.run()).
-_pagina = st.navigation(_paginas(), position="top")
+# Het menu van Streamlit zelf blijft verborgen; de knoppen staan in een eigen
+# balk onder de kop, met de huidige pagina gevuld.
+_pagina_lijst = _paginas()
+_pagina = st.navigation(_pagina_lijst, position="hidden")
+with st.container(horizontal=True, key="vem_nav"):
+    for _p in _pagina_lijst:
+        with st.container(width="content", key="vem_nav_actief" if _p.title == _pagina.title
+                          else f"vem_nav_{_p.url_path or 'start'}"):
+            st.page_link(_p, label=_p.title)
 st.sidebar.caption(f"👤 Ingelogd als {st.session_state.get('name')}")
 authenticator.logout("Uitloggen", location="sidebar")
 
@@ -813,11 +843,10 @@ _tuin_nummers = [t["nummer"] for t in TUINEN]
 if "tuin_weergave" not in st.session_state:
     st.session_state["tuin_weergave"] = st.session_state["tuin_nummer"]
 if len(_tuin_nummers) > 1:
-    _kolom_tuin, _kolom_leeg = st.columns([2, 5])
-    _keuze = _kolom_tuin.segmented_control(
+    _keuze = st.segmented_control(
         "Tuin", _tuin_nummers + ["beide"], label_visibility="collapsed", key="tuin_keuze",
         format_func=lambda n: "Beide" if n == "beide" else _tuin_labels.get(n, f"Tuin {n}"),
-        default=st.session_state["tuin_weergave"],
+        default=st.session_state["tuin_weergave"], width="content",
     )
     if _keuze:
         st.session_state["tuin_weergave"] = _keuze
@@ -1137,22 +1166,24 @@ with _paneel[actie].container():
         alle_teelten = get_alle_teelten_voor_selectie()
 
         if alle_teelten:
-            # Kiezen met drie losse velden (vak → week → jaar) in plaats van één
+            # Kiezen met drie losse velden (week → vak → jaar) in plaats van één
             # lange lijst; elk veld toont alleen wat bij de eerdere keuze bestaat.
-            # Standaard: de meest recente teelt van het gekozen vak.
-            k_vak, k_week, k_jaar = st.columns([1, 1, 1.3])
-            vak_keuze = k_vak.selectbox("Vak", selectie.vakken(alle_teelten), key="wijzig_vak")
-            recent = selectie.laatste(alle_teelten, vak=vak_keuze)
-            weken_vak = selectie.weken(alle_teelten, vak=vak_keuze)
-            week_keuze = k_week.selectbox("Week", weken_vak, index=weken_vak.index(recent["week"]),
-                                          key=f"wijzig_week_{vak_keuze}")
+            # Weken in de tijd (recentste onderaan); standaard de week van de
+            # laatst gestarte teelt, en bij een week het meest recente jaar.
+            k_week, k_vak, k_jaar = st.columns([1, 1, 1.3])
+            weken_alle = selectie.weken(alle_teelten)
+            recent = selectie.laatste(alle_teelten)
+            week_keuze = k_week.selectbox("Week", weken_alle, index=weken_alle.index(recent["week"]),
+                                          key="wijzig_week")
+            vakken_week = selectie.vakken(alle_teelten, week=week_keuze)
+            vak_keuze = k_vak.selectbox("Vak", vakken_week, key=f"wijzig_vak_{week_keuze}")
             jaren_vak = selectie.jaren(alle_teelten, week_keuze, vak=vak_keuze)
             jaar_keuze = k_jaar.selectbox("Jaar", jaren_vak, index=len(jaren_vak) - 1,
-                                          key=f"wijzig_jaar_{vak_keuze}_{week_keuze}")
+                                          key=f"wijzig_jaar_{week_keuze}_{vak_keuze}")
             passend = selectie.gekozen(alle_teelten, vak=vak_keuze, week=week_keuze, jaar=jaar_keuze)
             if len(passend) > 1:   # zelden: twee teelten in één vak in dezelfde week
                 passend = [st.selectbox("Code", passend, format_func=lambda t: t["code"] or f"ID{t['id']}",
-                                        key=f"wijzig_dubbel_{vak_keuze}_{week_keuze}_{jaar_keuze}")]
+                                        key=f"wijzig_dubbel_{week_keuze}_{vak_keuze}_{jaar_keuze}")]
             geselecteerd_id = passend[0]["id"]
             huidige = get_teelt_by_id(geselecteerd_id)
             st.caption(f"Vak {huidige['vaknummer']} · {huidige['code'] or '-'} · "
@@ -1611,6 +1642,11 @@ def _nu_klimaat_doel(s, klimaat):
                   "die kalenderweek, tot de plandatum." if u and u["c"] is not None else ""))
 
 
+def pagina_uitleg(tekst):
+    """Uitleg bij een pagina als ⓘ; de naam van de pagina staat al in de navigatiebalk."""
+    st.caption("Uitleg bij deze pagina", help=tekst)
+
+
 def toon_opmerkingen(teelt_id):
     """Opmerkingen van één vak in de vakpopup, oud naar nieuw, elk te wijzigen of te verwijderen."""
     opmerkingen = get_opmerkingen(teelt_id)
@@ -1687,7 +1723,7 @@ def toon_opmerkingenlijst(rijen, sleutel, leeg="Geen opmerkingen."):
 
 
 def _pagina_opmerkingen_1():
-    st.subheader("Opmerkingen", help=(
+    pagina_uitleg((
         "Alle opmerkingen bij vakken. Filter op tuin, teelt (plantweek), vak, periode, categorie of een woord "
         "uit de tekst. Klik op een regel om het vak te openen; daar kun je een opmerking ook wijzigen. "
         "Nieuwe opmerkingen maak je via Opmerking in de zijbalk."))
@@ -1702,17 +1738,16 @@ def _pagina_opmerkingen_1():
     eerste = min(opm_logic._datum(o["datum"]) for o in alle)
     laatste = max(max(opm_logic._datum(o["datum"]) for o in alle), date.today())
 
-    k1, k2, k3 = st.columns(3)
-    tuin_namen = k1.multiselect("Tuin", [t["naam"] for t in tuinen], default=standaard_tuinen,
-                                key=f"opm_tuin_{TUIN_WEERGAVE}")
-    gekozen_teelten = k2.multiselect("Teelt (plantweek)", teelten, format_func=_teelt_label, key="opm_teelt",
-                                     placeholder="Alle teelten")
-    gekozen_vakken = k3.multiselect("Vak", vakken, key="opm_vak", placeholder="Alle vakken")
-    k4, k5, k6 = st.columns(3)
-    periode = k4.date_input("Periode", (eerste, laatste), format="DD-MM-YYYY", key="opm_periode")
-    categorieen = k5.multiselect("Categorie", OPMERKING_CATEGORIEEN, key="opm_categorie",
-                                 placeholder="Alle categorieën")
-    zoek = k6.text_input("Zoeken", key="opm_zoek", placeholder="Woord uit de tekst of code")
+    rij = st.container(horizontal=True, vertical_alignment="bottom", gap="small")
+    tuin_namen = rij.multiselect("Tuin", [t["naam"] for t in tuinen], default=standaard_tuinen,
+                                 key=f"opm_tuin_{TUIN_WEERGAVE}", width=220)
+    gekozen_teelten = rij.multiselect("Teelt (plantweek)", teelten, format_func=_teelt_label, key="opm_teelt",
+                                      placeholder="Alle teelten", width=200)
+    gekozen_vakken = rij.multiselect("Vak", vakken, key="opm_vak", placeholder="Alle vakken", width=170)
+    periode = rij.date_input("Periode", (eerste, laatste), format="DD-MM-YYYY", key="opm_periode", width=230)
+    categorieen = rij.multiselect("Categorie", OPMERKING_CATEGORIEEN, key="opm_categorie",
+                                  placeholder="Alle categorieën", width=200)
+    zoek = rij.text_input("Zoeken", key="opm_zoek", placeholder="Woord uit de tekst of code", width=220)
     # Tijdens het kiezen van een periode is er even maar één datum.
     van, tot = (periode + (periode[0],))[:2] if len(periode) else (None, None)
 
@@ -2042,7 +2077,7 @@ def _pagina_overzicht_1():
         "Kleur = prognose t.o.v. plan in dagen: ±1 d op schema, daarna stappen van 2 dagen tot 6 d te vroeg "
         "(donkerblauw) of 7 d te laat (donkerrood)."
     )
-    st.subheader("Teeltoverzicht", help=_nu_uitleg)
+    pagina_uitleg(_nu_uitleg)
     _nu_keuze = TUIN_WEERGAVE
 
     _nu_gegevens, _nu_teeltmodel, _nu_stook, _nu_afwijking = _nu_alles(_nu_vandaag)
@@ -2246,7 +2281,7 @@ def _tv_uitklappers(g, van, tot, periode_naam):
 
 
 def _pagina_tuinvgl_1():
-    st.subheader("Tuin vergelijking", help=(
+    pagina_uitleg((
         "Wat er in een periode in de kas gebeurde: tuin 1 naast tuin 3 en het totaal, alles per m². Het totaal "
         "is gewogen naar m² (niet het gemiddelde van twee tuinen). Een kengetal zonder data toont – (waarom: "
         "beweeg over de cel)."))
@@ -2258,9 +2293,10 @@ def _pagina_tuinvgl_1():
     _tv_g = _tv_gegevens(vakstatus_dataversie())
     _tv_tuinen = [(t["naam"], t["id"]) for t in sorted(TUINEN, key=lambda t: t["nummer"])]
 
-    _tv_k1, _tv_k2, _tv_k3 = st.columns([2.1, 1.5, 2.2])
-    _tv_periode = _tv_k1.segmented_control("Periode", list(perioden.PERIODEN), default="Week", key="tv_periode") \
-        or "Week"
+    # Eén compacte rij, links uitgelijnd: periode · welke (◀ label ▶) · vergelijk met.
+    _tv_rij = st.container(horizontal=True, vertical_alignment="bottom", gap="large")
+    _tv_periode = _tv_rij.segmented_control("Periode", list(perioden.PERIODEN), default="Week", key="tv_periode",
+                                            width="content") or "Week"
     _tv_sleutel_key = f"tv_sleutel_{_tv_periode}"
     if _tv_sleutel_key not in st.session_state:
         st.session_state[_tv_sleutel_key] = perioden.laatste_volledige(_tv_periode, _tv_vandaag)
@@ -2269,16 +2305,16 @@ def _pagina_tuinvgl_1():
     def _tv_blader(stappen, sleutel_key=_tv_sleutel_key, periode=_tv_periode):
         st.session_state[sleutel_key] = perioden.verschuif(st.session_state[sleutel_key], periode, stappen)
 
-    with _tv_k2:
+    with _tv_rij.container(width="content"):
         st.markdown('<div style="font-size:14px;margin-bottom:0.3rem">Welke</div>', unsafe_allow_html=True)
-        _tv_b1, _tv_lbl, _tv_b2 = st.columns([1, 3, 1], vertical_alignment="center")
-        _tv_b1.button("◀", key="tv_terug", on_click=_tv_blader, args=(-1,), help="Vorige periode")
+        _tv_nav = st.container(horizontal=True, vertical_alignment="center", gap="small", width="content")
+        _tv_nav.button("◀", key="tv_terug", on_click=_tv_blader, args=(-1,), help="Vorige periode")
         _tv_sleutel = st.session_state[_tv_sleutel_key]
-        _tv_lbl.markdown(f"**{perioden.periode_label(_tv_sleutel, _tv_periode)}**")
-        _tv_b2.button("▶", key="tv_verder", on_click=_tv_blader, args=(1,), help="Volgende periode",
-                      disabled=_tv_sleutel >= _tv_huidig)
-    _tv_vergelijk = _tv_k3.radio("Vergelijk met", ["vorige periode", "zelfde periode vorig jaar"], index=1,
-                                 horizontal=True, key="tv_vergelijk")
+        _tv_nav.markdown(f"**{perioden.periode_label(_tv_sleutel, _tv_periode)}**", width=150)
+        _tv_nav.button("▶", key="tv_verder", on_click=_tv_blader, args=(1,), help="Volgende periode",
+                       disabled=_tv_sleutel >= _tv_huidig)
+    _tv_vergelijk = _tv_rij.radio("Vergelijk met", ["vorige periode", "zelfde periode vorig jaar"], index=1,
+                                  horizontal=True, key="tv_vergelijk", width="content")
     _tv_soort = "vorige" if _tv_vergelijk == "vorige periode" else "vorig_jaar"
 
     _tv_van, _tv_tot, _tv_loopt = perioden.venster(_tv_sleutel, _tv_periode, _tv_vandaag)
@@ -2539,7 +2575,7 @@ def _tl_vakkentabel(groep, vandaag, markeer=()):
 
 
 def _pagina_teeltvgl_1():
-    st.subheader("Teeltvergelijking", help=(
+    pagina_uitleg((
         "Een teelt = alle vakken uit één plantweek. Bovenaan per tuin samengevat (gewogen naar de m² van het vak), "
         "daaronder de vakken naast elkaar. De kleine regel is dezelfde plantweek vorig jaar."))
     _tl_vandaag = date.today()
@@ -2552,8 +2588,8 @@ def _pagina_teeltvgl_1():
     if not _tl_lijst:
         st.info("Nog geen vakken.")
     else:
-        # Kiezen met losse velden: tuin, vak, week, jaar. Met een vak erbij toont
-        # de pagina de teelt (plantweek) waar dat vak in zit en markeert het vak.
+        # Kiezen met losse velden: tuin, week, vak, jaar. Een gekozen vak licht op
+        # in de vakkenlijst; het vak bepaalt ook welke jaren er te kiezen zijn.
         _tl_items = [{"id": t["id"], "tuin_id": t["tuin_id"], "vak": t["vak"],
                       "jaar": teeltvgl.plantweek(t["start"])[0], "week": teeltvgl.plantweek(t["start"])[1]}
                      for t in _tl_alle]
@@ -2572,12 +2608,7 @@ def _pagina_teeltvgl_1():
             st.session_state.update(tl_week=week, tl_wk=week[1], tl_jaar=week[0])
 
         def _tl_na_tuin():
-            st.session_state["tl_vak"] = None
-
-        def _tl_na_vak():
-            recent = selectie.laatste(_tl_items, _tl_tuin(), st.session_state["tl_vak"])
-            if recent:
-                _tl_zet((recent["jaar"], recent["week"]))
+            st.session_state["tl_vak"] = "alle"
 
         def _tl_plantweken():
             """De plantweken (oud naar nieuw) met vakken in de gekozen tuin."""
@@ -2587,35 +2618,38 @@ def _pagina_teeltvgl_1():
             huidig, lijst = st.session_state["tl_week"], _tl_plantweken()
             verder = [w for w in lijst if (w > huidig if stappen > 0 else w < huidig)]
             if verder:
-                st.session_state["tl_vak"] = None
+                st.session_state["tl_vak"] = "alle"
                 _tl_zet(verder[0] if stappen > 0 else verder[-1])
 
-        _tl_k = st.columns([1, 1, 1, 1, 0.35, 0.35], vertical_alignment="bottom")
-        _tl_k[0].selectbox("Tuin", _tl_tuin_opties, key="tl_tuin", on_change=_tl_na_tuin,
-                           format_func=lambda n: "Beide" if n == "beide" else f"Tuin {n}")
-        _tl_vakopties = [None] + selectie.vakken(_tl_items, _tl_tuin())
-        st.session_state["tl_vak"] = selectie.geldig(st.session_state.get("tl_vak"), _tl_vakopties, None)
-        _tl_k[1].selectbox("Vak", _tl_vakopties, key="tl_vak", on_change=_tl_na_vak,
-                           format_func=lambda v: "Alle vakken" if v is None else f"Vak {v}")
-        _tl_weekopties = selectie.weken(_tl_items, _tl_tuin(), st.session_state["tl_vak"])
+        # Eén rij, links uitgelijnd, met vaste breedtes (niet over het hele scherm uitgesmeerd).
+        _tl_rij = st.container(horizontal=True, vertical_alignment="bottom", gap="small")
+        _tl_rij.selectbox("Tuin", _tl_tuin_opties, key="tl_tuin", on_change=_tl_na_tuin, width=130,
+                          format_func=lambda n: "Beide" if n == "beide" else f"Tuin {n}")
+        _tl_weekopties = selectie.weken(_tl_items, _tl_tuin())
         st.session_state["tl_wk"] = selectie.geldig(
             st.session_state.get("tl_wk"), _tl_weekopties,
             selectie.geldig(st.session_state["tl_week"][1], _tl_weekopties, _tl_weekopties[-1]))
-        _tl_k[2].selectbox("Week", _tl_weekopties, key="tl_wk", format_func=lambda w: f"wk {w}")
-        _tl_jaaropties = selectie.jaren(_tl_items, st.session_state["tl_wk"], _tl_tuin(), st.session_state["tl_vak"])
+        _tl_rij.selectbox("Week", _tl_weekopties, key="tl_wk", format_func=lambda w: f"wk {w}", width=110)
+        # "alle" i.p.v. None: een selectbox toont None als "niets gekozen".
+        _tl_vakopties = ["alle"] + selectie.vakken(_tl_items, _tl_tuin(), week=st.session_state["tl_wk"])
+        st.session_state["tl_vak"] = selectie.geldig(st.session_state.get("tl_vak"), _tl_vakopties, "alle")
+        _tl_rij.selectbox("Vak", _tl_vakopties, key="tl_vak", width=140,
+                          format_func=lambda v: "Alle vakken" if v == "alle" else f"Vak {v}")
+        _tl_vak = None if st.session_state["tl_vak"] == "alle" else st.session_state["tl_vak"]
+        _tl_jaaropties = selectie.jaren(_tl_items, st.session_state["tl_wk"], _tl_tuin(), _tl_vak)
         st.session_state["tl_jaar"] = selectie.geldig(
             st.session_state.get("tl_jaar"), _tl_jaaropties,
             selectie.geldig(st.session_state["tl_week"][0], _tl_jaaropties, _tl_jaaropties[-1]))
-        _tl_k[3].selectbox("Jaar", _tl_jaaropties, key="tl_jaar")
+        _tl_rij.selectbox("Jaar", _tl_jaaropties, key="tl_jaar", width=110)
         st.session_state["tl_week"] = (st.session_state["tl_jaar"], st.session_state["tl_wk"])
         _tl_pw = _tl_plantweken()
-        _tl_k[4].button("◀", key="tl_terug", on_click=_tl_blader, args=(-1,), help="Vorige teelt",
-                        disabled=not _tl_pw or st.session_state["tl_week"] <= _tl_pw[0])
-        _tl_k[5].button("▶", key="tl_verder", on_click=_tl_blader, args=(1,), help="Volgende teelt",
-                        disabled=not _tl_pw or st.session_state["tl_week"] >= _tl_pw[-1])
+        _tl_rij.button("◀", key="tl_terug", on_click=_tl_blader, args=(-1,), help="Vorige teelt",
+                       disabled=not _tl_pw or st.session_state["tl_week"] <= _tl_pw[0])
+        _tl_rij.button("▶", key="tl_verder", on_click=_tl_blader, args=(1,), help="Volgende teelt",
+                       disabled=not _tl_pw or st.session_state["tl_week"] >= _tl_pw[-1])
         _tl_markeer = {i["id"] for i in selectie.gekozen(
-            _tl_items, _tl_tuin(), st.session_state["tl_vak"], st.session_state["tl_wk"], st.session_state["tl_jaar"])
-        } if st.session_state["tl_vak"] is not None else set()
+            _tl_items, _tl_tuin(), _tl_vak, st.session_state["tl_wk"], st.session_state["tl_jaar"])
+        } if _tl_vak is not None else set()
         _tl_week = st.session_state["tl_week"]
         st.caption(f"Teelt wk {_tl_week[1]} - {_tl_week[0]} · {_vakken_tekst(_tl_weken[_tl_week][0])}, "
                    f"{_tl_weken[_tl_week][1]} afgerond (beide tuinen)")
@@ -2817,12 +2851,12 @@ def _register_rijen(vandaag):
     return lopend, te_starten, afgerond, vakken
 
 
-def _register_tabel(rijen, kolommen, sleutel, vakken, vandaag, klikbaar=True):
+def _register_tabel(rijen, kolommen, sleutel, vakken, vandaag, klikbaar=True, sorteer=None):
     """Eén registertabel; bij klikbaar opent een klik op een regel de vakpopup (één keer per keuze)."""
     if not rijen:
         st.caption("Geen vakken die aan de filters voldoen.")
         return
-    rijen = sorted(rijen, key=lambda r: (r["_sorteer"], r["Plantdatum"]))
+    rijen = sorted(rijen, key=sorteer or (lambda r: (r["_sorteer"], r["Plantdatum"])))
     soorten = dict(kolommen)
     df = pd.DataFrame([{naam: (format_datum(r.get(naam)) if soorten[naam] == "datum" and r.get(naam) else r.get(naam))
                         for naam, _ in kolommen} for r in rijen])
@@ -2849,18 +2883,19 @@ def toon_vakkenregister(vandaag, tuin_weergave):
     st.write("**Vakkenregister**")
     tuin_namen = [t["naam"] for t in sorted(TUINEN, key=lambda t: t["nummer"])]
     standaard_tuinen = tuin_namen if tuin_weergave == "beide" else [_tuin_labels.get(tuin_weergave)]
-    k1, k2, k3, k4, k5 = st.columns([1.4, 1.4, 2.2, 1.4, 1.6])
+    rij = st.container(horizontal=True, vertical_alignment="bottom", gap="small")
     # Volgt de tuinkeuze bovenaan; binnen die keuze vrij aan te passen.
-    tuinen = k1.multiselect("Tuin", tuin_namen, default=standaard_tuinen, key=f"reg_tuin_{tuin_weergave}")
+    tuinen = rij.multiselect("Tuin", tuin_namen, default=standaard_tuinen, key=f"reg_tuin_{tuin_weergave}",
+                             width=220)
     nummer = _tuinnummer_van.get(next((t["id"] for t in TUINEN if [t["naam"]] == tuinen), None))
     afdelingen = sorteer_afdelingen({r["Afd."] for r in alle if r["Afd."] is not None}, nummer)
-    gekozen_afd = k2.multiselect("Afdeling", afdelingen, key="reg_afd", placeholder="Alle")
+    gekozen_afd = rij.multiselect("Afdeling", afdelingen, key="reg_afd", placeholder="Alle", width=170)
     weken = sorted({(r["Plantdatum"].isocalendar()[0], r["Plantweek"]) for r in alle})
-    van_wk, tot_wk = k3.select_slider("Plantweek", options=weken, value=(weken[0], weken[-1]), key="reg_weken",
-                                      format_func=lambda w: f"wk {w[1]} '{str(w[0])[2:]}")
+    van_wk, tot_wk = rij.select_slider("Plantweek", options=weken, value=(weken[0], weken[-1]), key="reg_weken",
+                                       format_func=lambda w: f"wk {w[1]} '{str(w[0])[2:]}", width=320)
     rassen = sorted({r["Ras"] for r in alle if r["Ras"]})
-    gekozen_ras = k4.multiselect("Ras", rassen, key="reg_ras", placeholder="Alle")
-    zoek = k5.text_input("Zoek vak of code", key="reg_zoek", placeholder="bijv. 12 of 263401").strip()
+    gekozen_ras = rij.multiselect("Ras", rassen, key="reg_ras", placeholder="Alle", width=170)
+    zoek = rij.text_input("Zoek vak of code", key="reg_zoek", placeholder="bijv. 12 of 263401", width=200).strip()
 
     def past(r):
         week = (r["Plantdatum"].isocalendar()[0], r["Plantweek"])
@@ -2879,7 +2914,9 @@ def toon_vakkenregister(vandaag, tuin_weergave):
         _register_tabel(te_starten, REGISTER_TE_STARTEN, "reg_starten", vakken, vandaag, klikbaar=False)
         st.caption("Bevestigde vakken met een startdatum in de toekomst; concepten staan in Planning.")
     with tab_a:
-        _register_tabel(afgerond, REGISTER_AFGEROND, "reg_afgerond", vakken, vandaag)
+        # Laatst geoogst bovenaan, bij dezelfde oogstdatum in kasvolgorde.
+        _register_tabel(afgerond, REGISTER_AFGEROND, "reg_afgerond", vakken, vandaag,
+                        sorteer=lambda r: (-(r["Oogstdatum"] or date.min).toordinal(), r["_sorteer"]))
         st.caption("Klimaat en input over de hele teelt van het vak (planten t/m oogst). Klik op een regel voor "
                    "het vak.")
 
@@ -2890,7 +2927,6 @@ def _pagina_overzicht_2():
 
 # --- PLANNING (TOEKOMSTIGE TEELTEN) ---
 def _pagina_planning_1():
-    st.subheader("Planning")
     with st.expander("Hoe lees ik dit?"):
         st.caption(
             "Concept-planning voor toekomstige teelten: plant vooruit vanaf waar de huidige teelt van "
@@ -3214,7 +3250,6 @@ def _stek_mailhtml(rapport, totaal_geplant):
 
 
 def _pagina_stek_1():
-    st.subheader("Stek")
     stekweken = get_stekweken()
     if not stekweken:
         st.info("Er zijn nog geen vakken gestart.")
@@ -3454,7 +3489,6 @@ def _pagina_stek_1():
 
 # --- DATA IMPORTEREN (onder Meer) ---
 def _pagina_import_1():
-    st.subheader("Data importeren")
     col_imp_klimaat, col_imp_energie, col_imp_priva = st.columns(3)
 
     with col_imp_klimaat:
@@ -3581,7 +3615,6 @@ def _pagina_import_1():
 
 # --- LOGBOEK ---
 def _pagina_log_1():
-    st.subheader("Logboek")
     st.caption("Wie wat wanneer heeft aangemaakt, gewijzigd of verwijderd — nieuwste bovenaan.")
 
     limiet_log = st.number_input(
@@ -3652,7 +3685,7 @@ def _pk_tabel(kwaliteit, tuin_id):
 
 
 def _pagina_prognosekwaliteit():
-    st.subheader("Prognosekwaliteit", help=(
+    pagina_uitleg((
         "Elke dag legt de app per lopend vak de oogstprognose van het teeltmodel vast. Na de oogst "
         "vergelijkt deze pagina die met de werkelijke oogst: de dag waarop de helft van de emmers binnen "
         "was (zonder emmers de oogstdatum). Fout = werkelijk − voorspeld in dagen: positief = later "
@@ -3739,8 +3772,8 @@ def _pagina_help_1():
     - *Oogst › Lengte en gewicht*: voor vakken die nog niet zijn afgerond. Rijpheid loopt van
       1 (rauw) tot 4 (rijp).
     - *Opmerking*: een opmerking bij één of meer lopende vakken (zie Opmerkingen hieronder).
-    - *Wijzigen of verwijderen*: kies het vak met drie velden (vak, week, jaar; standaard de
-      laatste teelt van dat vak) en daarna wat je wilt wijzigen: startdatum, planten en ras;
+    - *Wijzigen of verwijderen*: kies het vak met drie velden (plantweek, vak, jaar; standaard
+      de laatst gestarte week en het recentste jaar) en daarna wat je wilt wijzigen: startdatum, planten en ras;
       Florgib; oogst en emmers; of opmerkingen. Onderaan kun je het hele vak verwijderen.
       Elk vak begint als Cameron; een nieuw ras typ je bij "Ander ras".
 
@@ -3773,8 +3806,7 @@ def _pagina_help_1():
     **Teeltvergelijking**
     - Per teelt (plantweek): bovenaan per tuin samengevat, daaronder de vakken naast elkaar.
       Vergelijking met vorig jaar gebeurt op dezelfde teeltdag.
-    - Kies met tuin, vak, week en jaar. Kies je een vak, dan toont de pagina de teelt waar dat
-      vak in zit en licht het vak op in de lijst. De tuinkeuze bepaalt de vakkenlijst en de
+    - Kies met tuin, plantweek, vak en jaar. Een gekozen vak licht op in de vakkenlijst. De tuinkeuze bepaalt de vakkenlijst en de
       opmerkingen; de vergelijkingstabel toont altijd beide tuinen. ◀ ▶ bladert per teelt.
 
     **Tuin vergelijking**

@@ -1,5 +1,5 @@
 """
-Een vak of teelt kiezen met losse keuzevelden (tuin, vak, week, jaar) in plaats
+Een vak of teelt kiezen met losse keuzevelden (tuin, week, vak, jaar) in plaats
 van één lange lijst. Elk veld toont alleen wat bij de eerdere keuzes bestaat.
 Alleen rekenwerk; tests in tests/test_selectie.py.
 
@@ -13,14 +13,22 @@ def _past(item, tuin=None, vak=None, week=None, jaar=None):
             and (week is None or item["week"] == week) and (jaar is None or item["jaar"] == jaar))
 
 
-def vakken(items, tuin=None):
-    """Vaknummers (laag naar hoog) in de gekozen tuin."""
-    return sorted({i["vak"] for i in items if _past(i, tuin) and i["vak"] is not None})
+def vakken(items, tuin=None, week=None):
+    """Vaknummers (laag naar hoog) in de gekozen tuin, eventueel alleen die in de gekozen week."""
+    return sorted({i["vak"] for i in items if _past(i, tuin, week=week) and i["vak"] is not None})
 
 
 def weken(items, tuin=None, vak=None):
-    """Plantweken (laag naar hoog) bij de gekozen tuin en het gekozen vak."""
-    return sorted({i["week"] for i in items if _past(i, tuin, vak)})
+    """
+    Plantweken bij de gekozen tuin en het gekozen vak, in de tijd: gesorteerd
+    op het laatste jaar waarin de week voorkwam. Rond de jaarwisseling staat
+    week 52 van vorig jaar dus vóór week 1 van dit jaar; de recentste onderaan.
+    """
+    laatst = {}
+    for i in items:
+        if _past(i, tuin, vak):
+            laatst[i["week"]] = max(laatst.get(i["week"], 0), i["jaar"])
+    return sorted(laatst, key=lambda w: (laatst[w], w))
 
 
 def jaren(items, week, tuin=None, vak=None):

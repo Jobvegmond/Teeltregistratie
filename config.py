@@ -40,3 +40,8 @@ AFWIJKING_VENSTER_DAGEN = 14    # "huidige stooklijn" = gemiddelde afwijking van
 
 # --- OPMERKINGEN PER VAK ---
 OPMERKING_CATEGORIEEN = ("Groei", "Ziekte/plagen", "Water", "Klimaat", "Overig")
+
+# --- VERSIE ---
+# Staat rechtsboven in de app. Ophogen bij elke wijziging op main (zie CHANGELOG.md):
+# derde getal bij een correctie, tweede bij iets nieuws, eerste bij een grote omzetting.
+APP_VERSIE = "2.2.0"
