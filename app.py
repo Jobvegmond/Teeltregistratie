@@ -1733,11 +1733,6 @@ def _nu_klimaat_doel(s, klimaat):
                   "die kalenderweek, tot de plandatum." if u and u["c"] is not None else ""))
 
 
-def pagina_uitleg(tekst):
-    """Uitleg bij een pagina als ⓘ; de naam van de pagina staat al in de navigatiebalk."""
-    st.caption("Uitleg bij deze pagina", help=tekst)
-
-
 def toon_opmerkingen(teelt_id):
     """Opmerkingen van één vak in de vakpopup, oud naar nieuw, elk te wijzigen of te verwijderen."""
     opmerkingen = get_opmerkingen(teelt_id)
@@ -4031,11 +4026,8 @@ def _pagina_import_1():
 
 # --- LOGBOEK ---
 def _pagina_log_1():
-    st.caption("Wie wat wanneer heeft aangemaakt, gewijzigd of verwijderd — nieuwste bovenaan.")
-
-    limiet_log = st.number_input(
-        "Aantal regels tonen", min_value=25, max_value=2000, value=300, step=25, key="log_limiet"
-    )
+    balk = layout.filterbalk("logboek")
+    limiet_log = filters.weergave("Regels", (100, 300, 1000, 2000), "log_limiet", 300, plek=balk)
     log_rijen = get_wijzigingenlog(limiet=int(limiet_log))
 
     if log_rijen:
@@ -4048,17 +4040,19 @@ def _pagina_log_1():
         # Een regel in de tabel "teelten" is één vak (een teelt = alle vakken uit één plantweek).
         df_log["Type"] = df_log["Type"].replace({"teelt": "vak", "teelten": "vak"})
 
-        gebruikers_log = ["Alle gebruikers"] + sorted(df_log["Gebruiker"].unique())
-        types_log = ["Alle types"] + sorted(df_log["Type"].unique())
-        col_filter1, col_filter2 = st.columns(2)
-        gekozen_gebruiker = col_filter1.selectbox("Filter op gebruiker", gebruikers_log, key="log_filter_gebruiker")
-        gekozen_type = col_filter2.selectbox("Filter op type", types_log, key="log_filter_type")
+        gekozen_gebruikers = filters.keuzes("Gebruiker", sorted(df_log["Gebruiker"].unique()), "log_gebruiker",
+                                            plek=balk)
+        gekozen_types = filters.keuzes("Type", sorted(df_log["Type"].unique()), "log_type", plek=balk)
+        zoek = filters.zoekveld("log_zoek", "Woord uit de omschrijving", plek=balk)
 
-        if gekozen_gebruiker != "Alle gebruikers":
-            df_log = df_log[df_log["Gebruiker"] == gekozen_gebruiker]
-        if gekozen_type != "Alle types":
-            df_log = df_log[df_log["Type"] == gekozen_type]
+        if gekozen_gebruikers:
+            df_log = df_log[df_log["Gebruiker"].isin(gekozen_gebruikers)]
+        if gekozen_types:
+            df_log = df_log[df_log["Type"].isin(gekozen_types)]
+        if zoek:
+            df_log = df_log[df_log["Omschrijving"].fillna("").str.contains(zoek, case=False, regex=False)]
 
+        uitleg_help.voetnoot(f"{len(df_log)} regels · nieuwste bovenaan")
         toon_tabel(df_log, [
             ("Tijdstip", "Tijdstip", "tekst", None, "medium"),
             ("Gebruiker", "Gebruiker", "tekst", None, "small"),
@@ -4101,11 +4095,8 @@ def _pk_tabel(kwaliteit, tuin_id):
 
 
 def _pagina_prognosekwaliteit():
-    pagina_uitleg((
-        "Elke dag legt de app per lopend vak de oogstprognose van het teeltmodel vast. Na de oogst "
-        "vergelijkt deze pagina die met de werkelijke oogst: de dag waarop de helft van de emmers binnen "
-        "was (zonder emmers de oogstdatum). Fout = werkelijk − voorspeld in dagen: positief = later "
-        "geoogst dan voorspeld. MAE = gemiddelde fout zonder teken."))
+    uitleg_help.voetnoot("Fout = werkelijk − voorspeld, in dagen (positief = later geoogst dan voorspeld); "
+                         "MAE = gemiddelde fout zonder teken.")
     vandaag = date.today()
     log, oogsten = _pk_gegevens(vakstatus_dataversie(), str(vandaag))
     rijen = prognoselog.fouten(log, oogsten)
@@ -4118,14 +4109,14 @@ def _pagina_prognosekwaliteit():
     tuinen = [t for t in sorted(TUINEN, key=lambda t: t["nummer"])
               if TUIN_WEERGAVE == "beide" or t["nummer"] == TUIN_WEERGAVE]
     for titel, veld in (("Prognose teeltmodel", "fout_prognose"), ("Plandatum", "fout_plan")):
-        st.write(f"**{titel}**")
+        layout.sectie(titel)
         kwaliteit = prognoselog.kwaliteit(rijen, veld)
         for kolom, tuin in zip(st.columns(len(tuinen)), tuinen):
             with kolom:
                 st.caption(tuin["naam"])
                 _pk_tabel(kwaliteit, tuin["id"])
 
-    st.write("**Fout naar dagen vóór de oogst**")
+    layout.sectie("Fout naar dagen vóór de oogst")
     per_dag = pd.DataFrame(prognoselog.fout_per_dag(log, oogsten))
     if not per_dag.empty:
         per_dag = per_dag[per_dag["tuin_id"].isin([t["id"] for t in tuinen])]
@@ -4134,7 +4125,7 @@ def _pagina_prognosekwaliteit():
                    .agg(fout="mean", mae=lambda x: x.abs().mean()).reset_index())
     basis = alt.Chart(per_dag).encode(
         x=alt.X("dagen_voor_oogst:Q", title="Dagen vóór de oogst", scale=alt.Scale(reverse=True)),
-        color=alt.Color("Tuin:N", legend=alt.Legend(title=None, orient="top")))
+        color=alt.Color("Tuin:N", legend=alt.Legend(title=None, orient="bottom")))
     grafiek = (basis.mark_line().encode(
                    y=alt.Y("fout:Q", title="Gem. fout (d)"),
                    tooltip=[alt.Tooltip("Tuin:N"), alt.Tooltip("dagen_voor_oogst:Q", title="Dagen vóór oogst"),
@@ -4143,7 +4134,7 @@ def _pagina_prognosekwaliteit():
                + alt.Chart(pd.DataFrame({"y": [0]})).mark_rule(strokeDash=[3, 3], color="#8a8a80").encode(y="y:Q"))
     toon_grafiek(grafiek, per_dag, "Nog geen logregels van geoogste vakken.")
 
-    st.write("**Grootste missers**")
+    layout.sectie("Grootste missers")
     missers = prognoselog.grootste_missers([r for r in rijen if r["tuin_id"] in {t["id"] for t in tuinen}])
     tabel = pd.DataFrame([{
         "Tuin": _tuinnaam_van.get(m["tuin_id"], "?"), "Vak": m["vaknummer"], "Code": m["code"],
@@ -4157,7 +4148,7 @@ def _pagina_prognosekwaliteit():
                  ("Oogst (50 %)", "Oogst (50 %)", "datum", None, "small")]
                 + [(k, k, "getal", "%d", "small") for k in tabel.columns if k.startswith("Fout")])
     keuze = toon_tabel(tabel, kolommen, vast=("Tuin", "Vak", "Code"), sleutel="pk_missers")
-    st.caption("Klik op een regel voor het vak. Fout = werkelijk − voorspeld, in dagen.")
+    uitleg_help.voetnoot("Klik op een regel voor het vak.")
     gekozen = keuze.selection.rows if keuze else []
     if gekozen and gekozen != st.session_state.get("pk_missers_open"):
         st.session_state["pk_missers_open"] = gekozen
@@ -4165,95 +4156,6 @@ def _pagina_prognosekwaliteit():
     elif not gekozen:
         st.session_state["pk_missers_open"] = None
 
-
-# --- HOE DIT WERKT (onder Meer) ---
-def _pagina_help_1():
-    st.write("""
-    **Begrippen**
-    - **Vak**: één vak in de kas met één teeltronde. Elke ronde krijgt een eigen code:
-      jaar + plantweek + vaknummer. Hetzelfde vak komt dus meerdere keren voor, één keer per ronde.
-    - **Teelt**: alle vakken uit één plantweek (van één of beide tuinen).
-    - **Florgib**: de lengtemeting halverwege de teelt; die stuurt de prognose bij.
-    - Datums staan als dd-mm-jj met het ISO-weeknummer; lijsten lopen van laag naar hoog.
-
-    **Tuinkeuze**
-    - Bovenaan kies je tuin 1, tuin 3 of Beide. Bij Beide tonen de overzichten beide tuinen;
-      registratie, Planning, Stek en import werken dan op de werk-tuin die je in de zijbalk kiest.
-
-    **Registratie (zijbalk)**
-    - *Florgib lengte*: kies één of meer vakken, vul datum en lengte in; die geldt voor alle
-      gekozen vakken.
-    - *Oogst › Emmers*: per oogstmoment het aantal emmers (100 stelen per emmer). Vink
-      "Vak afronden" aan bij de laatste emmers.
-    - *Oogst › Lengte en gewicht*: voor vakken die nog niet zijn afgerond. Rijpheid loopt van
-      1 (rauw) tot 4 (rijp).
-    - *Opmerking*: een opmerking bij één of meer lopende vakken (zie Opmerkingen hieronder).
-    - *Wijzigen of verwijderen*: kies het vak met drie velden (plantweek, vak, jaar; standaard
-      de laatst gestarte week en het recentste jaar) en daarna wat je wilt wijzigen: startdatum, planten en ras;
-      Florgib; oogst en emmers; of opmerkingen. Onderaan kun je het hele vak verwijderen.
-      Elk vak begint als Cameron; een nieuw ras typ je bij "Ander ras".
-
-    **Teeltoverzicht** (startpagina)
-    - De vakkenmatrix per afdeling, in teeltvolgorde. De kleur van een vak is de prognose:
-      aantal dagen te vroeg (−7) of te laat (+7) ten opzichte van de geplande oogst.
-      Klik op een vak voor klimaat, water, groei en stek; klik op de afdelingsnaam voor het
-      stookadvies van die afdeling.
-    - Daaronder het vakkenregister: Lopend, Te starten (bevestigde vakken die nog moeten
-      beginnen) en Afgerond, met filters op tuin, afdeling, plantweek, ras en zoeken.
-      Uitval staat alleen bij afgeronde vakken. Klik op een regel voor het vak.
-
-    **Planning**
-    - Bovenaan de Gantt en de vooruitblik (wat de komende weken te planten en te oogsten staat).
-    - Daaronder de concept-planningen als één tabel, standaard de komende 8 weken ("Alles tonen"
-      voor de rest). Pas een startdatum aan, vink ✅ aan om een vak te starten (met het aantal
-      planten uit de tabel) of 🗑️ om een concept te verwijderen, en klik op "Wijzigingen opslaan".
-      Een concept is nog geen gestart vak; pas na ✅ krijgt het een code.
-    - *Jaarplanning: vakken per week*: het aantal poot-eenheden per week voor de vak 2-39-cyclus,
-      plus een aparte kolom voor vak 1. Een week zonder aantal blijft leeg; klik op "Plan opnieuw
-      met deze aantallen" om te (her)plannen. Vak 19 en 20 worden samen gepland; vak 1 loopt op
-      een eigen ritme.
-    - Elke tuin heeft een eigen planning. Automatisch plannen kent voorlopig alleen het ritme van
-      tuin 3; op tuin 1 plan je per vak met "Eén vak handmatig plannen".
-
-    **Stek**
-    - Per pootweek het geleverde stek per vak (bakjes, beoordeling); de uitval rekent de app
-      zelf uit (bakjes × 600 stekken). De beoordeling vul je één keer voor de hele week in.
-
-    **Teeltvergelijking**
-    - Per teelt (plantweek): bovenaan per tuin samengevat, daaronder de vakken naast elkaar.
-      Vergelijking met vorig jaar gebeurt op dezelfde teeltdag.
-    - Kies met tuin, plantweek, vak en jaar. Een gekozen vak licht op in de vakkenlijst. De tuinkeuze bepaalt de vakkenlijst en de
-      opmerkingen; de vergelijkingstabel toont altijd beide tuinen. ◀ ▶ bladert per teelt.
-
-    **Tuin vergelijking**
-    - Wat er in een week (of maand, kwartaal, jaar) in de kas gebeurde: tuin 1 naast tuin 3 en
-      het totaal, per m². De kleine regel onder een getal is de vorige periode of dezelfde periode
-      vorig jaar; het pijltje zegt of het beter (groen) of slechter (rood) is.
-
-    **Watergift**
-    - Per vak per dag de watergift (l/m²), met bovenaan EC en pH van het watersysteem. Blauw = watergift. Elke teeltronde (tuin 3 vanaf vak 2, tuin 1 vanaf vak 1) heeft een eigen kleur, per teelt licht/donker; groene streep links = plantdag,
-      paarse stip = Florgib (open ring = verwacht), oranje = laatste oogstdag (licht oranje = verwachte oogst), gearceerd = concept-planning
-      (alleen t/m volgende week), wit = vak leeg. Met Vooruitkijken loopt de matrix door t/m de verwachte oogst van de laatste lopende of
-      bevestigde teelt.
-    - Links per vak de plantweek, leeftijd en de totale watergift van de lopende teelt.
-    - Beweeg over een cel voor de details; klik op een vak voor het vak (met de watergift per dag) en op
-      een dag voor de gift per vak, EC/pH en de opmerkingen van die dag. "Download Excel" geeft de matrix.
-    - EC en pH komen sinds 27-09-26 mee met de Priva-ophaling; Priva bewaart zelf maar 5 dagen, dus
-      eerder is er niet. Per gietbeurt rekent de app de EC, pH en flow uit als gemiddelde over de beurt,
-      net als het kraanoverzicht in Priva; per vak per dag en voor de regels bovenaan gewogen naar de liters. De band (▲/▼ en rood) staat per tuin in config.py.
-    - Later komen hier ook de behandelingen (gewasbescherming, biologie) bij, als smalle regel onder elk vak.
-
-    **Opmerkingen**
-    - Een opmerking maak je via *Opmerking* in de zijbalk, bij één of meer lopende vakken. Je ziet ze terug in
-      de vakpopup (daar ook wijzigen of verwijderen), op de pagina Opmerkingen (zoeken op tuin, teelt, vak,
-      periode, categorie of tekst), bij de gekozen teelt in Teeltvergelijking en bij de gekozen periode in
-      Tuin vergelijking.
-
-    **Meer**
-    - *Data importeren*: klimaat- en energiedata uit de Priva-export.
-    - *Prognosekwaliteit*: hoe goed de oogstprognose en de plandatum achteraf klopten.
-    - *Logboek*: elke wijziging, met wie en wanneer.
-    """)
 
 # --- NAVIGATIE ---
 #
@@ -4291,17 +4193,37 @@ def pagina_watergift():
 
 
 def pagina_meer():
-    """Weinig gebruikt: import, prognosekwaliteit, logboek en uitleg als subtabbladen."""
-    tab_import, tab_prognose, tab_log, tab_help = st.tabs(
-        ["Data importeren", "Prognosekwaliteit", "Logboek", "Hoe dit werkt"])
+    """Weinig gebruikt: import, prognosekwaliteit en logboek als subtabbladen."""
+    layout.pagina_kop(
+        "Meer",
+        wat="Wat weinig gebruikt wordt: data importeren, de kwaliteit van de oogstprognose en het logboek van "
+            "alle wijzigingen. De uitleg van elke pagina staat achter de knop Uitleg op die pagina.",
+        lezen=[
+            "**Vak** = één vak in de kas met één teeltronde; elke ronde krijgt een code (jaar + plantweek + vak). "
+            "**Teelt** = alle vakken uit één plantweek. **Florgib** = de lengtemeting halverwege de teelt; die "
+            "stuurt de prognose bij.",
+            "Datums staan als dd-mm-jj; weken lopen van zondag t/m zaterdag (de plantweek in de code blijft de "
+            "ISO-week van de plantdatum). Lijsten lopen van laag naar hoog.",
+            "**Tuin** kies je alleen bovenaan. Bij Beide vraagt de zijbalk in welke tuin je registreert; pagina's "
+            "die per tuin werken (Planning, Stek, Meer) tonen dan de laatst gekozen tuin.",
+            "**Registratie (zijbalk)**: *Florgib lengte* voor één of meer vakken; *Oogst* met emmers (100 stelen "
+            "per emmer; vink Vak afronden aan bij de laatste) en lengte/gewicht (rijpheid 1 rauw – 4 rijp); "
+            "*Opmerking* bij lopende vakken; *Wijzigen of verwijderen* per vak en per onderdeel.",
+            "**Prognosekwaliteit**: per tuin hoe goed de prognose en de plandatum achteraf klopten; klik op een "
+            "misser voor het vak.",
+            "**Logboek**: filter op gebruiker, type of een woord; nieuwste bovenaan."],
+        bron="Import: dagexport van de klimaatcomputer en de energie-export uit Priva; de Priva-API wordt elke "
+             "ochtend automatisch opgehaald. Prognosekwaliteit: elke dag legt de app per lopend vak de "
+             "oogstprognose vast; na de oogst wordt die vergeleken met de dag waarop de helft van de emmers "
+             "binnen was (zonder emmers de oogstdatum).",
+    )
+    tab_import, tab_prognose, tab_log = st.tabs(["Data importeren", "Prognosekwaliteit", "Logboek"])
     with tab_import:
         _pagina_import_1()
     with tab_prognose:
         _pagina_prognosekwaliteit()
     with tab_log:
         _pagina_log_1()
-    with tab_help:
-        _pagina_help_1()
 
 
 _pagina.run()
