@@ -1800,40 +1800,55 @@ def toon_opmerkingenlijst(rijen, sleutel, leeg="Geen opmerkingen."):
         st.session_state[f"{sleutel}_open"] = None
 
 
+OPM_LENGTES = ("Week", "Maand", "Kwartaal", "Jaar", "Alles")
+
+
 def _pagina_opmerkingen_1():
-    pagina_uitleg((
-        "Alle opmerkingen bij vakken. Filter op tuin, teelt (plantweek), vak, periode, categorie of een woord "
-        "uit de tekst. Klik op een regel om het vak te openen; daar kun je een opmerking ook wijzigen. "
-        "Nieuwe opmerkingen maak je via Opmerking in de zijbalk."))
+    layout.pagina_kop(
+        "Opmerkingen",
+        wat="Alle opmerkingen bij vakken, oud naar nieuw.",
+        lezen=["Filter op periode, teelt (plantweek), vak, categorie of een woord uit de tekst of de code. De tuin "
+               "kies je bovenaan.",
+               "Klik op een regel om het vak te openen; daar kun je een opmerking ook wijzigen of verwijderen.",
+               "Nieuwe opmerkingen maak je via Opmerking in de zijbalk."],
+        bron="Wat er via de zijbalk is ingevoerd, met de gebruiker die het invoerde.",
+    )
     alle = _opm_alle(vakstatus_dataversie())
     if not alle:
         st.info("Nog geen opmerkingen. Maak er een via Opmerking in de zijbalk.")
         return
-    tuinen = sorted(TUINEN, key=lambda t: t["nummer"])
-    standaard_tuinen = [t["naam"] for t in tuinen if TUIN_WEERGAVE == "beide" or t["nummer"] == TUIN_WEERGAVE]
-    teelten = sorted({opm_logic.teelt_van(o) for o in alle})
-    vakken = sorted({o["vaknummer"] for o in alle})
-    eerste = min(opm_logic._datum(o["datum"]) for o in alle)
-    laatste = max(max(opm_logic._datum(o["datum"]) for o in alle), date.today())
+    vandaag = date.today()
+    tuin_ids = {t["id"] for t in TUINEN if TUIN_WEERGAVE == "beide" or t["nummer"] == TUIN_WEERGAVE}
+    in_tuin = [o for o in alle if o["tuin_id"] in tuin_ids]
+    eerste = min((opm_logic._datum(o["datum"]) for o in alle), default=vandaag)
 
-    rij = st.container(horizontal=True, vertical_alignment="bottom", gap="small")
-    tuin_namen = rij.multiselect("Tuin", [t["naam"] for t in tuinen], default=standaard_tuinen,
-                                 key=f"opm_tuin_{TUIN_WEERGAVE}", width=220)
-    gekozen_teelten = rij.multiselect("Teelt (plantweek)", teelten, format_func=_teelt_label, key="opm_teelt",
-                                      placeholder="Alle teelten", width=200)
-    gekozen_vakken = rij.multiselect("Vak", vakken, key="opm_vak", placeholder="Alle vakken", width=170)
-    periode = rij.date_input("Periode", (eerste, laatste), format="DD-MM-YYYY", key="opm_periode", width=230)
-    categorieen = rij.multiselect("Categorie", OPMERKING_CATEGORIEEN, key="opm_categorie",
-                                  placeholder="Alle categorieën", width=200)
-    zoek = rij.text_input("Zoeken", key="opm_zoek", placeholder="Woord uit de tekst of code", width=220)
-    # Tijdens het kiezen van een periode is er even maar één datum.
-    van, tot = (periode + (periode[0],))[:2] if len(periode) else (None, None)
+    balk = layout.filterbalk("opmerkingen")
+    lengte, periode = filters.periode(
+        "opm_periode", OPM_LENGTES, "Alles",
+        opties_van=lambda n: [] if n == "Alles" else perioden.reeks(eerste, vandaag, n),
+        standaard_van=lambda n: None if n == "Alles" else perioden.periode_sleutel(vandaag, n)[0],
+        format_van=lambda n: lambda k: perioden.periode_label(k, n),
+        huidig_van=lambda n: None if n == "Alles" else perioden.periode_sleutel(vandaag, n)[0], plek=balk)
+    van, tot = perioden.periode_grenzen(periode, lengte) if periode else (None, None)
+    teelten = filters.keuzes("Teelt (plantweek)", sorted({opm_logic.teelt_van(o) for o in in_tuin}), "opm_teelt",
+                             plek=balk, format_func=_teelt_label, placeholder="Alle teelten")
+    vakken = filters.keuzes("Vak", sorted({o["vaknummer"] for o in in_tuin}), "opm_vak", plek=balk,
+                            placeholder="Alle vakken")
+    categorieen = filters.keuzes("Categorie", OPMERKING_CATEGORIEEN, "opm_categorie", plek=balk)
+    zoek = filters.zoekveld("opm_zoek", "Woord uit de tekst of code", plek=balk)
 
     rijen = opm_logic.filter_opmerkingen(
-        alle, tuinen={t["id"] for t in tuinen if t["naam"] in tuin_namen}, teelten=set(gekozen_teelten),
-        vakken=set(gekozen_vakken), van=van, tot=tot, categorieen=set(categorieen), zoek=zoek)
-    st.caption(f"{len(rijen)} van {len(alle)} opmerkingen. Klik op een regel om het vak te openen.")
+        alle, tuinen=tuin_ids, teelten=set(teelten), vakken=set(vakken), van=van, tot=tot,
+        categorieen=set(categorieen), zoek=zoek)
+    layout.sectie("Opmerkingen", f"{len(rijen)} van {len(in_tuin)}")
     toon_opmerkingenlijst(rijen, "opm_lijst", "Geen opmerkingen die aan de filters voldoen.")
+    if rijen:
+        layout.export(excel_bestand({"Opmerkingen": pd.DataFrame([{
+            "Datum": opm_logic._datum(o["datum"]), "Tuin": _tuinnaam_van.get(o["tuin_id"], "?"),
+            "Afd.": o["afdeling"], "Vak": o["vaknummer"], "Code": o["code"] or "-",
+            "Teelt": _teelt_label(opm_logic.teelt_van(o)), "Categorie": o["categorie"] or "Overig",
+            "Opmerking": o["tekst"], "Door": o["gebruiker"] or "-"} for o in rijen])}),
+            f"opmerkingen_{vandaag:%d-%m-%y}.xlsx", sleutel="opm_excel")
 
 
 def teelt_detail(s, klimaat, water, model=None):
