@@ -34,9 +34,19 @@ def als_datum(waarde):
     return datetime.strptime(str(waarde)[:10], "%Y-%m-%d").date()
 
 
-def periode(eind_maandag, weken):
-    """(van, tot): `weken` hele ISO-weken (ma–zo) t/m de week die op `eind_maandag` begint."""
-    return eind_maandag - timedelta(weeks=weken - 1), eind_maandag + timedelta(days=6)
+def week_begin(dag):
+    """De zondag waarmee de week van `dag` begint (onze week loopt van zondag t/m zaterdag)."""
+    return dag - timedelta(days=(dag.weekday() + 1) % 7)
+
+
+def weeknummer(dag):
+    """Weeknummer met de zondag als eerste dag: de zondag hoort bij de ISO-week die de dag erna begint."""
+    return (dag + timedelta(days=1)).isocalendar()[1]
+
+
+def periode(eind_zondag, weken):
+    """(van, tot): `weken` hele weken (zo–za) t/m de week die op `eind_zondag` begint."""
+    return eind_zondag - timedelta(weeks=weken - 1), eind_zondag + timedelta(days=6)
 
 
 def dagen(van, tot):
@@ -152,13 +162,6 @@ def samenvatting(gift, vakken_afd, m2, bezet, van, tot):
                 noemer += opp
     return {"gift_per_dag": teller / noemer if noemer else None, "giftdagen": len(giftdagen),
             "laatste": max(giftdagen) if giftdagen else None}
-
-
-def ec_meststoffen(kwaliteit):
-    """Wat er aan meststoffen bij komt: EC van de gift min de EC van het uitgangswater, of None."""
-    if kwaliteit.get("ec_gem") is None or kwaliteit.get("ec_aanvoer") is None:
-        return None
-    return round(kwaliteit["ec_gem"] - kwaliteit["ec_aanvoer"], 2)
 
 
 def gemiddelde(waarden):

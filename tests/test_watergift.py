@@ -113,18 +113,18 @@ class TestMatrixLogica(unittest.TestCase):
         uit = wg.samenvatting(gift, [1, 2], {1: 550, 2: 550}, bezet, date(2026, 9, 28), date(2026, 9, 29))
         self.assertEqual((uit["gift_per_dag"], uit["giftdagen"], uit["laatste"]), (2.0, 1, date(2026, 9, 28)))
 
-    def test_ec_meststoffen(self):
-        self.assertEqual(wg.ec_meststoffen({"ec_gem": 1.41, "ec_aanvoer": 0.12}), 1.29)
-        self.assertIsNone(wg.ec_meststoffen({"ec_gem": 1.41, "ec_aanvoer": None}))
-
     def test_band(self):
         self.assertEqual(wg.band_status(1.1, (1.2, 1.7)), "laag")
         self.assertEqual(wg.band_status(1.8, (1.2, 1.7)), "hoog")
         self.assertIsNone(wg.band_status(1.4, (1.2, 1.7)))
         self.assertIsNone(wg.band_status(None, (1.2, 1.7)))
 
-    def test_periode_hele_weken(self):
-        self.assertEqual(wg.periode(date(2026, 9, 28), 4), (date(2026, 9, 7), date(2026, 10, 4)))
+    def test_weken_van_zondag_tot_zaterdag(self):
+        self.assertEqual(wg.week_begin(date(2026, 9, 30)), date(2026, 9, 27))     # wo → zo ervoor
+        self.assertEqual(wg.week_begin(date(2026, 9, 27)), date(2026, 9, 27))     # zo blijft zo
+        self.assertEqual(wg.weeknummer(date(2026, 9, 27)), 40)                     # zo hoort bij de week erna
+        self.assertEqual(wg.weeknummer(date(2026, 10, 3)), 40)                     # za
+        self.assertEqual(wg.periode(date(2026, 9, 27), 4), (date(2026, 9, 6), date(2026, 10, 3)))
 
 
 class TestBehandelingenSubregel(unittest.TestCase):

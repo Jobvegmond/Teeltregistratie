@@ -11,6 +11,7 @@ from html import escape
 
 import streamlit as st
 
+from logic.watergift import weeknummer
 from utils.format import fmt_getal
 
 DAGEN_KORT = ["ma", "di", "wo", "do", "vr", "za", "zo"]
@@ -26,8 +27,9 @@ LINKS = (("Vak", 44), ("Plantw.", 54), ("Leeftijd", 56), ("Totaal", 60))
 CSS = """
 .wg-scroll { overflow: auto; max-height: 75vh; border: 1px solid rgba(128,128,128,0.25); border-radius: 8px; }
 table.wg { border-collapse: separate; border-spacing: 0; font-size: 12px; font-variant-numeric: tabular-nums;
+           line-height: 1.15;
            color: var(--st-text-color, #31333f); }
-table.wg th, table.wg td { padding: 0 1px; height: 22px; width: 24px; min-width: 24px; max-width: 24px;
+table.wg th, table.wg td { padding: 0 1px; height: 18px; width: 24px; min-width: 24px; max-width: 24px;
            text-align: center; box-sizing: border-box;
            border-bottom: 1px solid rgba(128,128,128,0.12); white-space: nowrap; }
 table.wg td.c { font-size: 11px; letter-spacing: -0.2px; overflow: hidden; }
@@ -46,12 +48,11 @@ table.wg td.c { cursor: pointer; }
 table.wg .weekgrens { border-left: 2px solid rgba(128,128,128,0.45); }
 table.wg td.vandaag { background-image: linear-gradient(rgba(46,106,76,0.10), rgba(46,106,76,0.10)); }
 table.wg thead th.vandaag { color: #fff; background: #2E6A4C; border-radius: 4px 4px 0 0; }
-table.wg tr.afd td { font-weight: 700; text-align: left; padding: 8px 6px 2px; height: auto;
-                     border-bottom: 1px solid rgba(128,128,128,0.35); }
+table.wg tr.afdgrens td { border-top: 3px solid rgba(128,128,128,0.55); }
 table.wg tr.kw td.l { text-align: left; padding-left: 6px; font-weight: 600; }
 table.wg tr.kw td { font-size: 11px; }
 table.wg tr.kw td.buiten { color: #d64541; font-weight: 700; }
-table.wg tr.beh td { height: 14px; font-size: 9px; border-bottom: 1px solid rgba(128,128,128,0.2); }
+table.wg tr.beh td { height: 12px; font-size: 9px; border-bottom: 1px solid rgba(128,128,128,0.2); }
 table.wg tr.beh span { display: inline-block; padding: 0 2px; border-radius: 3px; color: #fff; margin: 0 1px; }
 table.wg td.florgib { position: relative; }
 table.wg td.florgib::after { content: ""; position: absolute; top: 2px; right: 2px; width: 6px; height: 6px;
@@ -151,16 +152,16 @@ def bouw_html(m):
 
     def dagklasse(dag, basis=""):
         klas = [basis] if basis else []
-        if dag.weekday() == 0:
+        if dag.weekday() == 6:          # de week begint op zondag
             klas.append("weekgrens")
         if dag == vandaag:
             klas.append("vandaag")
         return " ".join(klas)
 
-    # Kop: weeknummers boven de dagen, dan de dagen zelf (klik = dagpopup).
+    # Kop: weeknummers (zondag t/m zaterdag) boven de dagen, dan de dagen zelf (klik = dagpopup).
     weken = []
     for dag in dagen:
-        week = dag.isocalendar()[1]
+        week = weeknummer(dag)
         if weken and weken[-1][0] == week:
             weken[-1][1] += 1
         else:
@@ -180,10 +181,8 @@ def bouw_html(m):
         rijen.append(f'<tr class="kw"><td class="l laatste" colspan="{len(LINKS)}" style="left:0">'
                      f'{escape(kw["label"])}</td>{cellen}</tr>')
     for afd in m["afdelingen"]:
-        rijen.append(f'<tr class="afd"><td class="l laatste" colspan="{len(LINKS)}" style="left:0">'
-                     f'{escape(afd["naam"])}</td>' + "".join(f'<td class="{dagklasse(d)}"></td>' for d in dagen)
-                     + "</tr>")
-        for v in afd["vakken"]:
+        # Tussen de afdelingen (en onder de EC/pH-regels) alleen een dikke lijn.
+        for i, v in enumerate(afd["vakken"]):
             klik = f' data-klik="vak:{v["vak"]}"'
             regel = (links_cel(0, v["vak"], extra="vak", attrs=f'{klik} title="{escape(v["tip"])}"')
                      + links_cel(1, escape(v["plantweek"])) + links_cel(2, escape(v["leeftijd"]))
@@ -194,7 +193,7 @@ def bouw_html(m):
                     klas.append("florgib")
                 regel += (f'<td class="{dagklasse(d, " ".join(klas))}" style="{_celstijl(c, m["maximum"])}"'
                           f'{klik} title="{escape(c["tip"])}">{_getal(c.get("liter") or None)}</td>')
-            rijen.append(f"<tr>{regel}</tr>")
+            rijen.append(f'<tr class="afdgrens">{regel}</tr>' if i == 0 else f"<tr>{regel}</tr>")
             if m["toon_behandelingen"]:
                 sub = "".join(links_cel(i, "") for i in range(len(LINKS)))
                 for d, codes in zip(dagen, v["behandelingen"]):

@@ -2798,17 +2798,16 @@ def _wg_matrix_gegevens(tuin, vakken_df, teelten, gift, kwaliteit, behandelingen
                            "buiten": bool(status), "tip": tip})
         kw_rijen.append({"label": f"{label} · watersysteem 1", "cellen": cellen})
 
-    # Uitgangswater (voorregeling) en wat er aan meststoffen bij komt (EC gift − EC uitgangswater).
-    for label, uitleg in (("EC uitgangswater", "gemeten EC van het water vóór bemesting (voorregeling)"),
-                          ("EC meststoffen", "EC gift − EC uitgangswater: wat er aan meststoffen bij komt")):
+    # Uitgangswater (voorregeling), bovenaan: de EC van het water vóór bemesting.
+    for label, uitleg in (("EC uitgangswater", "gemeten EC van het water vóór bemesting (voorregeling)"),):
         cellen = []
         for d in dagen_lijst:
             k = kw_dag.get(d) or {}
-            waarde = wg.ec_meststoffen(k) if label == "EC meststoffen" else k.get("ec_aanvoer")
+            waarde = k.get("ec_aanvoer")
             cellen.append({"waarde": fmt_getal(waarde, 2) if waarde is not None else "", "buiten": False,
                            "tip": f"{DAGEN_KORT_WG[d.weekday()]} {format_datum(d)} · {label}\n{uitleg}"
                                   + (f"\n{fmt_getal(waarde, 2)} mS/cm" if waarde is not None else "\ngeen meting")})
-        kw_rijen.append({"label": label, "cellen": cellen})
+        kw_rijen.insert(0, {"label": label, "cellen": cellen})
 
     maximum = max([r["liter_per_m2"] or 0 for (v, d), r in gift_dag.items() if dagen_lijst[0] <= d <= dagen_lijst[-1]]
                   or [0])
@@ -2824,9 +2823,9 @@ def _wg_matrix_gegevens(tuin, vakken_df, teelten, gift, kwaliteit, behandelingen
                     {d: r["liter_per_m2"] for (v, d), r in gift_dag.items() if v == vak}, lopend["start"], vandaag)
                 plantweek = f"wk {lopend['start'].isocalendar()[1]}"
                 leeftijd = f"{(vandaag - lopend['start']).days} d"
-                tip_vak = f"Vak {vak} · {lopend['code'] or '-'} · geplant {format_datum(lopend['start'])}"
+                tip_vak = f"Vak {vak} · afd. {afdeling} · {lopend['code'] or '-'} · geplant {format_datum(lopend['start'])}"
             else:
-                totaal, plantweek, leeftijd, tip_vak = None, "", "", f"Vak {vak} · leeg"
+                totaal, plantweek, leeftijd, tip_vak = None, "", "", f"Vak {vak} · afd. {afdeling} · leeg"
             cellen, excel_rij = [], {"Afd.": afdeling, "Vak": vak, "Plantweek": plantweek, "Leeftijd": leeftijd,
                                      "Totaal teelt (l/m²)": round(totaal, 1) if totaal is not None else None}
             for d in dagen_lijst:
@@ -2863,12 +2862,11 @@ def _wg_matrix_gegevens(tuin, vakken_df, teelten, gift, kwaliteit, behandelingen
         afd_rijen.append({"naam": f"Afd. {afdeling}", "vakken": vak_rijen})
 
     excel_kw = []
-    for label, sleutel in (("EC (mS/cm)", "ec_gem"), ("pH", "ph_gem"), ("EC uitgangswater", "ec_aanvoer"),
-                           ("EC meststoffen", None)):
+    for label, sleutel in (("EC uitgangswater", "ec_aanvoer"), ("EC (mS/cm)", "ec_gem"), ("pH", "ph_gem")):
         rij = {"Afd.": None, "Vak": label, "Plantweek": "", "Leeftijd": "", "Totaal teelt (l/m²)": None}
         for d in dagen_lijst:
             k = kw_dag.get(d) or {}
-            rij[format_datum(d)] = wg.ec_meststoffen(k) if sleutel is None else k.get(sleutel)
+            rij[format_datum(d)] = k.get(sleutel)
         excel_kw.append(rij)
     return ({"dagen": dagen_lijst, "vandaag": vandaag, "maximum": maximum, "toon_behandelingen": toon_beh,
              "kwaliteit": kw_rijen, "afdelingen": afd_rijen}, pd.DataFrame(excel_kw + excel))
@@ -2891,8 +2889,6 @@ def _wg_dag_venster(tuin, dag, gift, kwaliteit, vakken_df):
                 {"label": "EC ingesteld", "waarde": fmt_getal(k["ec_doel"], 2) if k["ec_doel"] is not None else LEEG},
                 {"label": "EC uitgangswater", "waarde": fmt_getal(k["ec_aanvoer"], 2) if k["ec_aanvoer"] is not None
                  else LEEG, "help": "Gemeten EC van het water vóór bemesting (voorregeling)."},
-                {"label": "EC meststoffen", "waarde": fmt_getal(wg.ec_meststoffen(k), 2)
-                 if wg.ec_meststoffen(k) is not None else LEEG, "help": "EC gift − EC uitgangswater."},
                 {"label": "pH gemiddeld", "waarde": fmt_getal(k["ph_gem"], 2) if k["ph_gem"] is not None else LEEG},
                 {"label": "pH min–max", "waarde": f"{fmt_getal(k['ph_min'], 2)}–{fmt_getal(k['ph_max'], 2)}"
                  if k["ph_min"] is not None else LEEG},
@@ -2952,18 +2948,18 @@ def _pagina_watergift_1():
         "dag voor alles van die dag. EC/pH wordt sinds 27-09-26 uit Priva gehaald; Priva bewaart zelf maar 5 dagen. "
         f"Band EC/pH (rood daarbuiten) per tuin in config.py."))
     vandaag = date.today()
-    deze_maandag = vandaag - timedelta(days=vandaag.weekday())
-    if "wg_eind" not in st.session_state:
-        st.session_state["wg_eind"] = deze_maandag
+    deze_zondag = wg.week_begin(vandaag)
+    if "wg_eind_zo" not in st.session_state:
+        st.session_state["wg_eind_zo"] = deze_zondag
     if st.session_state.get("wg_periode") not in WG_PERIODES:
         st.session_state["wg_periode"] = "4 wk"
 
     def _wg_blader(stappen):
-        nieuw = st.session_state["wg_eind"] + timedelta(weeks=stappen)
-        st.session_state["wg_eind"] = min(nieuw, deze_maandag)
+        nieuw = st.session_state["wg_eind_zo"] + timedelta(weeks=stappen)
+        st.session_state["wg_eind_zo"] = min(nieuw, deze_zondag)
 
     weken = WG_PERIODES[st.session_state["wg_periode"]]
-    van, tot = wg.periode(st.session_state["wg_eind"], weken)
+    van, tot = wg.periode(st.session_state["wg_eind_zo"], weken)
     tuinen = [t for t in sorted(TUINEN, key=lambda t: t["nummer"])
               if TUIN_WEERGAVE == "beide" or t["nummer"] == TUIN_WEERGAVE]
     data = _nu_data(vakstatus_dataversie(), str(vandaag))
@@ -2975,11 +2971,11 @@ def _pagina_watergift_1():
         st.markdown('<div style="font-size:14px;margin-bottom:0.3rem">Welke</div>', unsafe_allow_html=True)
         nav = st.container(horizontal=True, vertical_alignment="center", gap="small", width="content")
         nav.button("◀", key="wg_terug", on_click=_wg_blader, args=(-1,), help="Week eerder")
-        nav.markdown(f"**wk {van.isocalendar()[1]} – wk {tot.isocalendar()[1]}** "
+        nav.markdown(f"**wk {wg.weeknummer(van)} – wk {wg.weeknummer(tot)}** "
                      f"<span style='opacity:.7;font-size:13px'>({format_datum(van)} t/m {format_datum(tot)})</span>",
                      unsafe_allow_html=True, width=300)
         nav.button("▶", key="wg_verder", on_click=_wg_blader, args=(1,), help="Week later",
-                   disabled=st.session_state["wg_eind"] >= deze_maandag)
+                   disabled=st.session_state["wg_eind_zo"] >= deze_zondag)
     afdelingen = rij.multiselect("Afdelingen", alle_afd, default=alle_afd, key=f"wg_afd_{TUIN_WEERGAVE}",
                                  format_func=lambda a: f"Afd. {a}", width=400)
     vooruit = rij.toggle("Vooruitkijken", value=True, key="wg_vooruit",
