@@ -27,8 +27,11 @@ CSS = """
 .wg-scroll { overflow: auto; max-height: 75vh; border: 1px solid rgba(128,128,128,0.25); border-radius: 8px; }
 table.wg { border-collapse: separate; border-spacing: 0; font-size: 12px; font-variant-numeric: tabular-nums;
            color: var(--st-text-color, #31333f); }
-table.wg th, table.wg td { padding: 0 2px; height: 22px; min-width: 30px; max-width: 30px; text-align: center;
+table.wg th, table.wg td { padding: 0 1px; height: 22px; width: 24px; min-width: 24px; max-width: 24px;
+           text-align: center; box-sizing: border-box;
            border-bottom: 1px solid rgba(128,128,128,0.12); white-space: nowrap; }
+table.wg td.c { font-size: 11px; letter-spacing: -0.2px; overflow: hidden; }
+table.wg thead tr.dg th { font-size: 11px; }
 table.wg thead th { position: sticky; z-index: 3; background: var(--st-background-color, #fff); font-weight: 600; }
 table.wg thead tr.wk th { top: 0; height: 20px; font-size: 11px; opacity: 0.85; }
 table.wg thead tr.dg th { top: 20px; height: 30px; line-height: 1.1; font-weight: 500; cursor: pointer; }

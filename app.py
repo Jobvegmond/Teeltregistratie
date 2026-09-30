@@ -2725,7 +2725,7 @@ def _wg_teelten(data, tuin_id, eerste_emmer, stook):
     """
     {vak: [teelt]} oud naar nieuw, met start, florgib, oogst, eerste_emmer en
     verwacht_oogst (nog niet geoogst: de prognose van het teeltmodel, anders de
-    plandatum), plus de concept-planningen (concept=True). Elke teelt krijgt
+    plandatum), plus de concept-planningen t/m volgende week (concept=True). Elke teelt krijgt
     een ronde (0, 1, 2, ...) voor zijn kleur.
     """
     uit = {}
@@ -2740,8 +2740,14 @@ def _wg_teelten(data, tuin_id, eerste_emmer, stook):
             "id": int(t["id"]), "code": t["code"], "start": start, "florgib": vs.als_datum(t["datum_half"]),
             "oogst": oogst, "verwacht_oogst": verwacht, "concept": False,
             "eerste_emmer": vs.als_datum(eerste_emmer.get(int(t["id"])))})
+    # Concept-planningen alleen voor de eerstvolgende week (t/m zondag volgende week): verder vooruit is
+    # de planning nog te los.
+    vandaag = date.today()
+    grens = vandaag + timedelta(days=13 - vandaag.weekday())
     for _pid, vak, start, _duur, eind, _notitie in get_planning(tuin_id):
         start = vs.als_datum(start)
+        if not start or start > grens:
+            continue
         uit.setdefault(int(vak), []).append({
             "id": None, "code": None, "start": start, "florgib": None, "oogst": None,
             "verwacht_oogst": vs.als_datum(eind) or bereken_verwachte_oogstdatum(start)[1], "concept": True,
@@ -2924,7 +2930,7 @@ def _pagina_watergift_1():
     pagina_uitleg((
         "Per vak per dag de watergift (l/m²), met EC en pH van het watersysteem erboven. Blauw = water (donkerder "
         "= meer); elke teelt heeft een eigen achtergrondkleur, oranje = oogst (licht oranje = verwachte oogst), "
-        "gearceerd = concept-planning, wit = vak leeg. Met Vooruitkijken loopt de matrix door t/m de verwachte oogst "
+        "gearceerd = concept-planning (alleen t/m volgende week), wit = vak leeg. Met Vooruitkijken loopt de matrix door t/m de verwachte oogst "
         "van de laatste lopende of bevestigde teelt. Beweeg over een cel voor de details, klik op een vak voor het vak en op een "
         "dag voor alles van die dag. EC/pH wordt sinds 27-09-26 uit Priva gehaald; Priva bewaart zelf maar 5 dagen. "
         f"Band EC/pH (rood daarbuiten) per tuin in config.py."))
@@ -2961,7 +2967,7 @@ def _pagina_watergift_1():
                                  format_func=lambda a: f"Afd. {a}", width=400)
     vooruit = rij.toggle("Vooruitkijken", value=True, key="wg_vooruit",
                          help="Ook de komende weken, t/m de verwachte oogst van de laatste lopende of bevestigde "
-                              "teelt. Concepten die in die periode beginnen staan er gearceerd in.")
+                              "teelt. Concept-planningen van deze en volgende week staan er gearceerd in.")
     stook = _nu_alles(vandaag)[2]
 
     for tuin in tuinen:
@@ -4124,8 +4130,8 @@ def _pagina_help_1():
     **Watergift**
     - Per vak per dag de watergift (l/m²), met bovenaan EC en pH van het watersysteem. Blauw = water
       (donkerder = meer). Elke teelt heeft een eigen achtergrondkleur; groene streep links = plantdag,
-      paarse stip = Florgib, oranje = oogst (licht oranje = verwachte oogst), gearceerd = concept-planning,
-      wit = vak leeg. Met Vooruitkijken loopt de matrix door t/m de verwachte oogst van de laatste lopende of
+      paarse stip = Florgib, oranje = oogst (licht oranje = verwachte oogst), gearceerd = concept-planning
+      (alleen t/m volgende week), wit = vak leeg. Met Vooruitkijken loopt de matrix door t/m de verwachte oogst van de laatste lopende of
       bevestigde teelt.
     - Links per vak de plantweek, leeftijd en de totale watergift van de lopende teelt.
     - Beweeg over een cel voor de details; klik op een vak voor het vak (met de watergift per dag) en op
