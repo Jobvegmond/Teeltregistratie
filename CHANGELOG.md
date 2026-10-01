@@ -3,6 +3,16 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.6.1] - 2026-10-01
+
+### Toegevoegd
+- `importeer_florgib_overview.py`: vult de Florgib-datum van vakken zonder
+  Florgib met de eerste "Fg" uit het blad Overview van de klimaatregistratie
+  (tuin 1 en 3), tussen planten en oogst. Overschrijft nooit een registratie
+  in de app; elke wijziging staat in het logboek. Op productie gedraaid:
+  232 vakken bijgewerkt (tuin 1: 17, tuin 3: 215). De lengte bij de Florgib
+  staat niet in Overview en blijft leeg.
+
 ## [2.6.0] - 2026-10-01
 
 ### Toegevoegd
