@@ -55,6 +55,7 @@ from database import (
     LICHT_TEMP_BASIS,
     get_isojaar_week,
     get_wijzigingenlog,
+    lees_ruwe_tabel,
     get_planning,
     get_planning_per_week,
     voeg_planning_toe,
@@ -114,6 +115,7 @@ from logic import weken as kalender
 from logic import tuinvergelijking as tuinvgl
 from logic import teeltvergelijking as teeltvgl
 from logic import teeltprognose as tp
+from logic import ruwe_data
 from logic.afdelingen import sorteer_afdelingen
 from logic.lichtlijn import formule_tekst, t_ideaal
 from ui import filters, layout, legend, styles, vergelijkingstabel
@@ -4027,6 +4029,76 @@ def _pagina_log_1():
     else:
         st.info("Nog geen logregels.")
 
+# --- RUWE DATA (onder Meer) ---
+RD_LENGTES = ("Week", "Maand", "Kwartaal", "Jaar", "Alles")
+_RD_DATUM = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_RD_TIJD = re.compile(r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}")
+
+
+def _rd_frame(kolommen, rijen):
+    """
+    De rijen als DataFrame met datums als datum (dd-mm-yy in beeld) en tijden in Nederlandse tijd;
+    plus de column_config voor st.dataframe.
+    """
+    df = pd.DataFrame(rijen, columns=kolommen)
+    config = {}
+    for k in df.columns:
+        waarden = df[k].dropna()
+        if waarden.empty:
+            continue
+        eerste = waarden.iloc[0]
+        if (isinstance(eerste, str) and all(_RD_DATUM.match(w) for w in waarden.astype(str))) or (
+                isinstance(eerste, date) and not isinstance(eerste, datetime)):
+            df[k] = pd.to_datetime(df[k])          # NaT blijft leeg in beeld
+            config[k] = st.column_config.DateColumn(k, format="DD-MM-YY")
+        elif isinstance(eerste, datetime) or (isinstance(eerste, str) and all(_RD_TIJD.match(w) for w in waarden.astype(str))):
+            tijden = pd.to_datetime(df[k], utc=True)
+            df[k] = tijden.dt.tz_convert("Europe/Amsterdam").dt.tz_localize(None)
+            config[k] = st.column_config.DatetimeColumn(k, format="DD-MM-YY HH:mm")
+    # Lege tekstcellen leeg tonen i.p.v. "None".
+    for k in df.columns:
+        if df[k].dtype == object:
+            df[k] = df[k].where(df[k].notna(), "")
+    return df, config
+
+
+def _pagina_ruwe_data():
+    """De onderliggende tabellen, alleen lezen, met dezelfde filters als de rest van de app."""
+    vandaag = date.today()
+    balk = layout.filterbalk("ruwe_data")
+    t = ruwe_data.tabel(filters.keuze("Tabel", [t.naam for t in ruwe_data.TABELLEN], "rd_tabel",
+                                      "Vakken (teelten)", plek=balk))
+    van = tot = None
+    if t.datum:
+        # Van de oudste historie tot een jaar vooruit (planning).
+        eerste, laatste = date(vandaag.year - 4, 1, 1), vandaag + timedelta(days=366)
+        lengte, periode = filters.periode(
+            "rd_periode", RD_LENGTES, "Alles",
+            opties_van=lambda n: [] if n == "Alles" else perioden.reeks(eerste, laatste, n),
+            standaard_van=lambda n: None if n == "Alles" else perioden.periode_sleutel(vandaag, n)[0],
+            format_van=lambda n: lambda k: perioden.periode_label(k, n),
+            huidig_van=lambda n: None if n == "Alles" else perioden.periode_sleutel(vandaag, n)[0], plek=balk)
+        if periode:
+            van, tot = perioden.periode_grenzen(periode, lengte)
+    vakken = (filters.keuzes("Vak", get_vaknummers() or [], f"rd_vak_t{TUIN_NUMMER}", plek=balk,
+                             placeholder="Alle vakken") if t.vak else [])
+    zoek = filters.zoekveld("rd_zoek", "Woord, code of getal", plek=balk)
+
+    kolommen, rijen = lees_ruwe_tabel(*ruwe_data.query(t, TUIN_ID, van, tot, vakken))
+    rijen = ruwe_data.zoek([dict(zip(kolommen, r)) for r in rijen], zoek)
+    df, config = _rd_frame(kolommen, [list(r.values()) for r in rijen])
+    if df.empty:
+        st.caption("Geen rijen die aan de filters voldoen.")
+        return
+    st.dataframe(df, hide_index=True, use_container_width=True, column_config=config, height=560)
+    uitleg_help.voetnoot(f"{len(df)} rijen · {TUIN_NAAM} · {t.uitleg}")
+    bestand = f"{t.naam.split(' (')[0].lower().replace(' ', '_').replace('/', '-')}_{TUIN_NAAM.replace(' ', '').lower()}"
+    with st.container(horizontal=True, gap="small"):
+        layout.export(excel_bestand({t.naam: df}), f"{bestand}.xlsx", sleutel="rd_excel")
+        layout.export(df.to_csv(index=False, sep=";", decimal=",").encode("utf-8-sig"), f"{bestand}.csv", "CSV",
+                      sleutel="rd_csv", mime="text/csv")
+
+
 # --- PROGNOSEKWALITEIT (onder Meer) ---
 PK_HORIZON_LABEL = {28: "28 d vooraf", 14: "14 d vooraf", 7: "7 d vooraf", prognoselog.FLORGIB: "Na Florgib"}
 PK_KOLOMMEN = [
@@ -4159,8 +4231,9 @@ def pagina_meer():
     """Weinig gebruikt: import, prognosekwaliteit en logboek als subtabbladen."""
     layout.pagina_kop(
         "Meer",
-        wat="Wat weinig gebruikt wordt: data importeren, de kwaliteit van de oogstprognose en het logboek van "
-            "alle wijzigingen. De uitleg van elke pagina staat achter de knop Uitleg op die pagina.",
+        wat="Wat weinig gebruikt wordt: data importeren, de kwaliteit van de oogstprognose, het logboek van "
+            "alle wijzigingen en de ruwe data (de onderliggende tabellen). De uitleg van elke pagina staat achter "
+            "de knop Uitleg op die pagina.",
         lezen=[
             "**Vak** = één vak in de kas met één teeltronde; elke ronde krijgt een code (jaar + plantweek + vak). "
             "**Teelt** = alle vakken uit één plantweek. **Florgib** = de lengtemeting halverwege de teelt; die "
@@ -4174,19 +4247,25 @@ def pagina_meer():
             "*Opmerking* bij lopende vakken; *Wijzigen of verwijderen* per vak en per onderdeel.",
             "**Prognosekwaliteit**: per tuin hoe goed de prognose en de plandatum achteraf klopten; klik op een "
             "misser voor het vak.",
-            "**Logboek**: filter op gebruiker, type of een woord; nieuwste bovenaan."],
+            "**Logboek**: filter op gebruiker, type of een woord; nieuwste bovenaan.",
+            "**Ruwe data**: kies een tabel en filter op periode, vak of een woord (zoekt in alle kolommen). Alleen "
+            "lezen; aanpassen gaat via de zijbalk of de pagina's. Export naar Excel of CSV (puntkomma, "
+            "decimale komma)."],
         bron="Import: dagexport van de klimaatcomputer en de energie-export uit Priva; de Priva-API wordt elke "
              "ochtend automatisch opgehaald. Prognosekwaliteit: elke dag legt de app per lopend vak de "
              "oogstprognose vast; na de oogst wordt die vergeleken met de dag waarop de helft van de emmers "
              "binnen was (zonder emmers de oogstdatum).",
     )
-    tab_import, tab_prognose, tab_log = st.tabs(["Data importeren", "Prognosekwaliteit", "Logboek"])
+    tab_import, tab_prognose, tab_log, tab_ruw = st.tabs(
+        ["Data importeren", "Prognosekwaliteit", "Logboek", "Ruwe data"])
     with tab_import:
         _pagina_import_1()
     with tab_prognose:
         _pagina_prognosekwaliteit()
     with tab_log:
         _pagina_log_1()
+    with tab_ruw:
+        _pagina_ruwe_data()
 
 
 _pagina.run()

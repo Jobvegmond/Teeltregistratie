@@ -47,6 +47,7 @@ layout.export(excel, "watergift_tuin_3.xlsx")
 | Teelt (plantweek), pootweek | ◀ [Teelt wk 33 '26 · 8 vakken ▾] ▶ | `filters.bladeraar()` |
 | Afdeling | Pills, meervoudig, teeltvolgorde, standaard alles aan | `filters.afdelingen()` (in app.py: `afdeling_filters()`) |
 | Overige filters (ras, categorie, type, gebruiker) | Pills bij ≤ 8 opties, anders keuzelijst met meervoudige keuze; niets gekozen = alles | `filters.keuzes()` |
+| Eén keuze uit een lange lijst (welke tabel) | Keuzelijst, altijd één gekozen | `filters.keuze()` |
 | Zoeken | Eén tekstveld, alleen op registerpagina's, altijd als laatste in de filterbalk | `filters.zoekveld()` |
 | Weergave-optie (eenheid, vergelijk met) | Knoppengroep, altijd één gekozen; nooit radio | `filters.weergave()` |
 | Aan/uit (Vooruitkijken, Alle concepten tonen) | Schakelaar | `filters.schakelaar()` |
