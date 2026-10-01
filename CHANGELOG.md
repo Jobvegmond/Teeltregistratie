@@ -3,6 +3,25 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.6.3] - 2026-10-01
+
+### Toegevoegd
+- `importeer_florgib_overview.py` vult voor afgeronde vakken van tuin 3 ook
+  de **oogstlengte** en het **oogstgewicht** uit het blad Plantingen, alleen
+  waar die in de app nog leeg zijn. Gewicht = het gemiddelde van "Gewicht
+  2-3" en "Gewicht 3-4" (rijpheid 2-4), of het enige gewicht dat er is.
+  Op productie gedraaid: 10 vakken een gewicht (wk 24 800 g, wk 25 775 g,
+  wk 26 650 g, wk 27 700 g); oogstlengtes stonden er al allemaal.
+
+## [2.6.2] - 2026-10-01
+
+### Toegevoegd
+- `importeer_florgib_overview.py` vult nu ook de **lengte bij de Florgib**
+  met de knoplengte uit het blad Plantingen van tuin 3 (één waarde per
+  plantweek van het lopende jaar), voor vakken met een Florgib en zonder
+  lengte in de app. Gecontroleerd: waar de app al een lengte had (wk 27–31)
+  is die gelijk. Op productie gedraaid: 47 vakken (wk 12–27 '26).
+
 ## [2.6.1] - 2026-10-01
 
 ### Toegevoegd
