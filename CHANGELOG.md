@@ -3,6 +3,17 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.6.0] - 2026-10-01
+
+### Toegevoegd
+- **Meer › Ruwe data**: de onderliggende tabellen om iets op te zoeken (vakken,
+  emmers, klimaat, watergift, gietbeurten, EC/pH, warmte, gas, stek,
+  opmerkingen, concept- en jaarplanning, prognoselogboek, teelthistorie en
+  vakgegevens). Alleen lezen, voor de tuin bovenaan, met filters op periode,
+  vak en een woord (zoekt in alle kolommen). Datums als dd-mm-yy, tijden in
+  Nederlandse tijd. Export naar Excel en CSV. Gebruikers, instellingen en het
+  logboek staan er bewust niet in.
+
 ## [2.5.1] - 2026-09-30
 
 ### Gewijzigd

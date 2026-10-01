@@ -8,6 +8,7 @@ st.date_input.
   bladeraar()   ◀ [label ▾] ▶ over een lijst (teelt/plantweek, pootweek, …)
   afdelingen()  pills, meervoudig, teeltvolgorde, standaard alles aan
   keuzes()      overige filters: pills bij ≤ 8 opties, anders keuzelijst
+  keuze()       één keuze uit een lange lijst (bijv. welke tabel): keuzelijst
   zoekveld()    één tekstveld, alleen op registerpagina's, altijd als laatste
   weergave()    weergave-optie (eenheid, vergelijk met): knoppengroep
   schakelaar()  aan/uit-optie
@@ -209,6 +210,15 @@ def keuzes(label, opties, sleutel, plek=None, format_func=str, placeholder=None)
         plek.multiselect(label, opties, key=w, on_change=_kopieer(sleutel, leeg=[]), format_func=format_func,
                          placeholder=placeholder or f"Alle ({len(opties)})", width=220)
     return list(bewaard(sleutel, []))
+
+
+def keuze(label, opties, sleutel, standaard, plek=None, format_func=str, breedte=260):
+    """Eén keuze uit een lange lijst (bijv. welke tabel): keuzelijst, altijd één gekozen."""
+    plek = plek or st
+    opties = list(opties)
+    w = _klaarzetten(sleutel, standaard if standaard in opties else opties[0], geldig=lambda v: v in opties)
+    plek.selectbox(label, opties, key=w, on_change=_kopieer(sleutel), format_func=format_func, width=breedte)
+    return bewaard(sleutel)
 
 
 def zoekveld(sleutel, placeholder="Zoeken", label="Zoeken", plek=None):

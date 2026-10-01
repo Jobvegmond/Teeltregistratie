@@ -655,6 +655,14 @@ def log_wijziging(gebruiker, actie, entiteit, entiteit_id=None, omschrijving=Non
         pass
 
 
+def lees_ruwe_tabel(sql, params):
+    """Alleen lezen: (kolomnamen, rijen) van een vaste query uit logic/ruwe_data.py (Meer › Ruwe data)."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(sql, params)
+        return [k[0] for k in cursor.description], cursor.fetchall()
+
+
 def get_wijzigingenlog(limiet=300):
     """Geeft de meest recente logregels terug (nieuwste eerst)."""
     with get_connection() as conn:
