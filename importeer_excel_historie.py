@@ -254,7 +254,7 @@ def schrijf(teelten):
                 VALUES (%s, %s, %s, %s, %s)
             """, (
                 database.get_of_maak_teeltvak(t["vak"]), str(t["start"]), str(t["oogst"]),
-                t["planten"], database.genereer_teelt_code(t["start"], t["vak"]),
+                t["planten"], database.genereer_teelt_code(t["start"], t["vak"], 3),
             ))
         conn.commit()
 

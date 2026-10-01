@@ -66,10 +66,12 @@ def format_datum(datum):
     return datum.strftime("%d-%m-%y")
 
 
-def genereer_teelt_code(datum_teelt_start, vaknummer):
+def genereer_teelt_code(datum_teelt_start, vaknummer, tuin_nummer):
     """
     Bouwt de unieke teelt-code: laatste 2 cijfers van het jaar + plantweek (2 cijfers)
-    + vaknummer (2 cijfers). Bijv. gestart in 2026, week 9, vak 4 -> '260904'.
+    + tuinnummer (1 cijfer) + vaknummer (2 cijfers). Bijv. gestart in 2026, week 9,
+    tuin 3, vak 4 -> '2609304'. Met de tuin erin zijn de codes van tuin 1 en tuin 3
+    niet meer gelijk (sinds 2.7.0; daarvoor 6 cijfers zonder tuin).
 
     Het jaar is het ISO-jaar dat bij de plantweek hoort, niet het kalenderjaar:
     29-12-2025 valt in week 1 van 2026 en krijgt dus '2601..'. Met het
@@ -80,7 +82,17 @@ def genereer_teelt_code(datum_teelt_start, vaknummer):
         datum_teelt_start = datetime.strptime(datum_teelt_start, "%Y-%m-%d").date()
 
     isojaar, plantweek = get_isojaar_week(datum_teelt_start)
-    return f"{isojaar % 100:02d}{plantweek:02d}{int(vaknummer):02d}"
+    return f"{isojaar % 100:02d}{plantweek:02d}{int(tuin_nummer)}{int(vaknummer):02d}"
+
+
+def tuin_nummer_van_vak(teeltvak_id):
+    """Het tuinnummer (1 of 3) van een teeltvak, voor de teelt-code."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT tu.nummer FROM teeltvakken v JOIN tuinen tu ON tu.id = v.tuin_id WHERE v.id = %s",
+                       (teeltvak_id,))
+        rij = cursor.fetchone()
+    return rij[0] if rij else STANDAARD_TUIN
 
 
 # --- VERBINDING (POOL) ---
@@ -557,13 +569,14 @@ def init_db():
 
         # Migratie: bestaande teelten krijgen alsnog een code als hun vak een vaknummer heeft.
         cursor.execute("""
-            SELECT t.id, t.datum_teelt_start, v.vaknummer
+            SELECT t.id, t.datum_teelt_start, v.vaknummer, tu.nummer
             FROM teelten t
             JOIN teeltvakken v ON t.teeltvak_id = v.id
+            JOIN tuinen tu ON tu.id = v.tuin_id
             WHERE t.code IS NULL AND v.vaknummer IS NOT NULL
         """)
-        for teelt_id, datum_start, vaknummer in cursor.fetchall():
-            code = genereer_teelt_code(datum_start, vaknummer)
+        for teelt_id, datum_start, vaknummer, tuin_nummer in cursor.fetchall():
+            code = genereer_teelt_code(datum_start, vaknummer, tuin_nummer)
             cursor.execute("UPDATE teelten SET code = %s WHERE id = %s", (code, teelt_id))
 
         # Prognoselogboek: per lopend vak per dag wat het teeltmodel voorspelde
@@ -719,12 +732,12 @@ def start_nieuwe_teelt(vaknummer, datum_teelt_start, aantal_planten=None, naam=N
     """
     Start een nieuwe teelt in een teeltvak (op basis van vaknummer 1-39).
     Maakt het teeltvak aan indien het nog niet bestaat.
-    Genereert de unieke teelt-code (jaar+week+vaknummer) en slaat het
+    Genereert de unieke teelt-code (jaar+week+tuin+vaknummer) en slaat het
     aantal geplante planten op.
     Geeft het id van de nieuwe teelt terug.
     """
     teeltvak_id = get_of_maak_teeltvak(vaknummer, naam, tuin_id=tuin_id)
-    code = genereer_teelt_code(datum_teelt_start, vaknummer)
+    code = genereer_teelt_code(datum_teelt_start, vaknummer, tuin_nummer_van_vak(teeltvak_id))
 
     with get_connection() as conn:
         cursor = conn.cursor()
@@ -967,7 +980,14 @@ def update_teelt_volledig(teelt_id, datum_teelt_start, datum_half, lengte_half,
                            aantal_planten=None, vaknummer=None, gebruiker=None,
                            florgib_gram=None):
     """Overschrijft alle velden van een bestaande teelt (gebruikt bij handmatige correctie)."""
-    code = genereer_teelt_code(datum_teelt_start, vaknummer) if vaknummer else None
+    if vaknummer:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT teeltvak_id FROM teelten WHERE id = %s", (teelt_id,))
+            rij = cursor.fetchone()
+        code = genereer_teelt_code(datum_teelt_start, vaknummer, tuin_nummer_van_vak(rij[0]) if rij else STANDAARD_TUIN)
+    else:
+        code = None
     lengte_half, lengte_eind, oogstgewicht = meting(lengte_half), meting(lengte_eind), meting(oogstgewicht)
 
     with get_connection() as conn:

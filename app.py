@@ -3254,7 +3254,7 @@ def toon_vakkenregister(vandaag, tuin_weergave, afdelingen):
     van, tot = perioden.periode_grenzen(plantperiode, lengte) if plantperiode else (date.min, date.max)
     rassen = sorted({r["Ras"] for r in alle if r["Ras"]})
     gekozen_ras = filters.keuzes("Ras", rassen, "reg_ras", plek=balk) if rassen else []
-    zoek = filters.zoekveld("reg_zoek", "Vak of code, bijv. 12 of 263401", plek=balk)
+    zoek = filters.zoekveld("reg_zoek", "Vak of code, bijv. 12 of 2634301", plek=balk)
 
     def past(r):
         afd = afdelingen.get(r["_tuin_id"])
@@ -4235,7 +4235,8 @@ def pagina_meer():
             "alle wijzigingen en de ruwe data (de onderliggende tabellen). De uitleg van elke pagina staat achter "
             "de knop Uitleg op die pagina.",
         lezen=[
-            "**Vak** = één vak in de kas met één teeltronde; elke ronde krijgt een code (jaar + plantweek + vak). "
+            "**Vak** = één vak in de kas met één teeltronde; elke ronde krijgt een code: jaar + plantweek + tuin + "
+            "vak, bijv. 2634301 = 2026, week 34, tuin 3, vak 1. "
             "**Teelt** = alle vakken uit één plantweek. **Florgib** = de lengtemeting halverwege de teelt; die "
             "stuurt de prognose bij.",
             "Datums staan als dd-mm-jj; weken lopen van zondag t/m zaterdag (de plantweek in de code blijft de "
