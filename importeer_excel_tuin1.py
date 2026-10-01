@@ -412,7 +412,7 @@ def schrijf(teelten, tuin_id):
             """, (
                 database.get_of_maak_teeltvak(t["vak"], tuin_id=tuin_id),
                 str(t["start"]), str(t["oogst"]) if t["oogst"] else None,
-                t["planten"], database.genereer_teelt_code(t["start"], t["vak"]),
+                t["planten"], database.genereer_teelt_code(t["start"], t["vak"], 1),
                 ras, t["lengte"],
                 str(t["florgib"]) if t["florgib"] else None, t["florgib_lengte"],
                 t["uitval_pct"], t["florgib_gram"],

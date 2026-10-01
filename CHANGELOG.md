@@ -3,6 +3,16 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.7.0] - 2026-10-01
+
+### Gewijzigd
+- **Teeltcode met de tuin erin**: jaar + plantweek + tuin + vak (7 cijfers),
+  bijv. 2634301 = 2026, week 34, tuin 3, vak 1. De codes van tuin 1 en tuin 3
+  zijn daardoor niet meer gelijk (262701 bestond in beide tuinen).
+- Alle bestaande codes omgezet met `herstel_teeltcodes.py` (386 vakken, het
+  prognoselogboek volgt mee); alleen het tuincijfer komt ertussen. De
+  teelthistorie heeft geen teeltcodes en blijft zoals hij is.
+
 ## [2.6.3] - 2026-10-01
 
 ### Toegevoegd
