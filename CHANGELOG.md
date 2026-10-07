@@ -3,6 +3,17 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.7.1] - 2026-10-07
+
+### Gecorrigeerd
+- **Watergift na het op nul zetten van de tellers.** Op 06-10-26 om 10:48 zijn
+  de watertellers van tuin 3 gereset; de oude stand kwam 26 seconden later nog
+  één keer terug. Die terugsprong telde als gift: 55–599 l/m² per vak in plaats
+  van 0–13. Een sprong terug naar de stand van vóór een reset (binnen een uur)
+  en een stap van meer dan 50 l/m² tellen nu niet meer, ook niet als gietbeurt.
+  Een dag met alleen een reset krijgt 0,0, zodat een eerder foute waarde wordt
+  overschreven.
+
 ## [2.7.0] - 2026-10-01
 
 ### Gewijzigd
