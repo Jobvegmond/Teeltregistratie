@@ -30,6 +30,24 @@ class TestGift(unittest.TestCase):
         self.assertEqual(uit[date(2026, 9, 28)], (0.6, 1))
         self.assertEqual(uit[date(2026, 9, 29)], (0.0, 0))
 
+    def test_terugsprong_na_reset_telt_niet(self):
+        # Echt patroon uit Priva, tuin 3 vak 2, 06-10-26: tellers op nul, 26 s later nog één keer de oude
+        # stand, daarna definitief nul en een gift van 13,2. Opgeslagen werd 595,9 (582,7 + 13,2).
+        def o(uur, minuut, seconde=0):
+            return datetime(2026, 10, 6, uur, minuut, seconde, tzinfo=UTC) - pw.LOKALE_OFFSET
+        reeks = [(o(3, 56, 55), 582.7), (o(10, 48, 22), 0.0), (o(10, 48, 48), 582.7), (o(10, 54, 4), 0.0),
+                 (o(14, 0), 0.0), (o(14, 0, 5), 6.0), (o(14, 0, 10), 13.2)]
+        self.assertEqual(pw.gift_per_dag(reeks), {date(2026, 10, 6): (13.2, 1)})
+        (start, eind, liter), = pw.beurten_uit(reeks)
+        self.assertEqual((start, eind, round(liter, 1)), (o(14, 0), o(14, 0, 10), 13.2))
+        # Een lage oude stand (onder MAX_TOENAME_PER_STAP) valt via de terugsprongregel weg.
+        laag = [(o(3, 0), 12.0), (o(10, 48, 22), 0.0), (o(10, 48, 48), 12.0), (o(10, 54, 4), 0.0)]
+        self.assertEqual(pw.gift_per_dag(laag), {date(2026, 10, 6): (0.0, 0)})
+
+    def test_onmogelijk_grote_stap_telt_niet(self):
+        reeks = [(t(28, 6), 10.0), (t(28, 7), 410.0), (t(28, 8), 410.0), (t(28, 8, 0, 5), 411.5)]
+        self.assertEqual(pw.gift_per_dag(reeks), {date(2026, 9, 28): (1.5, 1)})
+
 
 class TestKwaliteit(unittest.TestCase):
     def test_tijdgewogen_met_maximaal_gewicht(self):

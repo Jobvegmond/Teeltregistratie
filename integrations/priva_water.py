@@ -78,18 +78,42 @@ def _begin_toename(t0, t1):
     return t0 if t1 - t0 <= LOG_STAP else t1 - timedelta(seconds=5)
 
 
+# Bij het op nul zetten van de tellers kan de oude stand nog even terugkomen (tuin 3, 06-10-26 10:48:
+# 582,7 → 0 → 26 s later 582,7 → 0). Die terugsprong is geen gift. Een sprong terug naar de stand van
+# vóór de reset binnen TERUGSPRONG_VENSTER telt niet, en een stap groter dan MAX_TOENAME_PER_STAP
+# (normaal hooguit ~20 l/m² per dag) evenmin.
+TERUGSPRONG_VENSTER = timedelta(hours=1)
+TERUGSPRONG_MARGE = 1.0
+MAX_TOENAME_PER_STAP = 50.0
+
+
+def _stappen(reeks):
+    """
+    (t0, t1, toename) per opeenvolgend paar meterstanden. Een reset, een terugsprong naar de stand van
+    vóór de reset en een onmogelijk grote stap krijgen toename 0: gemeten, niets gegeven.
+    """
+    reset = None   # (tijdstip, stand vóór de reset)
+    for (t0, v0), (t1, v1) in zip(reeks, reeks[1:]):
+        toename = v1 - v0
+        if toename < WATER_RESET_DREMPEL:
+            reset = (t1, v0)
+            toename = 0.0
+        elif toename > MAX_TOENAME_PER_STAP or (
+                toename > TERUGSPRONG_MARGE and reset is not None
+                and t1 - reset[0] <= TERUGSPRONG_VENSTER and abs(v1 - reset[1]) <= TERUGSPRONG_MARGE):
+            toename = 0.0
+        yield t0, t1, toename
+
+
 def gift_per_dag(reeks):
     """
-    {dag: (liter per m², aantal beurten)} uit een meterstandreeks. Een grote
-    negatieve sprong is een reset en telt niet. Een dag met meterstanden maar
+    {dag: (liter per m², aantal beurten)} uit een meterstandreeks. Een reset
+    (en een terugsprong, zie _stappen) telt niet. Een dag met meterstanden maar
     zonder toename geeft (0.0, 0): gemeten, niets gegeven. Een beurt telt op de
     dag waarop hij begint.
     """
     uit, vorige_toename = {}, None
-    for (t0, v0), (t1, v1) in zip(reeks, reeks[1:]):
-        toename = v1 - v0
-        if toename < WATER_RESET_DREMPEL:
-            continue
+    for t0, t1, toename in _stappen(reeks):
         begin = _begin_toename(t0, t1) if toename > 0 else t0
         dag = lokale_dag(begin)
         liter, beurten = uit.get(dag, (0.0, 0))
@@ -174,9 +198,8 @@ def beurten_uit(reeks):
     Een beurt = opeenvolgende toenames zonder pauze langer dan BEURT_PAUZE.
     """
     uit = []
-    for (t0, v0), (t1, v1) in zip(reeks, reeks[1:]):
-        toename = v1 - v0
-        if toename <= 0 or toename < WATER_RESET_DREMPEL:
+    for t0, t1, toename in _stappen(reeks):
+        if toename <= 0:
             continue
         begin = _begin_toename(t0, t1)
         if uit and begin - uit[-1][1] <= BEURT_PAUZE:
