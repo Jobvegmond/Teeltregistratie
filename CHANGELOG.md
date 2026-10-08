@@ -3,6 +3,18 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.9.0] - 2026-10-08
+
+### Toegevoegd
+- **Warmte en gas uit de pulsmeters** (`priva_pulsmeters.py`, rekenwerk in
+  `logic/pulsmeters.py`): leest de Priva-bestanden op de NAS (map Priva: `bron historie`
+  per uur, `bron live` per minuut) en zet per dag de warmte (pulsmeter 2, GJ) en het gas
+  (pulsmeter 1, m³) van tuin 3 in de database. Verbruik = de toename van de tellerstand;
+  een reset telt niet, een dag alleen als hij helemaal gedekt is. Standaard alleen dagen
+  die nog ontbreken; cijfers uit de energie-export blijven staan. Gecontroleerd op
+  okt 2025 – sep 2026: warmte 99,9 %, gas 100 % gelijk aan de export. Hiermee zijn
+  28-09 t/m 07-10-26 aangevuld (NAS en productie).
+
 ## [2.8.0] - 2026-10-08
 
 ### Toegevoegd
