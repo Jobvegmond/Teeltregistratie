@@ -5,6 +5,16 @@ inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
 ## [2.8.0] - 2026-10-08
 
+### Toegevoegd
+- **Pagina Opzoeken**: een teelt (alle vakken uit één plantweek) of één vak met alle
+  informatie die er is. Kies de teelt met ◀ ▶ (dezelfde keuze als Teeltvergelijking) en
+  een vak, of zoek op een teeltcode of vaknummer. Bij een teelt een samenvatting, bij één vak
+  alles uit de vakpopup; de vakken van de teelt staan er altijd bij. Daaronder elke bron in
+  een openklapmenu: oogst, Florgib en lengtes, opmerkingen, stek, watergift, gietbeurten,
+  EC/pH, klimaat, warmte en gas, het verloop van de prognose, behandelingen, teelthistorie
+  en wijzigingen, en alles in één Excel-bestand. Watergift, klimaat en energie per vak van
+  planten tot oogst. In de vakpopup gaat de knop *Alles over dit vak* naar deze pagina.
+
 ### Gewijzigd
 - **Planning en Teeltoverzicht samengevoegd** tot één pagina Teeltoverzicht, met de
   **tijdlijn** als hoofdweergave: per vak één regel met de afgeronde teelten (grijs), de
@@ -26,6 +36,7 @@ inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
   passen op één regel en de invoervelden hebben meer ruimte.
 - **Geen paginatitel meer** onder de navigatie: de gevulde knop laat al zien waar je bent. De
   knop Uitleg is kleiner en staat rechts op de regel van de tuinkeuze; dat scheelt een regel.
+- Excel-export: tekens die Excel niet toestaat in een bladnaam (zoals /) worden een streepje.
 - **Strakkere knoppen**: overal een kleine ronding van 0,2 rem in plaats van ronde hoeken en
   pilvormen (thema in `.streamlit/config.toml`; navigatiebalk, kop, afdelingsknoppen,
   vakblokken en tegels volgen dezelfde ronding).

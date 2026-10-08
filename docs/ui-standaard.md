@@ -116,7 +116,8 @@ alles = filters.schakelaar("Alle concepten tonen", "planning_alles", False, plek
 
 | Informatie | Thuis | Elders |
 |---|---|---|
-| Details van een vak | De vakpopup `vak_venster()` | Overal dezelfde popup (matrix, register, Teeltvergelijking, Opmerkingen, Watergift, missers) |
+| Details van een vak | De vakpopup `vak_venster()` (inhoud: `vak_details()`) | Overal dezelfde popup (tijdlijn, matrix, register, Teeltvergelijking, Opmerkingen, Watergift, missers); de knop *Alles over dit vak* gaat naar Opzoeken |
+| Alle gegevens van een teelt of vak | Pagina Opzoeken (bovenaan `vak_details()`, daaronder elke bron als tabel) | – |
 | Watergift per vak | Pagina Watergift | Vakpopup (staafjes op de tijdlijn + tabel Watergift per dag) |
 | Lijst van vakken | Vakkenregister (Teeltoverzicht) | Doorklik-link met het juiste filter |
 | Opmerkingen | Pagina Opmerkingen | Vakpopup; elders één regel "n opmerkingen →" |
