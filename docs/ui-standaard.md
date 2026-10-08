@@ -152,4 +152,4 @@ nooit `isocalendar()` direct.
 - **Ronding**: knoppen, velden en kaders zijn licht afgerond, 0,2 rem (`baseRadius` en `buttonRadius` in
   `.streamlit/config.toml`). Eigen opmaak (navigatiebalk, kop, vakblokken, tegels, tabellen) gebruikt dezelfde
   0,2 rem; geen pilvormen.
-- **Zijbalk**: 360 px breed, zodat de knoppen van *Wat wil je doen?* op één regel passen (`ui/styles.py`).
+- **Zijbalk**: 330 px breed, zodat de knoppen van *Wat wil je doen?* op één regel passen (`ui/styles.py`).

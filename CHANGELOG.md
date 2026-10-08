@@ -22,7 +22,7 @@ inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
   openklapmenu's onder de tijdlijn; het vakkenregister staat daaronder.
 - Vervallen: de strokenplanning (Gantt) en "Eén vak handmatig plannen" (de tijdlijn doet
   beide). Het adres /planning bestaat niet meer.
-- **Zijbalk 360 px breed** (was 300): de knoppen Florgib · Oogst · Opmerking · Wijzigen
+- **Zijbalk 330 px breed** (was 300): de knoppen Florgib · Oogst · Opmerking · Wijzigen
   passen op één regel en de invoervelden hebben meer ruimte.
 - **Strakkere knoppen**: overal een kleine ronding van 0,2 rem in plaats van ronde hoeken en
   pilvormen (thema in `.streamlit/config.toml`; navigatiebalk, kop, afdelingsknoppen,
