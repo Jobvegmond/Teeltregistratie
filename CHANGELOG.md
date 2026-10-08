@@ -36,6 +36,12 @@ inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
   passen op één regel en de invoervelden hebben meer ruimte.
 - **Geen paginatitel meer** onder de navigatie: de gevulde knop laat al zien waar je bent. De
   knop Uitleg is kleiner en staat rechts op de regel van de tuinkeuze; dat scheelt een regel.
+- **Strakkere vergelijkingstabellen** (Teeltvergelijking, Tuin vergelijking): alleen
+  horizontale lijnen (Streamlit zette om elke cel een rand), geen zebrastrepen, minder
+  opvulling en waarden die nooit meer midden in een getal afbreken. Op een smal scherm schuift
+  de tabel zijwaarts met de eerste kolom vast.
+- Navigatieknoppen vielen op een smal scherm over elkaar zodra ze naar een tweede regel
+  liepen (negatieve marge van Streamlit); nu staan ze netjes onder elkaar.
 - Excel-export: tekens die Excel niet toestaat in een bladnaam (zoals /) worden een streepje.
 - **Strakkere knoppen**: overal een kleine ronding van 0,2 rem in plaats van ronde hoeken en
   pilvormen (thema in `.streamlit/config.toml`; navigatiebalk, kop, afdelingsknoppen,

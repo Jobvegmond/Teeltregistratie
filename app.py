@@ -254,6 +254,10 @@ st.markdown("""
     background: transparent;
 }
 .st-key-vem_nav [data-testid="stPageLink"] a:hover { background: rgba(46, 106, 76, 0.10); }
+/* Streamlit geeft een paginaknop een negatieve marge (−6 px boven en onder); lopen de knoppen op een smal
+   scherm door naar een tweede regel, dan schuiven ze daardoor over elkaar. Marge weg, knop iets compacter. */
+.st-key-vem_nav [data-testid="stElementContainer"] { margin: 0 !important; }
+.st-key-vem_nav [data-testid="stPageLink"] a { margin: 0; line-height: 1.5; }
 .st-key-vem_nav_actief [data-testid="stPageLink"] a { background: #2E6A4C; border-color: #2E6A4C; }
 .st-key-vem_nav_actief [data-testid="stPageLink"] a,
 .st-key-vem_nav_actief [data-testid="stPageLink"] a * { color: #fff !important; }

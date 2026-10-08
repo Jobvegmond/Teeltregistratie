@@ -154,3 +154,5 @@ nooit `isocalendar()` direct.
   `.streamlit/config.toml`). Eigen opmaak (navigatiebalk, kop, vakblokken, tegels, tabellen) gebruikt dezelfde
   0,2 rem; geen pilvormen.
 - **Zijbalk**: 330 px breed, zodat de knoppen van *Wat wil je doen?* op één regel passen (`ui/styles.py`).
+- **Vergelijkingstabellen** (`ui/vergelijkingstabel.py`, opmaak in `ui/styles.py`): alleen horizontale lijnen, geen
+  zebra, waarden op één regel; op een smal scherm zijwaarts scrollen met de eerste kolom vast.
