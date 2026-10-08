@@ -6,14 +6,18 @@ inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 ## [2.8.0] - 2026-10-08
 
 ### Toegevoegd
-- **Pagina Opzoeken**: een teelt (alle vakken uit één plantweek) of één vak met alle
-  informatie die er is. Kies de teelt met ◀ ▶ (dezelfde keuze als Teeltvergelijking) en
-  een vak, of zoek op een teeltcode of vaknummer. Bij een teelt een samenvatting, bij één vak
+- **Pagina Teelt** (Opzoeken en Teeltvergelijking samen): de tuinkeuze bovenaan kiest de
+  weergave. Bij **Beide** de vergelijking van Tuin 1, Tuin 3 en het totaal (zoals
+  Teeltvergelijking was); een klik op een vak opent het in zijn eigen tuin. Bij **Tuin 1** of
+  **Tuin 3** een teelt (alle vakken uit één plantweek) of één vak met alle informatie die er
+  is. De teelt blijft staan als je wisselt; zoeken op een teeltcode of vaknummer opent het vak
+  in zijn eigen tuin. Bij een teelt een samenvatting, bij één vak
   alles uit de vakpopup; de vakken van de teelt staan er altijd bij. Daaronder elke bron in
   een openklapmenu: oogst, Florgib en lengtes, opmerkingen, stek, watergift, gietbeurten,
   EC/pH, klimaat, warmte en gas, het verloop van de prognose, behandelingen, teelthistorie
   en wijzigingen, en alles in één Excel-bestand. Watergift, klimaat en energie per vak van
   planten tot oogst. In de vakpopup gaat de knop *Alles over dit vak* naar deze pagina.
+  Het adres /teeltvergelijking bestaat niet meer (nu /teelt).
 
 ### Gewijzigd
 - **Planning en Teeltoverzicht samengevoegd** tot één pagina Teeltoverzicht, met de
@@ -36,8 +40,9 @@ inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
   passen op één regel en de invoervelden hebben meer ruimte.
 - **Geen paginatitel meer** onder de navigatie: de gevulde knop laat al zien waar je bent. De
   knop Uitleg is kleiner en staat rechts op de regel van de tuinkeuze; dat scheelt een regel.
-- **Strakkere vergelijkingstabellen** (Teeltvergelijking, Tuin vergelijking): alleen
-  horizontale lijnen (Streamlit zette om elke cel een rand), geen zebrastrepen, minder
+- **Strakkere vergelijkingstabellen** (Teelt, Tuin vergelijking): elke groep (Bezetting &
+  productie, Klimaat …) met een eigen balk en grotere titel; rijtitels groter, waarden kleiner;
+  alleen horizontale lijnen (Streamlit zette om elke cel een rand), geen zebrastrepen, minder
   opvulling en waarden die nooit meer midden in een getal afbreken. Op een smal scherm schuift
   de tabel zijwaarts met de eerste kolom vast.
 - Navigatieknoppen vielen op een smal scherm over elkaar zodra ze naar een tweede regel

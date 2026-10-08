@@ -64,6 +64,8 @@ oogst, de afdelingscorrectie in het stookadvies), nooit om weken of perioden te 
 - **vrij** (standaard): Tuin 1 / Tuin 3 / Beide.
 - **een**: de pagina werkt per tuin (Stek, Meer). Beide staat er niet bij; stond Beide aan,
   dan toont de pagina de laatst gekozen tuin met de melding "Beide kan hier niet".
+- Op de pagina **Teelt** kiest de tuinkeuze de weergave: Beide = vergelijken (Tuin 1 naast Tuin 3), Tuin 1 /
+  Tuin 3 = opzoeken in die tuin. De teeltkeuze blijft staan.
 - **beide**: de pagina gaat altijd over beide tuinen (Tuin vergelijking); keuze uitgeschakeld met reden.
 
 Registreren kan maar in één tuin: bij Beide vraagt de zijbalk "Registreren in". Hetzelfde geldt voor het plannen op
@@ -116,8 +118,9 @@ alles = filters.schakelaar("Alle concepten tonen", "planning_alles", False, plek
 
 | Informatie | Thuis | Elders |
 |---|---|---|
-| Details van een vak | De vakpopup `vak_venster()` (inhoud: `vak_details()`) | Overal dezelfde popup (tijdlijn, matrix, register, Teeltvergelijking, Opmerkingen, Watergift, missers); de knop *Alles over dit vak* gaat naar Opzoeken |
-| Alle gegevens van een teelt of vak | Pagina Opzoeken (bovenaan `vak_details()`, daaronder elke bron als tabel) | – |
+| Details van een vak | De vakpopup `vak_venster()` (inhoud: `vak_details()`) | Overal dezelfde popup (tijdlijn, matrix, register, Teelt, Opmerkingen, Watergift, missers); de knop *Alles over dit vak* gaat naar Teelt in de tuin van het vak |
+| Alle gegevens van een teelt of vak | Pagina Teelt bij Tuin 1 / Tuin 3 (bovenaan `vak_details()`, daaronder elke bron als tabel) | – |
+| Teelt vergelijken tussen de tuinen | Pagina Teelt bij Beide | – |
 | Watergift per vak | Pagina Watergift | Vakpopup (staafjes op de tijdlijn + tabel Watergift per dag) |
 | Lijst van vakken | Vakkenregister (Teeltoverzicht) | Doorklik-link met het juiste filter |
 | Opmerkingen | Pagina Opmerkingen | Vakpopup; elders één regel "n opmerkingen →" |

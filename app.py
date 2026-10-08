@@ -659,9 +659,8 @@ def _cookie_key():
 # De pagina's (zie NAVIGATIE onderaan): (naam van de functie, titel, adres, standaard).
 PAGINA_DEFINITIES = [
     ("pagina_teeltoverzicht", "Teeltoverzicht", "teeltoverzicht", True),
-    ("pagina_opzoeken", "Opzoeken", "opzoeken", False),
+    ("pagina_teelt", "Teelt", "teelt", False),
     ("pagina_stek", "Stek", "stek", False),
-    ("pagina_teeltvergelijking", "Teeltvergelijking", "teeltvergelijking", False),
     ("pagina_tuinvergelijking", "Tuin vergelijking", "tuinvergelijking", False),
     ("pagina_watergift", "Watergift", "watergift", False),
     ("pagina_opmerkingen", "Opmerkingen", "opmerkingen", False),
@@ -1289,7 +1288,7 @@ NU_KLASSEN = ("b3", "b2", "b1", "n", "o1", "o2", "r1", "r2")
 NU_STATUS_KORT = {"b3": "ruim te vroeg", "b2": "te vroeg", "b1": "iets te vroeg", "n": "op schema",
                   "o1": "iets te laat", "o2": "te laat", "r1": "ruim te laat", "r2": "ruim te laat", "rijp": "oogstrijp",
                   "grijs": "geen prognose", "leeg": "leeg"}
-_NU_PER_RUN = {}   # één keer rekenen per scriptrun (Teeltoverzicht, Teeltvergelijking, Watergift)
+_NU_PER_RUN = {}   # één keer rekenen per scriptrun (Teeltoverzicht, Teelt, Watergift)
 
 
 @st.cache_data(ttl=600, show_spinner="Vakken ophalen…")
@@ -2788,7 +2787,7 @@ def _tl_vakken(versie, vandaag):
 def vak_venster(teelt_id, vandaag, vakken=None):
     """
     De vakpopup: één voor de hele app, vanuit elke pagina hetzelfde, voor lopende en afgeronde vakken. De
-    inhoud is vak_details(); onderaan de knop naar de pagina Opzoeken met alle gegevens van het vak.
+    inhoud is vak_details(); onderaan de knop naar de pagina Teelt (in de tuin van het vak) met alle gegevens.
     """
     data = _nu_alles(vandaag)[0]
     t = next((r for r in data["teelten"].to_dict("records") if r["id"] == teelt_id), None)
@@ -2800,9 +2799,8 @@ def vak_venster(teelt_id, vandaag, vakken=None):
     def _venster():
         vak_details(teelt_id, vandaag, vakken)
         if st.button("Alles over dit vak", key=f"vak_opzoeken_{teelt_id}", icon=":material/search:"):
-            ga_naar("opzoeken", {"tl_teelt": teeltvgl.plantweek(vs.als_datum(t["datum_teelt_start"])),
-                                 "op_vak": int(teelt_id), "op_zoek": None},
-                    tuin=None if TUIN_WEERGAVE in ("beide", tuin["nummer"]) else tuin["nummer"])
+            ga_naar("teelt", {"tl_teelt": teeltvgl.plantweek(vs.als_datum(t["datum_teelt_start"])),
+                              "op_vak": int(teelt_id), "op_zoek": None}, tuin=tuin["nummer"])
 
     _venster()
 
@@ -2811,7 +2809,7 @@ def vak_details(teelt_id, vandaag, vakken=None):
     """
     Alles over één vak, voor lopende en afgeronde vakken: kengetallen, opmerkingen, tijdlijn (met watergift),
     voortgang, klimaat, lichtsom, groei, stek, de watergift per dag en de vergelijking met vorig jaar en de
-    referentievakken. In de vakpopup en op de pagina Opzoeken. `vakken` = rijen uit _tl_vakken (voor
+    referentievakken. In de vakpopup en op de pagina Teelt (één tuin). `vakken` = rijen uit _tl_vakken (voor
     uitval, lengte en gewicht); standaard alle.
     """
     data, model, stook, _ = _nu_alles(vandaag)
@@ -2953,9 +2951,9 @@ def _tl_vakkentabel(groep, vandaag, markeer=(), sleutel="tl_teelten", bij_klik=N
         st.session_state[f"{sleutel}_gekozen"] = None
 
 
-# --- OPZOEKEN: een teelt of één vak met alle informatie die er is ---
+# --- TEELT bij één tuin (vroeger Opzoeken): een teelt of één vak met alle informatie die er is ---
 #
-# Een teelt = alle vakken uit één plantweek (dezelfde keuze als Teeltvergelijking, sleutel tl_teelt). Kies je
+# Een teelt = alle vakken uit één plantweek (dezelfde keuze als bij Beide, sleutel tl_teelt). Kies je
 # één vak, dan bovenaan alles uit de vakpopup (vak_details) en daaronder elke bron als tabel. Het knippen per
 # vak op de eigen periode (planten t/m oogst) staat in logic/opzoeken.py.
 OP_ALLE = "alle"
@@ -3132,26 +3130,9 @@ def _op_bronnen(gegevens, groep_db, keuze_ids, vandaag):
     }
 
 
-def _pagina_opzoeken():
+def _opzoeken_inhoud():
+    """Pagina Teelt bij één tuin: de teelt (of één vak) in die tuin met alle informatie die er is."""
     vandaag = date.today()
-    layout.pagina_kop(
-        "Opzoeken",
-        wat="Een teelt (alle vakken uit één plantweek) of één vak, met alle informatie die er is: de vakken van de "
-            "teelt, oogst, Florgib en lengtes, opmerkingen, stek, watergift en gietbeurten, EC/pH, klimaat, warmte "
-            "en gas, het verloop van de prognose, behandelingen en wijzigingen.",
-        lezen=[
-            "Kies de teelt met ◀ ▶ (dezelfde keuze als op Teeltvergelijking) en bij Vak één vak of alle vakken. Of "
-            "zoek direct op een teeltcode (bijv. 2634301) of een vaknummer (de laatste planting in dat vak).",
-            "Bij één vak staat bovenaan hetzelfde als in de vakpopup (kengetallen, tijdlijn, klimaat, groei). De "
-            "vakken van de teelt staan er altijd bij; klik op een regel om dat vak te kiezen.",
-            "Elke bron staat in een eigen openklapmenu; het getal is het aantal regels. Watergift, klimaat, EC/pH, "
-            "warmte en gas lopen per vak van planten tot de oogst (of tot vandaag als het vak nog loopt).",
-            "Onderaan alles in één Excel-bestand.",
-        ],
-        bron="Registratie (vakken, emmers, opmerkingen, stek), Priva (watergift, gietbeurten, EC/pH, klimaat, "
-             "energie), het prognoselogboek (elke dag de prognose van elk lopend vak) en het wijzigingenlog. "
-             "Warmte en gas gelden voor de hele kas (per m²).",
-    )
     versie = vakstatus_dataversie()
     alle = _tl_vakken(versie, vandaag)
     tuin_ids = {t["id"] for t in TUINEN if TUIN_WEERGAVE == "beide" or t["nummer"] == TUIN_WEERGAVE}
@@ -3223,25 +3204,56 @@ def _pagina_opzoeken():
     layout.export(excel_bestand(export), f"{naam}.xlsx")
 
 
-def _pagina_teeltvgl_1():
+def _teelt_vak_in_tuin(vak):
+    """Naar één vak in zijn eigen tuin op de pagina Teelt (tuinkeuze, teelt en vak gezet) en opnieuw tekenen."""
+    nummer = _tuinnummer_van.get(vak["tuin_id"])
+    st.session_state["tuin_weergave"] = nummer
+    st.session_state["tuin_nummer"] = nummer
+    filters.bewaar("tl_teelt", teeltvgl.plantweek(vak["start"]))
+    filters.bewaar("op_vak", int(vak["id"]))
+    st.rerun()
+
+
+def _pagina_teelt():
+    """
+    Eén teelt (alle vakken uit één plantweek). De tuinkeuze bovenaan kiest de weergave: Beide = Tuin 1 naast
+    Tuin 3 (vroeger Teeltvergelijking), Tuin 1 of Tuin 3 = alles over de teelt of één vak in die tuin (vroeger
+    Opzoeken). De teeltkeuze (tl_teelt) blijft staan als je wisselt.
+    """
     layout.pagina_kop(
-        "Teeltvergelijking",
-        wat="Een teelt = alle vakken uit één plantweek. Bovenaan per tuin samengevat, daaronder de vakken van de "
-            "teelt naast elkaar.",
-        lezen=["Blader met ◀ ▶ door de teelten, of klik op het label om direct naar een plantweek te springen. "
-               "De tuin kies je bovenaan; de samenvatting toont altijd beide tuinen.",
-               "Kleine regel = dezelfde plantweek vorig jaar. Loopt de teelt nog, dan klimaat en input van vorig "
-               "jaar tot dezelfde teeltdag.",
-               "Beweeg over een cel voor het verschil en de uitleg; klik op een kengetal voor het verloop over "
-               "12 plantweken.",
-               "Klik op een vak in de vakkentabel om het te openen (en op te lichten).",
-               "⏳ = lopend vak: klimaat en input t/m gisteren, oogst en duur zijn de prognose."],
-        bron="Samenvatting gewogen naar de m² van het vak. Klimaat, water en energie uit Priva; oogst, lengte "
-             "en gewicht uit de registratie.",
-        kleuren="Samenvatting: groen/rood pijltje = beter/slechter dan vorig jaar; lichtgroen vak = beste tuin; "
-                "⚠ = niet alle vakken met data. Vakkentabel: groen/rood = minstens 5 % beter/slechter dan het "
-                "gemiddelde van de teelt (alleen waar beter vastligt).",
+        "Teelt",
+        wat="Eén teelt = alle vakken uit één plantweek. Met de tuinkeuze bovenaan wissel je van weergave: bij "
+            "**Beide** staan Tuin 1, Tuin 3 en het totaal naast elkaar (vergelijken); bij **Tuin 1** of **Tuin 3** "
+            "zie je alles over de teelt of één vak in die tuin (opzoeken).",
+        lezen=[
+            "Blader met ◀ ▶ door de teelten, of klik op het label om direct naar een plantweek te springen. De "
+            "teelt blijft staan als je van tuin wisselt.",
+            "Zoek op een teeltcode (bijv. 2634301) of een vaknummer (de laatste planting in dat vak): het vak opent "
+            "in zijn eigen tuin.",
+            "**Beide**: kleine regel = dezelfde plantweek vorig jaar; loopt de teelt nog, dan klimaat en input van "
+            "vorig jaar tot dezelfde teeltdag. Beweeg over een cel voor het verschil; klik op een kengetal voor het "
+            "verloop over 12 plantweken. ⏳ = lopend vak (t/m gisteren; oogst en duur zijn de prognose). Een klik "
+            "op een vak opent het in zijn eigen tuin.",
+            "**Tuin 1 / Tuin 3**: kies bij Vak één vak of alle vakken. Bij één vak bovenaan alles uit de vakpopup; "
+            "de vakken van de teelt staan er altijd bij (klik op een regel om dat vak te kiezen). Elke bron staat in "
+            "een openklapmenu; watergift, klimaat, EC/pH, warmte en gas per vak van planten tot de oogst (of tot "
+            "vandaag). Onderaan alles in één Excel-bestand.",
+        ],
+        bron="Samenvatting gewogen naar de m² van het vak. Registratie (vakken, emmers, opmerkingen, stek), Priva "
+             "(klimaat, watergift, gietbeurten, EC/pH, energie), het prognoselogboek en het wijzigingenlog. Warmte "
+             "en gas gelden voor de hele kas (per m²).",
+        kleuren="Beide: groen/rood pijltje = beter/slechter dan vorig jaar; lichtgroen vak = beste tuin; ⚠ = niet "
+                "alle vakken met data. Vakkentabel: groen/rood = minstens 5 % beter/slechter dan het gemiddelde van "
+                "de teelt (alleen waar beter vastligt); oranje = het gekozen vak.",
     )
+    if TUIN_WEERGAVE == "beide":
+        _teeltvgl_inhoud()
+    else:
+        _opzoeken_inhoud()
+
+
+def _teeltvgl_inhoud():
+    """Pagina Teelt bij Beide: de teelt in Tuin 1 naast Tuin 3 en het totaal, het verloop en de vakken."""
     _tl_vandaag = date.today()
     _tl_gisteren = _tl_vandaag - timedelta(days=1)
     _tl_versie = vakstatus_dataversie()
@@ -3261,11 +3273,18 @@ def _pagina_teeltvgl_1():
         if not _tl_opties:
             st.info("Nog geen vakken in deze tuin.")
             return
+        _tl_gevonden, _tl_melding = opzoeken.zoek(_tl_alle, filters.bewaard("op_zoek", ""))
+        if _tl_gevonden:
+            filters.bewaar("op_zoek", "")
+            _teelt_vak_in_tuin(_tl_gevonden)
         _tl_balk = layout.filterbalk("teeltvgl")
         _tl_week = filters.bladeraar(
             "tl_teelt", _tl_opties, teeltvgl.standaard_plantweek(_tl_weken), plek=_tl_balk, naam="teelt",
             format_func=lambda w: f"Teelt wk {w[1]} '{str(w[0])[2:]} · {_vakken_tekst(_tl_per_week[w])}",
             breedte=230, spring_label="Spring naar plantweek")
+        filters.zoekveld("op_zoek", "Code of vak, bijv. 2634301 of 12", plek=_tl_balk)
+        if _tl_melding:
+            st.warning(_tl_melding)
         _tl_vorig = teeltvgl.vorig_jaar(_tl_week)
         _tl_tuinen = [(t["naam"], t["id"]) for t in sorted(TUINEN, key=lambda t: t["nummer"])]
         _tl_groep = [teeltvgl.met_dagdata(t, _tl_dd, _tl_gisteren)
@@ -3304,7 +3323,8 @@ def _pagina_teeltvgl_1():
 
         _tl_groep_tuin = [t for t in _tl_groep if t["tuin_id"] in _tl_tuin_ids]
         layout.sectie("Vakken van deze teelt", len(_tl_groep_tuin))
-        _tl_vakkentabel(_tl_groep_tuin, _tl_vandaag)
+        _tl_vakkentabel(_tl_groep_tuin, _tl_vandaag, sleutel="tl_teelten",
+                        bij_klik=lambda i: _teelt_vak_in_tuin(next(t for t in _tl_groep_tuin if t["id"] == i)))
 
         _tl_opm = opm_logic.filter_opmerkingen(_opm_alle(_tl_versie), teelt_ids={t["id"] for t in _tl_groep_tuin})
         if st.button(f"{len(_tl_opm)} opmerking{'' if len(_tl_opm) == 1 else 'en'} bij deze teelt",
@@ -4761,12 +4781,8 @@ def pagina_teeltoverzicht():
     _pagina_teeltoverzicht()
 
 
-def pagina_opzoeken():
-    _pagina_opzoeken()
-
-
-def pagina_teeltvergelijking():
-    _pagina_teeltvgl_1()
+def pagina_teelt():
+    _pagina_teelt()
 
 
 def pagina_tuinvergelijking():

@@ -86,10 +86,14 @@ table.vt th.vt-totaal, table.vt td.vt-totaal {
     background-image: linear-gradient(rgba(128, 128, 128, 0.05), rgba(128, 128, 128, 0.05));
 }
 table.vt td.vt-beste { background-image: linear-gradient(rgba(46, 160, 67, 0.13), rgba(46, 160, 67, 0.13)); }
+/* Groepkop (Bezetting & productie, Klimaat …): een eigen balk met ruimte erboven, zodat de onderwerpen
+   duidelijk gescheiden zijn. De eerste groep direct onder de kop zonder extra ruimte. */
 table.vt tr.vt-groep td {
-    padding: 12px 10px 3px; font-size: 10.5px; font-weight: 700; letter-spacing: 0.07em;
-    text-transform: uppercase; opacity: 0.6; border-bottom: 1px solid rgba(128, 128, 128, 0.3); background: none;
+    padding: 7px 10px 6px; font-size: 13px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+    color: #2E6A4C; background: rgba(46, 106, 76, 0.08);
+    border-top: 18px solid var(--vt-bg); border-bottom: 1.5px solid rgba(46, 106, 76, 0.45);
 }
+table.vt tbody tr.vt-groep:first-child td { border-top-width: 0; }
 .vt-beter { color: #2e9a44; }
 .vt-slechter { color: #d64541; }
 .vt-neutraal, .vt-leeg { opacity: 0.55; }
