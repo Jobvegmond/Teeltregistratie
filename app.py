@@ -115,6 +115,7 @@ from logic import weken as kalender
 from logic import tuinvergelijking as tuinvgl
 from logic import teeltvergelijking as teeltvgl
 from logic import teeltprognose as tp
+from logic import tijdlijn
 from logic import ruwe_data
 from logic.afdelingen import sorteer_afdelingen
 from logic.lichtlijn import formule_tekst, t_ideaal
@@ -572,9 +573,10 @@ def toon_strokenplanning(stroken, vaknummers, hoogte=640, legenda=True):
             y=vak_y,
             x=alt.X(
                 "start:T", title="Week",
-                # Streepjes op zondag (begin van onze week); het label is het weeknummer van de maandag
-                # erna, dus de week van zondag t/m zaterdag (logic/weken.py).
-                axis=alt.Axis(labelExpr="timeFormat(time(datum.value) + 86400000, '%V')",
+                # Streepjes op zondag (begin van onze week); het label is het ISO-weeknummer van de dinsdag
+                # erna, dus de week van zondag t/m zaterdag (logic/weken.py). Dinsdag en niet maandag: op de
+                # zondag van de wintertijd (25 uur) kwam zondag + 24 uur nog op zondag uit.
+                axis=alt.Axis(labelExpr="timeFormat(time(datum.value) + 172800000, '%V')",
                               tickCount={"interval": "week", "step": 2}, grid=True),
             ),
             x2="eind:T",
@@ -763,6 +765,7 @@ PAGINA_DEFINITIES = [
     ("pagina_planning", "Planning", "planning", False),
     ("pagina_stek", "Stek", "stek", False),
     ("pagina_teeltoverzicht", "Teeltoverzicht", "teeltoverzicht", True),
+    ("pagina_tijdlijn", "Tijdlijn (proef)", "tijdlijn", False),
     ("pagina_teeltvergelijking", "Teeltvergelijking", "teeltvergelijking", False),
     ("pagina_tuinvergelijking", "Tuin vergelijking", "tuinvergelijking", False),
     ("pagina_watergift", "Watergift", "watergift", False),
@@ -2136,6 +2139,312 @@ def _pagina_overzicht_1():
         {"kleur": "#1f1f1f", "vorm": "stippelrand", "label": f"Florgib > {FLORGIB_ACHTERSTAND_DAGEN} d over tijd"},
     ], titel="Prognose t.o.v. plan (d):")
     return _nu_afd
+
+
+# --- TIJDLIJN (proef): vakkenmatrix en strokenplanning in één beeld ---
+#
+# Per vak één regel op een tijdlijn: afgeronde teelten (grijs), de lopende
+# teelt tot vandaag in de statuskleur van de vakkenmatrix en daarna licht tot
+# de prognose, bevestigde teelten die nog moeten beginnen (rand) en concepten
+# (blauwe stippelrand). Per afdeling een kopregel met het stookadvies.
+# Rekenwerk in logic/tijdlijn.py.
+TL_KLASSE_KLEUR = {"b3": "#8fb8e3", "b2": "#b5d0ee", "b1": "#dae7f6", "n": "#f4f4f1", "o1": "#fde4c6",
+                   "o2": "#f9c793", "r1": "#f2a28f", "r2": "#e57a68", "rijp": "#cfe8c6", "grijs": "#e2e2e0"}
+TL_AFGEROND, TL_CONCEPT, TL_FLORGIB, TL_ROOD = "#b8b8b3", "#2a78d6", "#8e44ad", "#e34948"
+TL_VENSTERS = {"3 mnd": 13, "6 mnd": 26, "1 jaar": 52}
+TL_RIJ = 22   # hoogte van een regel (px)
+
+
+def _tl_stap(weken):
+    """Om de hoeveel weken een weeknummer en een oogsttotaal: elke week bij 3 mnd, anders per 2 of 4 weken."""
+    return 1 if weken <= 13 else 2 if weken <= 26 else 4
+
+
+def _tl_venster_label(zondag, weken):
+    eind = zondag + timedelta(weeks=weken) - timedelta(days=1)
+    return f"wk {kalender.weeknummer(zondag)} – wk {kalender.weeknummer(eind)} '{eind:%y}"
+
+
+def _tl_stookadvies(a):
+    """Korte tekst voor de kopregel van een afdeling."""
+    if a is None or a["c"] is None:
+        return "geen stookadvies"
+    if tp.op_koers(a["c"]):
+        return "stookadvies: op koers"
+    return f"stookadvies: {fmt_verschil(a['c'], 1, '°C')} t.o.v. de lichtlijn"
+
+
+def _tl_frames(info, afdelingen, van, tot, vandaag, weken):
+    """
+    De DataFrames voor de grafiek van één tuin: (rijen, balken, randen, florgib, plan, kopteksten, oogst)
+    en de volgorde van de regels (y). Regels: één kopregel per afdeling ("§a<afd>") en één per vak.
+    """
+    tuin = info["tuin"]
+    eigen = [t for t in info["alle"] if t["tuin_id"] == tuin["id"]]
+    concepten = get_planning(tuin["id"])
+    stukken = tijdlijn.stukken(eigen, info["statussen"], concepten, vandaag, _plandatum)
+    vak_afd = {int(v): int(a) for v, a in zip(info["vakken"]["vaknummer"], info["vakken"]["afdeling"]) if a == a}
+
+    stap = _tl_stap(weken)
+    oogst_rij = "Oogst per week" if stap == 1 else f"Oogst per {stap} wk"
+    volgorde, kopteksten = ["Week", oogst_rij], []
+    for afdeling in sorteer_afdelingen(set(vak_afd.values()), tuin["nummer"]):
+        if afdelingen is not None and afdeling not in afdelingen:
+            continue
+        volgorde.append(f"§a{afdeling}")
+        kopteksten.append({"y": f"§a{afdeling}", "x": van, "tekst": f"Afd. {afdeling} · "
+                           f"{_tl_stookadvies(info['advies'].get(afdeling))}"})
+        volgorde += [f"Vak {v}" for v in sorted(v for v, a in vak_afd.items() if a == afdeling)]
+    zichtbaar = set(volgorde)
+
+    def periode(s):
+        return f"{format_datum(s['start'])} → {format_datum(s['eind'])}"
+
+    balken, randen = [], []
+    for kop in kopteksten:
+        afd = int(kop["y"][2:])
+        balken.append({"y": kop["y"], "start": van, "eind": tot, "kleur": "#808080", "dekking": 0.07,
+                       "sleutel": f"a:{afd}", "Wat": f"Afdeling {afd}", "Periode": "",
+                       "Toelichting": "Klik voor het stookadvies van deze afdeling"})
+    namen = {"afgerond": "afgerond", "lopend": "lopend", "prognose": "lopend, tot de prognose",
+             "gepland": "bevestigd, nog niet geplant", "concept": "concept"}
+    for s in stukken:
+        y = f"Vak {s['vak']}"
+        if y not in zichtbaar or s["eind"] < van or s["start"] > tot:
+            continue
+        status = info["statussen"].get(s["vak"])
+        toelichting = s.get("code") or ""
+        if s["soort"] in ("lopend", "prognose") and status:
+            toelichting = _nu_bloktip(s["vak"], status, info["gepland"].get(s["vak"]),
+                                      info["laatste_oogst"].get(s["vak"]), info)
+        rij = {"y": y, "start": max(s["start"], van), "eind": min(s["eind"], tot), "Wat": namen[s["soort"]],
+               "Periode": periode(s), "Toelichting": toelichting,
+               "sleutel": f"c:{s['concept_id']}" if s["soort"] == "concept" else f"t:{s['teelt_id']}"}
+        if s["soort"] == "afgerond":
+            balken.append({**rij, "kleur": TL_AFGEROND, "dekking": 1.0})
+        elif s["soort"] == "lopend":
+            balken.append({**rij, "kleur": TL_KLASSE_KLEUR.get(s["klasse"], TL_AFGEROND), "dekking": 1.0})
+            if status and status.get("florgib_achter"):
+                randen.append({**rij, "rand": "#1f1f1f", "streep": "florgib"})
+        elif s["soort"] == "prognose":
+            balken.append({**rij, "kleur": TL_KLASSE_KLEUR.get(s["klasse"], TL_AFGEROND), "dekking": 0.45})
+        elif s["soort"] == "gepland":
+            balken.append({**rij, "kleur": "#808080", "dekking": 0.12})
+            randen.append({**rij, "rand": "#6f6f6a", "streep": "vol"})
+        else:
+            balken.append({**rij, "kleur": TL_CONCEPT, "dekking": 0.12})
+            randen.append({**rij, "rand": TL_CONCEPT, "streep": "concept"})
+    for o in tijdlijn.overlap(stukken):
+        y = f"Vak {o['vak']}"
+        if y in zichtbaar and o["eind"] >= van and o["start"] <= tot:
+            randen.append({"y": y, "start": max(o["start"], van), "eind": min(o["eind"], tot),
+                           "rand": TL_ROOD, "streep": "overlap"})
+
+    florgib, plan = [], []
+    for vak, s in info["statussen"].items():
+        y = f"Vak {vak}"
+        if y not in zichtbaar:
+            continue
+        u = s.get("stook")
+        if s.get("florgib"):
+            florgib.append({"y": y, "x": s["florgib"], "soort": "geregistreerd",
+                            "Florgib": f"geregistreerd {format_datum(s['florgib'])}"})
+        elif u and u.get("florgib_verwacht"):
+            florgib.append({"y": y, "x": u["florgib_verwacht"], "soort": "verwacht",
+                            "Florgib": f"verwacht {format_datum(u['florgib_verwacht'])}"})
+        if s.get("plan"):
+            plan.append({"y": y, "x": s["plan"], "Plan-oogst": format_datum(s["plan"])})
+    florgib = [f for f in florgib if van <= f["x"] <= tot]
+    plan = [p for p in plan if van <= p["x"] <= tot]
+
+    # Weeknummer en aantal oogsten per blok van `stap` weken (zondag t/m zaterdag): bij één week midden in
+    # de week, bij meer weken links in het blok, vanaf de weeklijn van de eerste week.
+    blokken = {}
+    for zo, n in tijdlijn.oogst_per_week(stukken, info["statussen"], van, tot).items():
+        blok = (zo - van).days // (7 * stap)
+        blokken[blok] = blokken.get(blok, 0) + n
+    plek = timedelta(days=3, hours=12) if stap == 1 else timedelta(hours=10)
+
+    def blok_start(i):
+        return van + timedelta(weeks=i * stap)
+
+    def blok_naam(i):
+        eerste = kalender.weeknummer(blok_start(i))
+        return f"wk {eerste}" if stap == 1 else             f"wk {eerste}–{kalender.weeknummer(blok_start(i) + timedelta(weeks=stap - 1))}"
+
+    oogst = [{"y": oogst_rij, "x": blok_start(i) + plek, "tekst": str(n), "Week": blok_naam(i), "Vakken": n}
+             for i, n in sorted(blokken.items())]
+    weeknummers = [{"y": "Week", "x": blok_start(i) + plek, "tekst": str(kalender.weeknummer(blok_start(i)))}
+                   for i in range((tot - van).days // (7 * stap) + 1)]
+    return volgorde, [pd.DataFrame(x) for x in (balken, randen, florgib, plan, kopteksten, oogst, weeknummers)], stukken
+
+
+def _tl_grafiek(volgorde, frames, van, tot, vandaag, weken):
+    """De Altair-grafiek van één tuin; de laag met de balken is klikbaar (selectie 'tl_klik')."""
+    balken, randen, florgib, plan, kopteksten, oogst, weeknummers = frames
+    schaal = alt.Scale(domain=[pd.Timestamp(van).isoformat(), pd.Timestamp(tot).isoformat()])
+    x = alt.X("start:T", title=None, scale=schaal, axis=alt.Axis(
+        orient="top", grid=True, labels=False, ticks=False, domain=False,
+        tickCount={"interval": "week", "step": 1}))
+    y = alt.Y("y:N", title=None, sort=volgorde, scale=alt.Scale(domain=volgorde), axis=alt.Axis(
+        labelExpr="indexof(datum.label, '§') == 0 ? '' : datum.label", labelLimit=140, minExtent=90,
+        ticks=False, domain=False, labelFontSize=11))
+    klik = alt.selection_point(name="tl_klik", fields=["sleutel"], on="click")
+    lagen = [
+        alt.Chart(balken).mark_bar(height=TL_RIJ - 8, cornerRadius=2, stroke="#000000", strokeOpacity=0.12,
+                                   clip=True, cursor="pointer")
+        .encode(x=x, x2="eind:T", y=y, color=alt.Color("kleur:N", scale=None),
+                opacity=alt.Opacity("dekking:Q", scale=None),
+                tooltip=["y:N", "Wat:N", "Periode:N", "Toelichting:N"])
+        .add_params(klik)
+    ]
+    for streep, dash, breedte in (("vol", [1, 0], 1.2), ("concept", [4, 2], 1.5),
+                                  ("florgib", [2, 2], 1.5), ("overlap", [4, 2], 2)):
+        deel = randen[randen["streep"] == streep] if not randen.empty else randen
+        if not deel.empty:
+            lagen.append(alt.Chart(deel).mark_bar(height=TL_RIJ - 8, cornerRadius=2, filled=False, clip=True,
+                                                  strokeDash=dash, strokeWidth=breedte)
+                         .encode(x="start:T", x2="eind:T", y=y, stroke=alt.Stroke("rand:N", scale=None)))
+    if not plan.empty:
+        lagen.append(alt.Chart(plan).mark_tick(orient="vertical", thickness=2, size=TL_RIJ - 4, color="#1f1f1f")
+                     .encode(x="x:T", y=y, tooltip=["y:N", "Plan-oogst:N"]))
+    if not florgib.empty:
+        lagen.append(alt.Chart(florgib).mark_point(size=45, strokeWidth=2, color=TL_FLORGIB, opacity=1)
+                     .encode(x="x:T", y=y, fill=alt.condition("datum.soort == 'geregistreerd'",
+                                                               alt.value(TL_FLORGIB), alt.value("transparent")),
+                             tooltip=["y:N", "Florgib:N"]))
+    if not kopteksten.empty:
+        lagen.append(alt.Chart(kopteksten).mark_text(align="left", dx=6, fontSize=11, fontWeight="bold")
+                     .encode(x="x:T", y=y, text="tekst:N"))
+    uitlijning = "center" if _tl_stap(weken) == 1 else "left"
+    lagen.append(alt.Chart(weeknummers).mark_text(fontSize=11, opacity=0.6, align=uitlijning)
+                 .encode(x="x:T", y=y, text="tekst:N"))
+    if not oogst.empty:
+        lagen.append(alt.Chart(oogst).mark_text(fontSize=11, fontWeight="bold", color="#2E6A4C", align=uitlijning)
+                     .encode(x="x:T", y=y, text="tekst:N", tooltip=["Week:N", "Vakken:Q"]))
+    lagen.append(alt.Chart(pd.DataFrame({"d": [pd.Timestamp(vandaag)]}))
+                 .mark_rule(color=TL_ROOD, strokeDash=[4, 3]).encode(x="d:T"))
+    return (alt.layer(*lagen).properties(height=alt.Step(TL_RIJ))
+            .configure_view(strokeOpacity=0).configure_axis(gridOpacity=0.5))
+
+
+def _tl_geklikt(widget, versie):
+    """Callback van de tijdlijn: onthoud wat er geklikt is en begin de grafiek opnieuw (lege keuze)."""
+    items = (st.session_state.get(widget) or {}).get("selection", {}).get("tl_klik") or []
+    if items and items[0].get("sleutel"):
+        st.session_state[f"{versie}_klik"] = items[0]["sleutel"]
+        st.session_state[versie] += 1
+
+
+def _tl_concept_venster(concept_id, info):
+    """Klik op een concept: wat er gepland staat. Bewerken kan (nog) op de pagina Planning."""
+    rij = next((c for c in get_planning(info["tuin"]["id"]) if int(c[0]) == concept_id), None)
+
+    @st.dialog(f"Concept · {info['tuin']['naam']}")
+    def _venster():
+        if rij is None:
+            st.info("Dit concept bestaat niet meer.")
+            return
+        _id, vak, start, duur, eind, notitie = rij
+        toon_kengetallen([
+            {"label": "Vak", "waarde": str(vak)},
+            {"label": "Planten", "waarde": f"{format_datum(start)} (wk {kalender.weeknummer(vs.als_datum(start))})"},
+            {"label": "Verwachte oogst", "waarde": format_datum(eind) if eind else LEEG},
+            {"label": "Teeltduur", "waarde": fmt_weken(duur) if duur else LEEG},
+        ])
+        if notitie:
+            st.caption(notitie)
+        if st.button("Naar Planning", key=f"tl_naar_planning_{concept_id}"):
+            ga_naar("planning", tuin=info["tuin"]["nummer"])
+
+    _venster()
+
+
+def _pagina_tijdlijn_1():
+    vandaag = date.today()
+    layout.pagina_kop(
+        "Tijdlijn (proef)",
+        wat="Per vak één regel op de tijdlijn: wat er geteeld is, hoe de lopende teelt ervoor staat en wat er "
+            "daarna gepland staat. Per afdeling bovenaan het stookadvies; bovenaan het aantal vakken dat per "
+            "week geoogst wordt.",
+        lezen=[
+            "Weken lopen van zondag t/m zaterdag; het getal bovenaan is het weeknummer.",
+            "De lopende teelt heeft tot vandaag de kleur van de vakkenmatrix (prognose t.o.v. plan) en loopt "
+            "daarna licht door tot de prognose-oogst. Het zwarte streepje is de plan-oogst.",
+            "Klik op een balk voor het vak, op de kopregel van een afdeling voor het stookadvies, op een concept "
+            "voor de planning.",
+            "**Proef**: de vakkenmatrix, de strokenplanning en het register staan nog op hun eigen pagina's.",
+        ],
+        bron="Teelten en concepten uit de registratie en de planning; prognose, status en stookadvies uit het "
+             "teeltmodel (zoals op Teeltoverzicht).",
+        kleuren="Grijs = afgerond. Lopend: blauw = prognose vóór plan, wit = op schema, oranje → rood = na plan, "
+                "groen = oogstrijp. Grijze rand = bevestigd, nog niet geplant; blauwe stippelrand = concept; rode "
+                "stippelrand = overlapt met de vorige ronde; zwarte stippelrand = Florgib over tijd. Paarse stip = "
+                "Florgib, ring = verwachte Florgib. Rode stippellijn = vandaag.",
+    )
+    data, model, stook, afwijking = _nu_alles(vandaag)
+    if model is None:
+        st.warning("Nog geen teelthistorie in de database: geen prognose en geen stookadvies.")
+    tuinen = [t for t in sorted(TUINEN, key=lambda t: t["nummer"])
+              if TUIN_WEERGAVE == "beide" or t["nummer"] == TUIN_WEERGAVE]
+    infos = [_nu_tuin(data, model, stook, afwijking, t, vandaag) for t in tuinen]
+
+    deze_zondag = kalender.week_begin(vandaag)
+    zondagen = [deze_zondag + timedelta(weeks=i) for i in range(-52, 40)]
+    balk = layout.filterbalk("tijdlijn")
+    lengte, van = filters.periode(
+        "tl_venster", list(TL_VENSTERS), "3 mnd", opties_van=lambda n: zondagen,
+        standaard_van=lambda n: deze_zondag - timedelta(weeks=round(TL_VENSTERS[n] * 0.3)),
+        format_van=lambda n: lambda zo: _tl_venster_label(zo, TL_VENSTERS[n]),
+        huidig_van=lambda n: deze_zondag - timedelta(weeks=round(TL_VENSTERS[n] * 0.3)), plek=balk, breedte=260)
+    weken = TL_VENSTERS[lengte]
+    tot = van + timedelta(weeks=weken) - timedelta(days=1)
+    afd = afdeling_filters(
+        [(i["tuin"], sorteer_afdelingen(i["vakken"]["afdeling"].dropna().unique(), i["tuin"]["nummer"]))
+         for i in infos], balk)
+
+    export = {}
+    for info in infos:
+        tuin = info["tuin"]
+        if len(infos) > 1:
+            st.markdown(f'<div class="vem-kg-titel">{html.escape(tuin["naam"])}</div>', unsafe_allow_html=True)
+        volgorde, frames, stukken = _tl_frames(info, afd.get(tuin["id"]), van, tot, vandaag, weken)
+        # Een klik wordt in de callback opgepakt (vóór de nieuwe run): die onthoudt wat er geklikt is en geeft
+        # de grafiek een nieuwe sleutel, zodat de keuze leeg begint en je hetzelfde vak na het sluiten van het
+        # venster opnieuw kunt aanklikken.
+        versie = f"tl_grafiek_{tuin['nummer']}_versie"
+        st.session_state.setdefault(versie, 0)
+        widget = f"tl_grafiek_{tuin['nummer']}_{st.session_state[versie]}"
+        st.altair_chart(_tl_grafiek(volgorde, frames, van, tot, vandaag, weken), use_container_width=True,
+                        on_select=lambda w=widget, v=versie: _tl_geklikt(w, v), selection_mode="tl_klik", key=widget)
+        geklikt = st.session_state.pop(f"{versie}_klik", None)
+        if geklikt:
+            soort, nummer = geklikt.split(":")
+            if soort == "t":
+                vak_venster(int(nummer), vandaag)
+            elif soort == "a":
+                _nu_afdeling_venster(info, int(nummer), data, vandaag)
+            else:
+                _tl_concept_venster(int(nummer), info)
+        export[tuin["naam"]] = pd.DataFrame([{
+            "Vak": s["vak"], "Soort": s["soort"], "Van": format_datum(s["start"]), "Tot": format_datum(s["eind"]),
+            "Code": s.get("code") or ""} for s in stukken])
+
+    legend.legenda(NU_LEGENDA + [{"kleur": "#cfe8c6", "label": "oogstrijp"},
+                                 {"kleur": "#e2e2e0", "label": "geen prognose"}],
+                   titel="Lopend, prognose t.o.v. plan (d):")
+    legend.legenda([
+        {"kleur": TL_AFGEROND, "label": "afgerond"},
+        {"kleur": "#6f6f6a", "vorm": "rand", "label": "bevestigd, nog niet geplant"},
+        {"kleur": TL_CONCEPT, "vorm": "stippelrand", "label": "concept"},
+        {"kleur": TL_ROOD, "vorm": "stippelrand", "label": "overlapt met de vorige ronde"},
+        {"kleur": "#1f1f1f", "vorm": "stippelrand", "label": f"Florgib > {FLORGIB_ACHTERSTAND_DAGEN} d over tijd"},
+        {"kleur": "#1f1f1f", "vorm": "lijn", "label": "plan-oogst", "stijl": "transform:rotate(90deg);width:0.8rem;"},
+        {"kleur": TL_FLORGIB, "vorm": "stip", "label": "Florgib"},
+        {"kleur": TL_FLORGIB, "vorm": "ring", "label": "verwachte Florgib"},
+        {"kleur": TL_ROOD, "vorm": "lijn", "label": "vandaag", "stijl": "border-top-style:dashed;"},
+    ])
+    layout.export(excel_bestand(export), "tijdlijn.xlsx")
 
 # --- TUINVERGELIJKING: wat er in een periode in de kas gebeurde, per m² ---
 #
@@ -4204,6 +4513,10 @@ def pagina_planning():
 
 def pagina_stek():
     _pagina_stek_1()
+
+
+def pagina_tijdlijn():
+    _pagina_tijdlijn_1()
 
 
 def pagina_teeltoverzicht():
