@@ -150,7 +150,7 @@ st.markdown("""
     gap: 0.4rem; margin-bottom: 0.4rem;
 }
 .vem-kg-tegel {
-    border: 1px solid rgba(128, 128, 128, 0.25); border-radius: 0.4rem;
+    border: 1px solid rgba(128, 128, 128, 0.25); border-radius: 0.2rem;
     padding: 0.35rem 0.55rem; line-height: 1.25;
 }
 .vem-kg-label { font-size: 0.72rem; opacity: 0.7; }
@@ -182,7 +182,7 @@ st.markdown("""
 [class*="st-key-nu_vak_"] button {
     width: 100%; height: 100%; min-height: 3.2rem; padding: 0.15rem 0.3rem;
     justify-content: flex-start; align-items: flex-start; text-align: left;
-    border-radius: 0.35rem; line-height: 1.2; color: #1f1f1f;
+    border-radius: 0.2rem; line-height: 1.2; color: #1f1f1f;
     border: 1px solid rgba(0, 0, 0, 0.12);
 }
 [class*="st-key-nu_vak_"] button > div,
@@ -230,7 +230,7 @@ st.markdown("""
 /* Kop: naam van de app en het bedrijf links, week, datum en versie rechts. */
 .vem-kop {
     display: flex; justify-content: space-between; align-items: center; gap: 1rem;
-    margin: 0 0 0.6rem 0; padding: 0.9rem 1.3rem; border-radius: 12px;
+    margin: 0 0 0.6rem 0; padding: 0.9rem 1.3rem; border-radius: 0.2rem;
     background: linear-gradient(100deg, #2E6A4C 0%, #3d8761 100%); color: #fff;
 }
 .vem-merk { display: flex; flex-direction: column; line-height: 1.2; }
@@ -241,13 +241,14 @@ st.markdown("""
 .vem-versie { font-size: 0.75rem; opacity: 0.75; }
 @media (max-width: 700px) { .vem-titel { font-size: 1.15rem; } .vem-kop { padding: 0.7rem 0.9rem; } }
 
-/* Navigatiebalk onder de kop: knoppen per pagina, de huidige gevuld groen. */
+/* Navigatiebalk onder de kop: knoppen per pagina, de huidige gevuld groen. Zelfde ronding als de
+   knoppen van Streamlit (theme.buttonRadius in .streamlit/config.toml). */
 .st-key-vem_nav {
     gap: 0.3rem; flex-wrap: wrap; margin-bottom: 0.4rem; padding-bottom: 0.45rem;
     border-bottom: 2px solid rgba(46, 106, 76, 0.25);
 }
 .st-key-vem_nav [data-testid="stPageLink"] a {
-    padding: 0.3rem 0.95rem; border-radius: 999px; border: 1px solid rgba(46, 106, 76, 0.35);
+    padding: 0.3rem 0.95rem; border-radius: 0.2rem; border: 1px solid rgba(46, 106, 76, 0.35);
     background: transparent;
 }
 .st-key-vem_nav [data-testid="stPageLink"] a:hover { background: rgba(46, 106, 76, 0.10); }
@@ -385,7 +386,7 @@ def kopieerknop(inhoud_html, label, hoogte=44):
     components.html(
         f"""
         <div id="bron" style="position:absolute;left:-9999px;top:0;"></div>
-        <button id="knop" style="font:inherit;padding:0.35rem 0.75rem;border-radius:0.5rem;
+        <button id="knop" style="font:inherit;padding:0.35rem 0.75rem;border-radius:0.2rem;
                 border:1px solid rgba(49,51,63,0.2);background:#fff;cursor:pointer;">{label}</button>
         <script>
         const inhoud = {inhoud};

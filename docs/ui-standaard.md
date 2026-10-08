@@ -146,3 +146,10 @@ De week loopt in de hele app van **zondag t/m zaterdag** (`logic/weken.py`): het
 de ISO-week die op de maandag erna begint. Teeltcodes, plantweken en pootweken blijven de ISO-week van
 de plantdatum. Gebruik voor kalenderweken altijd `logic.weken` (of `logic.perioden` met "Week"),
 nooit `isocalendar()` direct.
+
+## 7. Vormgeving
+
+- **Ronding**: knoppen, velden en kaders zijn licht afgerond, 0,2 rem (`baseRadius` en `buttonRadius` in
+  `.streamlit/config.toml`). Eigen opmaak (navigatiebalk, kop, vakblokken, tegels, tabellen) gebruikt dezelfde
+  0,2 rem; geen pilvormen.
+- **Zijbalk**: 360 px breed, zodat de knoppen van *Wat wil je doen?* op één regel passen (`ui/styles.py`).

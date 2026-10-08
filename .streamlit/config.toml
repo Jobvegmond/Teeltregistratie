@@ -2,3 +2,7 @@
 # Groen accent i.p.v. het standaard Streamlit-rood, zodat rood gereserveerd
 # blijft voor fouten en waarschuwingen.
 primaryColor = "#2E6A4C"
+# Licht afgeronde hoeken op knoppen, velden en kaders: strakker dan de
+# standaard. De eigen opmaak in app.py en ui/styles.py volgt dezelfde ronding.
+baseRadius = "0.2rem"
+buttonRadius = "0.2rem"

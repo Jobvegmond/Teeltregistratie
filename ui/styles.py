@@ -31,8 +31,14 @@ CSS = """
 .vem-sectie span { font-weight: 400; opacity: 0.65; }
 [class*="st-key-filterbalk_"] { flex-wrap: wrap; row-gap: 0.5rem; margin-bottom: 0.4rem; }
 [class*="st-key-filterbalk_"] [data-testid="stCheckbox"] { padding-bottom: 0.45rem; }
-/* Zijbalk: minder opvulling in de knoppengroepen, zodat Florgib · Oogst · Opmerking · Wijzigen op één regel passen. */
+/* Zijbalk: 360 px breed (standaard 300), zodat Florgib · Oogst · Opmerking · Wijzigen op één regel passen en
+   de invoervelden ruimte hebben. Alleen uitgeklapt (inklappen blijft werken); slepen aan de rand kan nog
+   breder. Op een telefoon nooit breder dan het scherm. Minder opvulling in de knoppengroepen. */
+[data-testid="stSidebar"][aria-expanded="true"] { min-width: min(360px, 100vw); }
 [data-testid="stSidebar"] [data-testid="stButtonGroup"] button { padding-left: 10px; padding-right: 10px; }
+/* Pills (afdelingen, overige filters) hebben in Streamlit een vaste pilvorm; dezelfde ronding als de
+   andere knoppen (theme.buttonRadius). */
+button[data-variant="pills"] { border-radius: 0.2rem; }
 /* ◀ [label ▾] ▶ (ui/filters.bladeraar): het label als vette knop met vaste minimumbreedte. */
 [class*="st-key-bladeraar_"] [data-testid="stPopover"] button { min-width: 9rem; font-weight: 600; }
 .vt-wrap { max-width: 900px; margin: 0.25rem 0 0.4rem; }
