@@ -1977,6 +1977,98 @@ def _df(cursor, sql, params=None):
     return pd.DataFrame(cursor.fetchall(), columns=[k[0] for k in cursor.description])
 
 
+def get_opzoek_gegevens(teelt_ids, van, tot):
+    """
+    Alles wat er is over een groep vakken (pagina Opzoeken), als DataFrames.
+    Op teelt-id: vakken, emmers, stek, opmerkingen, prognoselogboek, teelthistorie
+    en wijzigingen. Per tuin/vak/afdeling binnen [van, tot]: watergift, gietbeurten,
+    behandelingen, klimaat, EC/pH, warmte en gas; logic/opzoeken knipt die daarna
+    per vak op de eigen periode (planten t/m oogst).
+    """
+    ids = [int(i) for i in teelt_ids]
+    leeg = {k: pd.DataFrame() for k in ("vakken", "emmers", "stek", "opmerkingen", "prognose", "historie",
+                                        "wijzigingen", "water", "beurten", "behandelingen", "klimaat",
+                                        "kwaliteit", "warmte", "gas")}
+    if not ids:
+        return leeg
+    van, tot = str(van), str(tot)
+    uit = {}
+    with get_connection() as conn:
+        c = conn.cursor()
+        uit["vakken"] = _df(c, """
+            SELECT t.id, v.tuin_id, v.vaknummer AS vak, v.afdeling, v.oppervlakte_m2, t.code, t.ras,
+                   t.datum_teelt_start AS start, t.aantal_planten AS planten, t.datum_half AS florgib,
+                   t.lengte_half AS lengte_florgib, t.florgib_gram, t.datum_oogst AS oogstdatum,
+                   t.lengte_eind AS oogstlengte, t.oogstgewicht, t.rijpheid, t.uitval_pct
+            FROM teelten t JOIN teeltvakken v ON v.id = t.teeltvak_id
+            WHERE t.id = ANY(%s) ORDER BY v.tuin_id, v.vaknummer""", (ids,))
+        uit["emmers"] = _df(c, """
+            SELECT o.teelt_id, t.code, o.datum, o.aantal_emmers AS emmers, o.aantal_emmers * 100 AS stelen
+            FROM oogstregistraties o JOIN teelten t ON t.id = o.teelt_id
+            WHERE o.teelt_id = ANY(%s) ORDER BY o.datum, t.code""", (ids,))
+        uit["stek"] = _df(c, """
+            SELECT s.teelt_id, t.code, s.ras, s.bakjes, s.wortel, s.plantmaat, s.uniformiteit, s.beoordeling,
+                   s.opmerking
+            FROM stekbeoordelingen s JOIN teelten t ON t.id = s.teelt_id
+            WHERE s.teelt_id = ANY(%s) ORDER BY t.code""", (ids,))
+        uit["opmerkingen"] = _df(c, """
+            SELECT o.teelt_id, t.code, o.datum, o.categorie, o.tekst, o.gebruiker
+            FROM opmerkingen o JOIN teelten t ON t.id = o.teelt_id
+            WHERE o.teelt_id = ANY(%s) ORDER BY o.datum, t.code""", (ids,))
+        uit["prognose"] = _df(c, """
+            SELECT teelt_id, code, datum, leeftijd_d, fase, gedaan, plan_oogst, prognose_oogst, correctie_c,
+                   stooklijn
+            FROM prognose_log WHERE teelt_id = ANY(%s) ORDER BY datum, code""", (ids,))
+        uit["historie"] = _df(c, """
+            SELECT teelt_id, code, startdatum, oogstdatum, teeltduur_dagen, florgib_datum, florgib_bron,
+                   lengte_eind, oogstgewicht, bron
+            FROM teelt_historie WHERE teelt_id = ANY(%s) ORDER BY code""", (ids,))
+        # Teelt, opmerking en stekbeoordeling loggen met de teelt-id als entiteit_id.
+        uit["wijzigingen"] = _df(c, """
+            SELECT tijdstip, gebruiker, actie, entiteit, entiteit_id, omschrijving FROM wijzigingenlog
+            WHERE entiteit IN ('teelt', 'opmerking', 'stekbeoordeling') AND entiteit_id = ANY(%s)
+            ORDER BY tijdstip""", ([str(i) for i in ids],))
+
+        tuinen = sorted({int(t) for t in uit["vakken"]["tuin_id"]}) if not uit["vakken"].empty else []
+        vakken = sorted({int(v) for v in uit["vakken"]["vak"]}) if not uit["vakken"].empty else []
+        afdelingen = sorted({int(a) for a in uit["vakken"]["afdeling"].dropna()}) if not uit["vakken"].empty else []
+        bereik = {"tuinen": tuinen, "vakken": vakken, "afdelingen": afdelingen, "van": van, "tot": tot}
+        uit["water"] = _df(c, """
+            SELECT tuin_id, vaknummer AS vak, datum, liter_per_m2, beurten, ec, ph, bron FROM watergift_dag
+            WHERE tuin_id = ANY(%(tuinen)s) AND vaknummer = ANY(%(vakken)s) AND datum BETWEEN %(van)s AND %(tot)s
+            ORDER BY datum, vaknummer""", bereik)
+        uit["beurten"] = _df(c, """
+            SELECT tuin_id, vaknummer AS vak, datum, start, eind, liter_per_m2, ec, ph, flow FROM watergift_beurt
+            WHERE tuin_id = ANY(%(tuinen)s) AND vaknummer = ANY(%(vakken)s) AND datum BETWEEN %(van)s AND %(tot)s
+            ORDER BY start, vaknummer""", bereik)
+        uit["behandelingen"] = _df(c, """
+            SELECT b.tuin_id, b.vaknummer AS vak, b.datum, m.naam AS middel, m.type, b.dosering, b.eenheid,
+                   b.methode, b.opmerking
+            FROM behandeling b LEFT JOIN middel m ON m.id = b.middel_id
+            WHERE b.tuin_id = ANY(%(tuinen)s) AND b.vaknummer = ANY(%(vakken)s)
+              AND b.datum BETWEEN %(van)s AND %(tot)s
+            ORDER BY b.datum, b.vaknummer""", bereik)
+        uit["klimaat"] = _df(c, """
+            SELECT tuin_id, afdeling, datum, gem_temperatuur AS etmaal_temp, gem_temperatuur_dag AS temp_dag,
+                   gem_temperatuur_nacht AS temp_nacht, gem_rv AS rv, gem_rv_dag AS rv_dag,
+                   gem_rv_nacht AS rv_nacht, stralingssom_dag AS lichtsom
+            FROM klimaatdata_dag
+            WHERE tuin_id = ANY(%(tuinen)s) AND afdeling = ANY(%(afdelingen)s) AND datum BETWEEN %(van)s AND %(tot)s
+            ORDER BY datum, afdeling""", bereik)
+        uit["kwaliteit"] = _df(c, """
+            SELECT tuin_id, datum, watersysteem, ec_gift, ph_gift, ec_gem, ph_gem, ec_doel, ph_doel, ec_aanvoer,
+                   recept
+            FROM water_kwaliteit_dag WHERE tuin_id = ANY(%(tuinen)s) AND datum BETWEEN %(van)s AND %(tot)s
+            ORDER BY datum, watersysteem""", bereik)
+        uit["warmte"] = _df(c, """
+            SELECT tuin_id, datum, warmte_mj_totaal, warmte_mj_per_m2 FROM energiedata_dag
+            WHERE tuin_id = ANY(%(tuinen)s) AND datum BETWEEN %(van)s AND %(tot)s ORDER BY datum""", bereik)
+        uit["gas"] = _df(c, """
+            SELECT tuin_id, datum, gas_m3_totaal, gas_m3_per_m2 FROM gasdata_dag
+            WHERE tuin_id = ANY(%(tuinen)s) AND datum BETWEEN %(van)s AND %(tot)s ORDER BY datum""", bereik)
+    return {**leeg, **uit}
+
+
 def get_vakstatus_data(dagen_klimaat=150):
     """
     Alle data voor het scherm "Nu", voor alle tuinen tegelijk, in vijf query's

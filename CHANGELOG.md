@@ -3,6 +3,59 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.8.0] - 2026-10-08
+
+### Toegevoegd
+- **Pagina Teelt** (Opzoeken en Teeltvergelijking samen): de tuinkeuze bovenaan kiest de
+  weergave. Bij **Beide** de vergelijking van Tuin 1, Tuin 3 en het totaal (zoals
+  Teeltvergelijking was); een klik op een vak opent het in zijn eigen tuin. Bij **Tuin 1** of
+  **Tuin 3** een teelt (alle vakken uit één plantweek) of één vak met alle informatie die er
+  is. De teelt blijft staan als je wisselt; zoeken op een teeltcode of vaknummer opent het vak
+  in zijn eigen tuin. Bij een teelt een samenvatting, bij één vak
+  alles uit de vakpopup; de vakken van de teelt staan er altijd bij. Daaronder elke bron in
+  een openklapmenu: oogst, Florgib en lengtes, opmerkingen, stek, watergift, gietbeurten,
+  EC/pH, klimaat, warmte en gas, het verloop van de prognose, behandelingen, teelthistorie
+  en wijzigingen, en alles in één Excel-bestand. Watergift, klimaat en energie per vak van
+  planten tot oogst. In de vakpopup gaat de knop *Alles over dit vak* naar deze pagina.
+  Het adres /teeltvergelijking bestaat niet meer (nu /teelt).
+
+### Gewijzigd
+- **Planning en Teeltoverzicht samengevoegd** tot één pagina Teeltoverzicht, met de
+  **tijdlijn** als hoofdweergave: per vak één regel met de afgeronde teelten (grijs), de
+  lopende teelt tot vandaag in de statuskleur van de vakkenmatrix en daarna licht tot de
+  prognose-oogst, bevestigde teelten, concepten en overlap (rode stippelrand). Per afdeling
+  een kopregel met het stookadvies, bovenaan het weeknummer en het aantal vakken dat per
+  week (bij 6 mnd / 1 jaar per 2 of 4 weken) geoogst wordt. De vakkenmatrix blijft
+  beschikbaar via Weergave › Vakken nu. Waarom: de status van een vak en wat er daarna
+  gepland staat hoorden bij elkaar, maar stonden op twee pagina's.
+- **Concepten bewerken in de tijdlijn**: klik op een concept om het te verschuiven, te
+  starten als teelt of te verwijderen; klik op een lege plek in een vakregel om daar een
+  concept te plannen. Met een waarschuwing als de planting overlapt met de vorige of de
+  volgende ronde.
+- De concepttabel, de jaarplanning, het overzicht per plantweek en de vooruitblik staan in
+  openklapmenu's onder de tijdlijn; het vakkenregister staat daaronder.
+- Vervallen: de strokenplanning (Gantt) en "Eén vak handmatig plannen" (de tijdlijn doet
+  beide). Het adres /planning bestaat niet meer.
+- **Zijbalk 330 px breed** (was 300): de knoppen Florgib · Oogst · Opmerking · Wijzigen
+  passen op één regel en de invoervelden hebben meer ruimte.
+- **Geen paginatitel meer** onder de navigatie: de gevulde knop laat al zien waar je bent. De
+  knop Uitleg is kleiner en staat rechts op de regel van de tuinkeuze; dat scheelt een regel.
+- **Strakkere vergelijkingstabellen** (Teelt, Tuin vergelijking): elke groep (Bezetting &
+  productie, Klimaat …) met een eigen balk en grotere titel; rijtitels groter, waarden kleiner;
+  alleen horizontale lijnen (Streamlit zette om elke cel een rand), geen zebrastrepen, minder
+  opvulling en waarden die nooit meer midden in een getal afbreken. Op een smal scherm schuift
+  de tabel zijwaarts met de eerste kolom vast.
+- Navigatieknoppen vielen op een smal scherm over elkaar zodra ze naar een tweede regel
+  liepen (negatieve marge van Streamlit); nu staan ze netjes onder elkaar.
+- Excel-export: tekens die Excel niet toestaat in een bladnaam (zoals /) worden een streepje.
+- **Strakkere knoppen**: overal een kleine ronding van 0,2 rem in plaats van ronde hoeken en
+  pilvormen (thema in `.streamlit/config.toml`; navigatiebalk, kop, afdelingsknoppen,
+  vakblokken en tegels volgen dezelfde ronding).
+
+### Gecorrigeerd
+- Weeknummers bij de wintertijd: in de strokenplanning stond week 43 twee keer en
+  ontbrak week 44 (zondag + 24 uur viel op de 25-uursdag nog op zondag).
+
 ## [2.7.1] - 2026-10-07
 
 ### Gecorrigeerd

@@ -73,7 +73,7 @@ TABELLEN = [
           "Concepten die nog niet gestart zijn."),
     Tabel("Jaarplanning (weekdoelen)",
           "SELECT week_start, aantal_vakken, vak1_planten FROM planning_weekdoel",
-          "tuin_id", "week_start", None, "week_start", "Aantal te poten vakken per week (Planning)."),
+          "tuin_id", "week_start", None, "week_start", "Aantal te poten vakken per week (jaarplanning, Teeltoverzicht)."),
     Tabel("Prognoselogboek",
           "SELECT datum, vaknummer AS vak, afdeling, code, leeftijd_d, fase, gedaan, plan_oogst, prognose_oogst, "
           "correctie_c, c_begrensd, stooklijn, stooklijn_bron, modelversie FROM prognose_log",

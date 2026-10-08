@@ -51,7 +51,7 @@ LINKS = (("Vak", 44), ("Plantw.", 54), ("Leeftijd", 56), ("Totaal", 60))
 
 CSS = """
 .wg-scroll { position: relative; overflow: auto; max-height: 75vh; border: 1px solid rgba(128,128,128,0.25);
-             border-radius: 8px; }
+             border-radius: 0.2rem; }
 table.wg { border-collapse: separate; border-spacing: 0; font-size: 12px; font-variant-numeric: tabular-nums;
            line-height: 1.15;
            color: var(--st-text-color, #31333f); }
@@ -80,7 +80,7 @@ table.wg td.vandaag::before { content: ""; position: absolute; inset: 0; pointer
     background: rgba(46,106,76,0.16); border-left: 1px solid rgba(46,106,76,0.55);
     border-right: 1px solid rgba(46,106,76,0.55); }
 
-table.wg thead th.vandaag { color: #fff; background: #2E6A4C; border-radius: 4px 4px 0 0; }
+table.wg thead th.vandaag { color: #fff; background: #2E6A4C; border-radius: 0.2rem 0.2rem 0 0; }
 table.wg tr.afdgrens td { border-top: 3px solid rgba(128,128,128,0.55); }
 table.wg tr.kw td.l { text-align: left; padding-left: 6px; font-weight: 600; }
 table.wg tr.kw td { font-size: 11px; }

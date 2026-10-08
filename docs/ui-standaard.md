@@ -9,7 +9,7 @@ Elke pagina, van boven naar beneden:
 
 | | Onderdeel | Component |
 |---|---|---|
-| a | Titel + knop **Uitleg** rechts ernaast | `layout.pagina_kop()` |
+| a | Knop **Uitleg**, klein rechts in de kop naast de tuinkeuze. Geen paginatitel: de gevulde knop in de navigatiebalk laat de pagina zien | `layout.pagina_kop()` |
 | b | Eén filterbalk (één regel, loopt door op een smal scherm) | `layout.filterbalk()` + `ui/filters.py` |
 | c | Samenvatting (tabel) | `layout.sectie()` |
 | d | Hoofdweergave (matrix, tabel of grafiek), met legenda eronder | `legend.legenda()` |
@@ -51,7 +51,7 @@ layout.export(excel, "watergift_tuin_3.xlsx")
 | Zoeken | Eén tekstveld, alleen op registerpagina's, altijd als laatste in de filterbalk | `filters.zoekveld()` |
 | Weergave-optie (eenheid, vergelijk met) | Knoppengroep, altijd één gekozen; nooit radio | `filters.weergave()` |
 | Aan/uit (Vooruitkijken, Alle concepten tonen) | Schakelaar | `filters.schakelaar()` |
-| Datum | Alleen in invoerformulieren (zijbalk, Planning), nooit om te filteren | `st.date_input` |
+| Datum | Alleen in invoerformulieren (zijbalk, vensters van de tijdlijn, concepttabel), nooit om te filteren | `st.date_input` |
 
 Niet voor filters: `st.slider`, `st.select_slider`, `st.radio`, `st.date_input`, `st.number_input`.
 Een schuif mag alleen voor een doorlopende instelwaarde in een formulier of popup (rijpheid bij de
@@ -62,11 +62,15 @@ oogst, de afdelingscorrectie in het stookadvies), nooit om weken of perioden te 
 `TUIN_MODUS` in app.py zegt per pagina wat de tuinkeuze doet:
 
 - **vrij** (standaard): Tuin 1 / Tuin 3 / Beide.
-- **een**: de pagina werkt per tuin (Planning, Stek, Meer). Beide staat er niet bij; stond Beide aan,
+- **een**: de pagina werkt per tuin (Stek, Meer). Beide staat er niet bij; stond Beide aan,
   dan toont de pagina de laatst gekozen tuin met de melding "Beide kan hier niet".
+- Op de pagina **Teelt** kiest de tuinkeuze de weergave: Beide = vergelijken (Tuin 1 naast Tuin 3), Tuin 1 /
+  Tuin 3 = opzoeken in die tuin. De teeltkeuze blijft staan.
 - **beide**: de pagina gaat altijd over beide tuinen (Tuin vergelijking); keuze uitgeschakeld met reden.
 
-Registreren kan maar in één tuin: bij Beide vraagt de zijbalk "Registreren in".
+Registreren kan maar in één tuin: bij Beide vraagt de zijbalk "Registreren in". Hetzelfde geldt voor het plannen op
+Teeltoverzicht (concepttabel, jaarplanning): bij Beide de tuin uit "Registreren in", met de tuinnaam in de titel
+van het openklapmenu.
 
 ### Keuzes bewaren
 
@@ -102,7 +106,7 @@ alles = filters.schakelaar("Alle concepten tonen", "planning_alles", False, plek
 
 ## 3. Uitleg op één manier
 
-- De knop **Uitleg** naast de titel opent een popover met altijd dezelfde kopjes:
+- De knop **Uitleg** rechts in de kop opent een popover met altijd dezelfde kopjes:
   *Wat zie je · Hoe lees je het · Waar komen de getallen vandaan · Wat betekenen de kleuren*
   (`uitleg_help.uitleg()`, via `layout.pagina_kop()`). Een kopje zonder tekst valt weg.
 - ⓘ-tooltips alleen bij losse kengetallen en kolomkoppen (`help=`).
@@ -114,11 +118,14 @@ alles = filters.schakelaar("Alle concepten tonen", "planning_alles", False, plek
 
 | Informatie | Thuis | Elders |
 |---|---|---|
-| Details van een vak | De vakpopup `vak_venster()` | Overal dezelfde popup (matrix, register, Teeltvergelijking, Opmerkingen, Watergift, missers) |
+| Details van een vak | De vakpopup `vak_venster()` (inhoud: `vak_details()`) | Overal dezelfde popup (tijdlijn, matrix, register, Teelt, Opmerkingen, Watergift, missers); de knop *Alles over dit vak* gaat naar Teelt in de tuin van het vak |
+| Alle gegevens van een teelt of vak | Pagina Teelt bij Tuin 1 / Tuin 3 (bovenaan `vak_details()`, daaronder elke bron als tabel) | – |
+| Teelt vergelijken tussen de tuinen | Pagina Teelt bij Beide | – |
 | Watergift per vak | Pagina Watergift | Vakpopup (staafjes op de tijdlijn + tabel Watergift per dag) |
 | Lijst van vakken | Vakkenregister (Teeltoverzicht) | Doorklik-link met het juiste filter |
 | Opmerkingen | Pagina Opmerkingen | Vakpopup; elders één regel "n opmerkingen →" |
-| Vooruitblik | Planning | – |
+| Planning (concepten) | Tijdlijn op Teeltoverzicht (klik op een concept of een lege plek) | Concepttabel en jaarplanning in openklapmenu's op dezelfde pagina |
+| Vooruitblik | Openklapmenu op Teeltoverzicht | – |
 
 ## 5. Legenda's
 
@@ -143,3 +150,12 @@ De week loopt in de hele app van **zondag t/m zaterdag** (`logic/weken.py`): het
 de ISO-week die op de maandag erna begint. Teeltcodes, plantweken en pootweken blijven de ISO-week van
 de plantdatum. Gebruik voor kalenderweken altijd `logic.weken` (of `logic.perioden` met "Week"),
 nooit `isocalendar()` direct.
+
+## 7. Vormgeving
+
+- **Ronding**: knoppen, velden en kaders zijn licht afgerond, 0,2 rem (`baseRadius` en `buttonRadius` in
+  `.streamlit/config.toml`). Eigen opmaak (navigatiebalk, kop, vakblokken, tegels, tabellen) gebruikt dezelfde
+  0,2 rem; geen pilvormen.
+- **Zijbalk**: 330 px breed, zodat de knoppen van *Wat wil je doen?* op één regel passen (`ui/styles.py`).
+- **Vergelijkingstabellen** (`ui/vergelijkingstabel.py`, opmaak in `ui/styles.py`): alleen horizontale lijnen, geen
+  zebra, waarden op één regel; op een smal scherm zijwaarts scrollen met de eerste kolom vast.
