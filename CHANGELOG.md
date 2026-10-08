@@ -3,6 +3,30 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.8.0] - 2026-10-08
+
+### Gewijzigd
+- **Planning en Teeltoverzicht samengevoegd** tot één pagina Teeltoverzicht, met de
+  **tijdlijn** als hoofdweergave: per vak één regel met de afgeronde teelten (grijs), de
+  lopende teelt tot vandaag in de statuskleur van de vakkenmatrix en daarna licht tot de
+  prognose-oogst, bevestigde teelten, concepten en overlap (rode stippelrand). Per afdeling
+  een kopregel met het stookadvies, bovenaan het weeknummer en het aantal vakken dat per
+  week (bij 6 mnd / 1 jaar per 2 of 4 weken) geoogst wordt. De vakkenmatrix blijft
+  beschikbaar via Weergave › Vakken nu. Waarom: de status van een vak en wat er daarna
+  gepland staat hoorden bij elkaar, maar stonden op twee pagina's.
+- **Concepten bewerken in de tijdlijn**: klik op een concept om het te verschuiven, te
+  starten als teelt of te verwijderen; klik op een lege plek in een vakregel om daar een
+  concept te plannen. Met een waarschuwing als de planting overlapt met de vorige of de
+  volgende ronde.
+- De concepttabel, de jaarplanning, het overzicht per plantweek en de vooruitblik staan in
+  openklapmenu's onder de tijdlijn; het vakkenregister staat daaronder.
+- Vervallen: de strokenplanning (Gantt) en "Eén vak handmatig plannen" (de tijdlijn doet
+  beide). Het adres /planning bestaat niet meer.
+
+### Gecorrigeerd
+- Weeknummers bij de wintertijd: in de strokenplanning stond week 43 twee keer en
+  ontbrak week 44 (zondag + 24 uur viel op de 25-uursdag nog op zondag).
+
 ## [2.7.1] - 2026-10-07
 
 ### Gecorrigeerd

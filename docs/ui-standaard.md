@@ -51,7 +51,7 @@ layout.export(excel, "watergift_tuin_3.xlsx")
 | Zoeken | Eén tekstveld, alleen op registerpagina's, altijd als laatste in de filterbalk | `filters.zoekveld()` |
 | Weergave-optie (eenheid, vergelijk met) | Knoppengroep, altijd één gekozen; nooit radio | `filters.weergave()` |
 | Aan/uit (Vooruitkijken, Alle concepten tonen) | Schakelaar | `filters.schakelaar()` |
-| Datum | Alleen in invoerformulieren (zijbalk, Planning), nooit om te filteren | `st.date_input` |
+| Datum | Alleen in invoerformulieren (zijbalk, vensters van de tijdlijn, concepttabel), nooit om te filteren | `st.date_input` |
 
 Niet voor filters: `st.slider`, `st.select_slider`, `st.radio`, `st.date_input`, `st.number_input`.
 Een schuif mag alleen voor een doorlopende instelwaarde in een formulier of popup (rijpheid bij de
@@ -62,11 +62,13 @@ oogst, de afdelingscorrectie in het stookadvies), nooit om weken of perioden te 
 `TUIN_MODUS` in app.py zegt per pagina wat de tuinkeuze doet:
 
 - **vrij** (standaard): Tuin 1 / Tuin 3 / Beide.
-- **een**: de pagina werkt per tuin (Planning, Stek, Meer). Beide staat er niet bij; stond Beide aan,
+- **een**: de pagina werkt per tuin (Stek, Meer). Beide staat er niet bij; stond Beide aan,
   dan toont de pagina de laatst gekozen tuin met de melding "Beide kan hier niet".
 - **beide**: de pagina gaat altijd over beide tuinen (Tuin vergelijking); keuze uitgeschakeld met reden.
 
-Registreren kan maar in één tuin: bij Beide vraagt de zijbalk "Registreren in".
+Registreren kan maar in één tuin: bij Beide vraagt de zijbalk "Registreren in". Hetzelfde geldt voor het plannen op
+Teeltoverzicht (concepttabel, jaarplanning): bij Beide de tuin uit "Registreren in", met de tuinnaam in de titel
+van het openklapmenu.
 
 ### Keuzes bewaren
 
@@ -118,7 +120,8 @@ alles = filters.schakelaar("Alle concepten tonen", "planning_alles", False, plek
 | Watergift per vak | Pagina Watergift | Vakpopup (staafjes op de tijdlijn + tabel Watergift per dag) |
 | Lijst van vakken | Vakkenregister (Teeltoverzicht) | Doorklik-link met het juiste filter |
 | Opmerkingen | Pagina Opmerkingen | Vakpopup; elders één regel "n opmerkingen →" |
-| Vooruitblik | Planning | – |
+| Planning (concepten) | Tijdlijn op Teeltoverzicht (klik op een concept of een lege plek) | Concepttabel en jaarplanning in openklapmenu's op dezelfde pagina |
+| Vooruitblik | Openklapmenu op Teeltoverzicht | – |
 
 ## 5. Legenda's
 
