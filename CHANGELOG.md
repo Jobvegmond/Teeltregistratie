@@ -24,6 +24,8 @@ inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
   beide). Het adres /planning bestaat niet meer.
 - **Zijbalk 330 px breed** (was 300): de knoppen Florgib · Oogst · Opmerking · Wijzigen
   passen op één regel en de invoervelden hebben meer ruimte.
+- **Geen paginatitel meer** onder de navigatie: de gevulde knop laat al zien waar je bent. De
+  knop Uitleg is kleiner en staat rechts op de regel van de tuinkeuze; dat scheelt een regel.
 - **Strakkere knoppen**: overal een kleine ronding van 0,2 rem in plaats van ronde hoeken en
   pilvormen (thema in `.streamlit/config.toml`; navigatiebalk, kop, afdelingsknoppen,
   vakblokken en tegels volgen dezelfde ronding).

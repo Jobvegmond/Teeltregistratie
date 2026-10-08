@@ -9,7 +9,7 @@ Elke pagina, van boven naar beneden:
 
 | | Onderdeel | Component |
 |---|---|---|
-| a | Titel + knop **Uitleg** rechts ernaast | `layout.pagina_kop()` |
+| a | Knop **Uitleg**, klein rechts in de kop naast de tuinkeuze. Geen paginatitel: de gevulde knop in de navigatiebalk laat de pagina zien | `layout.pagina_kop()` |
 | b | Eén filterbalk (één regel, loopt door op een smal scherm) | `layout.filterbalk()` + `ui/filters.py` |
 | c | Samenvatting (tabel) | `layout.sectie()` |
 | d | Hoofdweergave (matrix, tabel of grafiek), met legenda eronder | `legend.legenda()` |
@@ -104,7 +104,7 @@ alles = filters.schakelaar("Alle concepten tonen", "planning_alles", False, plek
 
 ## 3. Uitleg op één manier
 
-- De knop **Uitleg** naast de titel opent een popover met altijd dezelfde kopjes:
+- De knop **Uitleg** rechts in de kop opent een popover met altijd dezelfde kopjes:
   *Wat zie je · Hoe lees je het · Waar komen de getallen vandaan · Wat betekenen de kleuren*
   (`uitleg_help.uitleg()`, via `layout.pagina_kop()`). Een kopje zonder tekst valt weg.
 - ⓘ-tooltips alleen bij losse kengetallen en kolomkoppen (`help=`).

@@ -24,9 +24,15 @@ CSS = """
 [data-testid="stMain"] [data-testid="stNumberInput"],
 [data-testid="stMain"] [data-testid="stSelectSlider"] { max-width: 360px; }
 [data-testid="stMain"] [data-testid="stTextArea"] { max-width: 720px; }
-/* Paginaopbouw (ui/layout.py): titel met de knop Uitleg ernaast, sectiekoppen, filterbalk. */
-.st-key-vem_paginakop { margin: 0.1rem 0 0.2rem; }
-.vem-paginatitel { font-size: 1.35rem; font-weight: 700; line-height: 1.2; }
+/* Paginaopbouw (ui/layout.py): de knop Uitleg klein rechts in de rij met de tuinkeuze, sectiekoppen,
+   filterbalk. Geen paginatitel: de gevulde knop in de navigatiebalk laat de pagina zien. */
+/* Streamlit verpakt elk blok in een stLayoutWrapper: de rij met de tuinkeuze over de hele breedte, de
+   knop Uitleg daarin helemaal rechts. */
+[data-testid="stLayoutWrapper"]:has(> .st-key-vem_tuinkeuze) { flex: 1 1 auto; width: 100%; }
+[data-testid="stLayoutWrapper"]:has(> .st-key-vem_uitleg) { margin-left: auto; }
+.st-key-vem_uitleg [data-testid="stPopover"] button { min-height: 0; padding: 0.1rem 0.55rem; }
+.st-key-vem_uitleg [data-testid="stPopover"] button p,
+.st-key-vem_uitleg [data-testid="stPopover"] button span { font-size: 0.8rem; }
 .vem-sectie { font-size: 1rem; font-weight: 600; margin: 0.6rem 0 0.1rem; }
 .vem-sectie span { font-weight: 400; opacity: 0.65; }
 [class*="st-key-filterbalk_"] { flex-wrap: wrap; row-gap: 0.5rem; margin-bottom: 0.4rem; }

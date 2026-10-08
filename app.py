@@ -771,6 +771,9 @@ if _tuin_modus == "een" and st.session_state["tuin_weergave"] == "beide":
     _tuin_rij.caption(f"Beide kan hier niet: {_tuin_reden[:-1].lower()}")
 elif _tuin_modus == "beide":
     _tuin_rij.caption(_tuin_reden)
+# De knop Uitleg van de pagina komt klein rechts in deze rij (ui/layout.pagina_kop); een paginatitel is er
+# niet, want de gevulde knop in de navigatiebalk laat al zien op welke pagina je bent.
+layout.kop_plek(_tuin_rij.container(width="content", key="vem_uitleg"))
 # Zijbalk voor invoer (onder de gebruiker); de keuze van de tuin hoort bij de registratie.
 st.sidebar.header("Registratie")
 if TUIN_WEERGAVE == "beide" and _tuin_modus == "vrij" and len(_tuin_nummers) > 1:

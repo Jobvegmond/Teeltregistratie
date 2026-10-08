@@ -1,7 +1,7 @@
 """
 Uitleg op één manier (UI-standaard, docs/ui-standaard.md):
 
-- uitleg(): de knop "Uitleg" rechts naast de paginatitel. Opent een popover met
+- uitleg(): de kleine knop "Uitleg" rechts in de kop, naast de tuinkeuze. Opent een popover met
   altijd dezelfde kopjes, in deze volgorde: Wat zie je · Hoe lees je het ·
   Waar komen de getallen vandaan · Wat betekenen de kleuren. Een kopje zonder
   tekst valt weg.
@@ -38,7 +38,7 @@ def uitleg_inhoud(wat=None, lezen=None, bron=None, kleuren=None):
 
 def uitleg(wat=None, lezen=None, bron=None, kleuren=None, plek=None):
     """De knop "Uitleg" met de popover; `plek` = de container waarin de knop staat (standaard de pagina)."""
-    with (plek or st).popover("Uitleg", icon=":material/help:", width=112):
+    with (plek or st).popover("Uitleg", icon=":material/help:", width="content"):
         with st.container(width=560):
             uitleg_inhoud(wat, lezen, bron, kleuren)
 
