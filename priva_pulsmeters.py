@@ -18,8 +18,14 @@ De map met de bestanden: --map, of PRIVA_MAP in de omgeving (in de container /pr
 bijv. \\\\192.168.0.197\\Priva). Daarin "bron historie" (pulsmeters_*.csv, per uur) en
 "bron live" (historie-<datum>.jsonl, per minuut).
 
-Synology Taakplanner (root), bijv. elk uur:
-    docker exec vemteelt-app python priva_pulsmeters.py --doel productie
+Synology Taakplanner (root), elk uur; een losse container uit het app-image met de map Priva
+(/volume2/Priva) alleen-lezen erbij, net als de taak Priva-data ophalen. .env.taak levert
+DATABASE_URL = productie; de NAS-database krijgt het via de wekelijkse kopie:
+    LOG=/volume2/Appdata/VEMteelt/logs/pulsmeters.log
+    echo "--- $(date '+%d-%m-%y %H:%M') start" >> "$LOG"
+    /usr/local/bin/docker run --rm -v /volume2/Priva:/priva:ro \\
+        --env-file /volume2/Appdata/VEMteelt/.env.taak vemteelt-app:latest \\
+        python priva_pulsmeters.py >> "$LOG" 2>&1
 Sluit af met een foutcode als er iets misging, zodat de mail bij een fout werkt.
 """
 import argparse
