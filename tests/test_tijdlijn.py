@@ -41,6 +41,18 @@ class TestStukken(unittest.TestCase):
         uit = tijdlijn.stukken(self.teelten, self.statussen, self.concepten, VANDAAG, plan_van)
         self.assertEqual(tijdlijn.overlap(uit), [{"vak": 1, "start": date(2026, 11, 12), "eind": date(2026, 11, 14)}])
 
+    def test_overlappend(self):
+        uit = tijdlijn.stukken(self.teelten, self.statussen, self.concepten, VANDAAG, plan_van)
+        lopend, concept = (date(2026, 9, 1), date(2026, 11, 14)), (date(2026, 11, 12), date(2027, 1, 21))
+        # 01-11 t/m 10-01 in vak 1: de lopende teelt loopt (prognose) tot 14-11 en het concept begint op 12-11.
+        self.assertEqual(tijdlijn.overlappend(uit, 1, date(2026, 11, 1), date(2027, 1, 10)), [lopend, concept])
+        # Het concept zelf verschuiven: alleen de lopende teelt telt.
+        self.assertEqual(tijdlijn.overlappend(uit, 1, date(2026, 11, 1), date(2027, 1, 10), behalve_concept=7),
+                         [lopend])
+        # Na het concept is het vak vrij; vak 3 heeft niets.
+        self.assertEqual(tijdlijn.overlappend(uit, 1, date(2027, 1, 21), date(2027, 4, 1)), [])
+        self.assertEqual(tijdlijn.overlappend(uit, 3, date(2026, 11, 1), date(2027, 1, 10)), [])
+
     def test_oogst_per_week(self):
         uit = tijdlijn.stukken(self.teelten, self.statussen, self.concepten, VANDAAG, plan_van)
         per_week = tijdlijn.oogst_per_week(uit, self.statussen, date(2026, 10, 1), date(2026, 12, 31))

@@ -62,11 +62,8 @@ def stukken(teelten, statussen, concepten, vandaag, plan_van):
     return uit
 
 
-def overlap(stukken_lijst):
-    """
-    De dagen waarop een teelt of concept begint vóór de vorige ronde in dat vak
-    klaar is: [{vak, start, eind}]. De lopende teelt telt met zijn prognose mee.
-    """
+def _rondes(stukken_lijst):
+    """{vak: [(start, eind, concept_id)]}: elke teelt of concept één ronde; een lopende teelt tot zijn prognose."""
     rondes = {}
     for s in stukken_lijst:
         if s["soort"] == "prognose":
@@ -75,16 +72,36 @@ def overlap(stukken_lijst):
         if s["soort"] == "lopend":
             eind = max([eind] + [p["eind"] for p in stukken_lijst
                                  if p["soort"] == "prognose" and p.get("teelt_id") == s.get("teelt_id")])
-        rondes.setdefault(s["vak"], []).append((s["start"], eind))
+        rondes.setdefault(s["vak"], []).append((s["start"], eind, s.get("concept_id")))
+    return rondes
+
+
+def overlap(stukken_lijst):
+    """
+    De dagen waarop een teelt of concept begint vóór de vorige ronde in dat vak
+    klaar is: [{vak, start, eind}]. De lopende teelt telt met zijn prognose mee.
+    """
     uit = []
-    for vak, lijst in rondes.items():
+    for vak, lijst in _rondes(stukken_lijst).items():
         eerdere = []
-        for start, eind in sorted(lijst):
+        for start, eind, _ in sorted(lijst, key=lambda r: r[:2]):
             later = [e for e in eerdere if start < e]
             if later:
                 uit.append({"vak": vak, "start": start, "eind": min(eind, max(later))})
             eerdere.append(eind)
     return uit
+
+
+def overlappend(stukken_lijst, vak, start, eind, behalve_concept=None):
+    """
+    De rondes in het vak die overlappen met een nieuwe of verschoven planting
+    van `start` tot `eind`: [(begin, eind)], op begin. Een ronde die eerder
+    begint loopt dan nog na `start`; een latere begint al vóór `eind`. Het
+    concept zelf (`behalve_concept`) telt niet mee.
+    """
+    return sorted((begin, einde) for begin, einde, concept_id in _rondes(stukken_lijst).get(vak, [])
+                  if begin < eind and einde > start
+                  and (behalve_concept is None or concept_id != behalve_concept))
 
 
 def oogst_per_week(stukken_lijst, statussen, van, tot):
