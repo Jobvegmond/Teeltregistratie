@@ -73,9 +73,9 @@ table.vt th:first-child, table.vt td:first-child {
     text-align: left; position: sticky; left: 0; z-index: 1; background: var(--vt-bg);
 }
 table.vt thead th:first-child { z-index: 3; }
-table.vt td.vt-onderwerp { font-size: 13.5px; cursor: help; padding-top: 6px; white-space: normal; min-width: 130px; }
+table.vt td.vt-onderwerp { font-size: 14.5px; cursor: help; padding-top: 5px; white-space: normal; min-width: 130px; }
 table.vt td.vt-onderwerp .vt-i { font-size: 10.5px; opacity: 0.45; margin-left: 4px; }
-table.vt .vt-waarde { font-size: 14.5px; font-weight: 600; line-height: 1.25; }
+table.vt .vt-waarde { font-size: 13.5px; font-weight: 500; line-height: 1.35; }
 table.vt .vt-toelichting { font-size: 11.5px; line-height: 1.15; opacity: 0.6; }
 table.vt .vt-vergelijk { font-size: 11.5px; line-height: 1.15; margin-top: 1px; }
 table.vt .vt-vergelijk-tekst { opacity: 0.6; }
