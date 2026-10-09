@@ -43,7 +43,7 @@ def lees_argumenten():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--map", default=os.environ.get("PRIVA_MAP", "/priva"), help="map Priva (met 'bron live')")
     parser.add_argument("--vanaf", type=date.fromisoformat, help="eerste dag (standaard 14 dagen terug)")
-    parser.add_argument("--tot", type=date.fromisoformat, help="laatste dag (standaard gisteren)")
+    parser.add_argument("--tot", type=date.fromisoformat, help="laatste dag (standaard: de laatste dag met metingen)")
     parser.add_argument("--pcu", default="VP9508", help="regelaar; bepaalt de tuin (tuinen.priva_device_id)")
     parser.add_argument("--doel", choices=("app", "productie"), default="app",
                         help="app = DATABASE_URL (standaard), productie = DATABASE_URL_PRODUCTIE")
@@ -70,9 +70,7 @@ def lees_bestanden(map_, vanaf):
 
 def main():
     args = lees_argumenten()
-    vandaag = date.today()
-    vanaf = args.vanaf or vandaag - timedelta(days=14)
-    tot = min(args.tot or vandaag - timedelta(days=1), vandaag - timedelta(days=1))
+    vanaf = args.vanaf or date.today() - timedelta(days=14)
 
     # De doeldatabase moet vaststaan vóór database.py geladen wordt (zie priva_ophalen.py).
     if args.doel == "productie":
@@ -98,6 +96,10 @@ def main():
 
     standen = lees_bestanden(map_, vanaf)
     per_meter = {n: pm.dagverbruik(standen.get(n, [])) for n in pm.METERS}
+    # Tot en met de laatste dag met metingen (die zelf telt alleen als hij volledig is). Niet de klok van
+    # de container: die loopt in UTC, en om 01:00 's nachts was het daar nog "gisteren".
+    laatste = max((t for reeks in standen.values() for t, _ in reeks), default=datetime.combine(vanaf, datetime.min.time()))
+    tot = args.tot or laatste.date()
 
     with database.get_connection() as conn:
         c = conn.cursor()
