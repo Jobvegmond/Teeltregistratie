@@ -3,6 +3,20 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.10.0] - 2026-10-09
+
+### Toegevoegd
+- **Watergift uit de Priva-bestanden** (`priva_watergift.py`, inlezen in `logic/priva_watergift.py`):
+  per vak (kraan 1–39) l/m², EC en pH. Afgeronde dagen uit `kraan-per-dag.csv` (Priva-scherm
+  "KRAAN GISTEREN"), alleen waar nog niets staat: wat de Priva-API zette blijft staan (EC/pH
+  daar nauwkeuriger). **Vandaag tot nu toe** uit `water-actueel.json` ("KRAAN VANDAAG"), elke
+  run bijgewerkt; in de watergiftmatrix staat dan "stand tot nu toe". Gecontroleerd op
+  08-10-26: gelijk aan de API (vak 11 en 12, 3 l/m², EC 1,7 / 1,6, pH 6,2 / 6,1).
+
+### Gecorrigeerd
+- `priva_pulsmeters.py` rekent tot de laatste dag met metingen in plaats van "gisteren" volgens
+  de klok van de container (UTC): de run van 01:00 nam de dag ervoor niet mee.
+
 ## [2.9.0] - 2026-10-08
 
 ### Toegevoegd
