@@ -1409,6 +1409,33 @@ def upsert_watergift_dag(vaknummer, datum, liter_per_m2, bron="priva", tuin_id=N
         conn.commit()
 
 
+WATERGIFT_BRON_BESTAND_DAG = "priva-dag"          # afgeronde dag uit de Priva-bestanden (kraan-per-dag.csv)
+WATERGIFT_BRON_BESTAND_VANDAAG = "priva-vandaag"  # stand van vandaag tot nu toe (water-actueel.json)
+
+
+def upsert_watergift_dag_bestand(vaknummer, datum, liter_per_m2, ec, ph, bron, tuin_id=None, overschrijven=False):
+    """
+    Watergift uit de Priva-bestanden op de NAS (priva_watergift.py). Overschrijft alleen een eerdere waarde uit
+    die bestanden of uit Excel, zodat wat de Priva-API zette (bron 'priva', EC/pH nauwkeuriger) blijft staan;
+    met `overschrijven` ook die. De API overschrijft deze waarden wel (zie upsert_watergift_dag). Het aantal
+    gietbeurten staat niet in de bestanden en blijft leeg. Geeft True als er iets is opgeslagen.
+    """
+    toegestaan = [WATERGIFT_BRON_BESTAND_DAG, WATERGIFT_BRON_BESTAND_VANDAAG, "excel"] + (["priva"] if overschrijven else [])
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO watergift_dag (tuin_id, vaknummer, datum, liter_per_m2, bron, beurten, ec, ph)
+            VALUES (%s, %s, %s, %s, %s, NULL, %s, %s)
+            ON CONFLICT (tuin_id, vaknummer, datum)
+            DO UPDATE SET liter_per_m2 = EXCLUDED.liter_per_m2, bron = EXCLUDED.bron, beurten = NULL,
+                          ec = EXCLUDED.ec, ph = EXCLUDED.ph
+            WHERE watergift_dag.bron = ANY(%s)
+        """, (_tuin_of_standaard(tuin_id), int(vaknummer), str(datum), liter_per_m2, bron, ec, ph, toegestaan))
+        opgeslagen = cursor.rowcount > 0
+        conn.commit()
+    return opgeslagen
+
+
 WATER_KWALITEIT_TABEL = """
     CREATE TABLE IF NOT EXISTS water_kwaliteit_dag (
         id SERIAL PRIMARY KEY,

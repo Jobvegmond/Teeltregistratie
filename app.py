@@ -89,6 +89,7 @@ from database import (
     STEK_STANDAARD_RAS,
     get_vakstatus_data,
     get_opzoek_gegevens,
+    WATERGIFT_BRON_BESTAND_VANDAAG,
     get_teelthistorie_data,
     schrijf_prognose_log,
     get_prognose_log,
@@ -3466,7 +3467,9 @@ def _wg_matrix_gegevens(tuin, vakken_df, teelten, gift, kwaliteit, behandelingen
                     else:
                         beurten = (f" in {r['beurten']} beurt{'en' if r['beurten'] != 1 else ''}"
                                    if r["beurten"] else "")
-                        regels.append(f"{fmt_getal(liter, 1)} l/m²{beurten}")
+                        regels.append(f"{fmt_getal(liter, 1)} l/m²{beurten}"
+                                      + (" (stand tot nu toe)" if r.get("bron") == WATERGIFT_BRON_BESTAND_VANDAAG
+                                         else ""))
                     if r and r.get("ec") is not None:
                         regels.append(f"EC {fmt_getal(r['ec'], 2)} · pH {fmt_getal(r['ph'], 2)} (gemiddelde van de gift)")
                 if teelt:
