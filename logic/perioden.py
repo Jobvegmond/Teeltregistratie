@@ -1,5 +1,5 @@
 """
-Perioden (week, maand, kwartaal, jaar) als sleutels, met hun grenzen, bladeren
+Perioden (dag, week, maand, kwartaal, jaar) als sleutels, met hun grenzen, bladeren
 (◀ ▶) en de vergelijkingsperiode (vorige periode of dezelfde periode vorig
 jaar). Alleen rekenwerk; tests in tests/test_perioden.py.
 """
@@ -8,15 +8,20 @@ from datetime import date, timedelta
 from logic.weken import week_dagen, week_sleutel
 
 PERIODEN = ("Week", "Maand", "Kwartaal", "Jaar")
+# "Dag" staat niet in PERIODEN (de schuif van de meeste pagina's), maar werkt in alle functies hieronder.
+DAG = "Dag"
+DAGNAMEN_KORT = ["ma", "di", "wo", "do", "vr", "za", "zo"]
 MAANDNAMEN_KORT = ["jan", "feb", "mrt", "apr", "mei", "jun", "jul", "aug", "sep", "okt", "nov", "dec"]
 
 
 def periode_sleutel(d, periode_naam):
     """
     (sorteersleutel, label) voor een datum, op de gekozen periode-granulariteit
-    ("Week"/"Maand"/"Kwartaal"/"Jaar"). De sleutel sorteert chronologisch; het
+    ("Dag"/"Week"/"Maand"/"Kwartaal"/"Jaar"). De sleutel sorteert chronologisch; het
     label is wat er in de grafieken en tabellen komt te staan.
     """
+    if periode_naam == DAG:
+        return (d.year, d.month, d.day), f"{DAGNAMEN_KORT[d.weekday()]} {d.day} {MAANDNAMEN_KORT[d.month - 1]} {d.year}"
     if periode_naam == "Week":
         jaar, week = week_sleutel(d)       # zondag t/m zaterdag (logic/weken.py)
         return (jaar, week), f"Wk {week} - {jaar}"
@@ -30,6 +35,8 @@ def periode_sleutel(d, periode_naam):
 
 def periode_grenzen(sleutel, periode_naam):
     """Eerste en laatste dag (beide inclusief) van een periode uit periode_sleutel."""
+    if periode_naam == DAG:
+        return date(*sleutel), date(*sleutel)
     if periode_naam == "Week":
         # Week 53 bestaat niet elk jaar; dan de laatste week van dat jaar.
         return week_dagen(*sleutel)
@@ -68,8 +75,11 @@ def venster(sleutel, periode_naam, vandaag):
     """
     (van, tot, loopt_nog): de dagen van de periode met data. Loopt de periode
     nog, dan tot en met gisteren (de dag van vandaag is nog niet compleet).
+    Bij "Dag" is vandaag zelf: dan tot en met vandaag, en loopt_nog.
     """
     van, eind = periode_grenzen(sleutel, periode_naam)
+    if periode_naam == DAG:
+        return van, eind, eind >= vandaag
     gisteren = vandaag - timedelta(days=1)
     return van, min(eind, gisteren), eind > gisteren
 
@@ -88,7 +98,12 @@ def vergelijk_venster(sleutel, periode_naam, soort, vandaag):
 
 
 def vergelijk_sleutel(sleutel, periode_naam, soort):
-    """De vergelijkingsperiode: "vorige" = de periode ervoor, "vorig_jaar" = dezelfde een jaar eerder."""
+    """
+    De vergelijkingsperiode: "vorige" = de periode ervoor, "vorig_jaar" = dezelfde een jaar eerder.
+    Een dag vorig jaar = 52 weken terug: dezelfde weekdag in dezelfde week, net als bij "Week".
+    """
+    if periode_naam == DAG and soort != "vorige":
+        return periode_sleutel(date(*sleutel) - timedelta(weeks=52), DAG)[0]
     return verschuif(sleutel, periode_naam, -1) if soort == "vorige" else (sleutel[0] - 1,) + tuple(sleutel[1:])
 
 
@@ -98,6 +113,8 @@ def kort_label(sleutel, periode_naam, soort):
     het jaartal ("2025"), anders de periode zelf ("wk 38", "aug", "K2", "2025").
     """
     ander = vergelijk_sleutel(sleutel, periode_naam, soort)
+    if periode_naam == DAG:
+        return f"{ander[2]} {MAANDNAMEN_KORT[ander[1] - 1]}" + ("" if soort == "vorige" else f" {ander[0]}")
     if soort != "vorige" or periode_naam == "Jaar":
         return str(ander[0])
     if periode_naam == "Week":

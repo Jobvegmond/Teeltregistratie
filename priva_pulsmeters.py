@@ -32,7 +32,7 @@ import argparse
 import os
 import re
 import sys
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 GEBRUIKER = "priva-pulsmeters"
@@ -83,7 +83,7 @@ def main():
     import database
     from logic import pulsmeters as pm
 
-    stempel = datetime.now().strftime("%d-%m-%y %H:%M")
+    stempel = f"{datetime.now(timezone.utc):%d-%m-%y %H:%M} UTC"
     map_ = Path(args.map)
     if not (map_ / "bron live").is_dir() and not (map_ / "bron historie").is_dir():
         print(f"[{stempel}] FOUT: geen Priva-bestanden in {map_}", file=sys.stderr)

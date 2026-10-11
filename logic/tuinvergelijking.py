@@ -68,7 +68,7 @@ class Gegevens:
                 self.afd_m2[sleutel] = self.afd_m2.get(sleutel, 0.0) + m2
         self.teelten = [
             {**t, "tuin_id": int(t["tuin_id"]), "vaknummer": int(t["vaknummer"]),
-             "start": _d(t["datum_teelt_start"]), "oogst": _d(t["datum_oogst"])}
+             "start": _d(t["datum_teelt_start"]), "oogst": _d(t["datum_oogst"]), "florgib": _d(t.get("datum_half"))}
             for t in data["teelten"].to_dict("records") if _d(t["datum_teelt_start"])
         ]
         self.eerste_teelt = {}

@@ -100,6 +100,7 @@ from database import (
     wijzig_opmerking,
     verwijder_opmerking,
     get_vergelijking_data,
+    get_klimaat_uur,
     get_teeltvergelijking_data,
     warmte_per_bezette_m2,
     vakstatus_dataversie,
@@ -115,6 +116,7 @@ from logic import selectie
 from logic import watergift as wg
 from logic import weken as kalender
 from logic import tuinvergelijking as tuinvgl
+from logic import tuin_overzicht as tuin_ov
 from logic import teeltvergelijking as teeltvgl
 from logic import teeltprognose as tp
 from logic import tijdlijn
@@ -662,7 +664,7 @@ PAGINA_DEFINITIES = [
     ("pagina_teeltoverzicht", "Teeltoverzicht", "teeltoverzicht", True),
     ("pagina_teelt", "Teelt", "teelt", False),
     ("pagina_stek", "Stek", "stek", False),
-    ("pagina_tuinvergelijking", "Tuin vergelijking", "tuinvergelijking", False),
+    ("pagina_tuinvergelijking", "Tuin", "tuinvergelijking", False),
     ("pagina_watergift", "Watergift", "watergift", False),
     ("pagina_opmerkingen", "Opmerkingen", "opmerkingen", False),
     ("pagina_meer", "Meer", "meer", False),
@@ -769,7 +771,6 @@ _tuin_nummers = [t["nummer"] for t in TUINEN]
 TUIN_MODUS = {
     "stek": ("een", "Stek werkt per tuin."),
     "meer": ("een", "Import en prognosekwaliteit werken per tuin."),
-    "tuinvergelijking": ("beide", "Tuin vergelijking zet altijd beide tuinen naast elkaar."),
 }
 _tuin_modus, _tuin_reden = TUIN_MODUS.get(_pagina.url_path, ("vrij", None))
 _tuin_rij = st.container(horizontal=True, vertical_alignment="center", gap="small", key="vem_tuinkeuze")
@@ -2599,25 +2600,8 @@ def _tv_links(g, sleutel, periode_naam, van, tot, n_opmerkingen):
                 tuin="beide")
 
 
-def _pagina_tuinvgl_1():
-    layout.pagina_kop(
-        "Tuin vergelijking",
-        wat="Wat er in een periode in de kas gebeurde: tuin 1 naast tuin 3 en het totaal, alles per m². "
-            "Daaronder de geoogste stelen van de laatste 12 perioden.",
-        lezen=["Kies de lengte (week, maand, kwartaal, jaar) en blader met ◀ ▶; klik op het label om direct naar "
-               "een periode te springen. Weken lopen van zondag t/m zaterdag.",
-               "Loopt de periode nog, dan telt hij t/m gisteren en loopt de vergelijking tot even ver.",
-               "Kleine regel onder elke waarde = de vergelijkingsperiode. Beweeg over een cel voor het verschil "
-               "en de uitleg; klik op een kengetal voor het verloop over 12 perioden.",
-               "Het totaal is gewogen naar m² (niet het gemiddelde van twee tuinen). Een kengetal zonder data "
-               "toont –.",
-               "Onderaan: door naar de geplante vakken in het register, de watergift en de opmerkingen van de "
-               "periode."],
-        bron="Klimaat, watergift en energie uit Priva (elke ochtend opgehaald). Geplant en geoogst uit de "
-             "registratie; geoogste stelen = emmers × 100 (tuin 1 sinds 04-06-26, tuin 3 sinds 14-08-26).",
-        kleuren="Groen/rood pijltje = beter/slechter dan de vergelijking; lichtgroen vak = de beste tuin; "
-                "⚠ = niet alle dagen of vakken met data.",
-    )
+def _tuinvgl_inhoud():
+    """Pagina Tuin bij Beide: Tuin 1 naast Tuin 3 en het totaal, per m²."""
     _tv_vandaag = date.today()
     _tv_g = _tv_gegevens(vakstatus_dataversie())
     _tv_tuinen = [(t["naam"], t["id"]) for t in sorted(TUINEN, key=lambda t: t["nummer"])]
@@ -2693,6 +2677,265 @@ def _pagina_tuinvgl_1():
     _tv_opm = opm_logic.filter_opmerkingen(_opm_alle(vakstatus_dataversie()), van=_tv_opm_van, tot=_tv_opm_tot)
     _tv_geoogst(_tv_g, _tv_van, _tv_tot)
     _tv_links(_tv_g, _tv_sleutel, _tv_periode, _tv_van, _tv_tot, len(_tv_opm))
+
+
+# --- TUIN: de pagina met de tuinkeuze als weergave ---
+#
+# Beide = de Tuinvergelijking hierboven; Tuin 1 / Tuin 3 = wat er op een dag of in een week in die tuin
+# gebeurde, per afdeling, met het klimaat per uur uit de Priva-bestanden (tabel klimaat_uur, via
+# priva_klimaat.py). Rekenwerk in logic/tuin_overzicht.py.
+
+def _pagina_tuin():
+    layout.pagina_kop(
+        "Tuin",
+        wat="Met de tuinkeuze bovenaan wissel je van weergave. **Beide**: wat er in een periode in de kas gebeurde, "
+            "tuin 1 naast tuin 3 en het totaal, alles per m². **Tuin 1 / Tuin 3**: wat er op een dag of in een week "
+            "in die tuin gebeurde: wat opvalt in het klimaat, de registraties, de kengetallen per afdeling en het "
+            "verloop van temperatuur en RV.",
+        lezen=["Kies de lengte en blader met ◀ ▶; klik op het label om direct naar een periode te springen. Weken "
+               "lopen van zondag t/m zaterdag. Loopt de periode nog, dan telt hij t/m gisteren (een dag: t/m het "
+               "laatste hele uur) en loopt de vergelijking tot even ver.",
+               "Kleine regel onder elke waarde = de vergelijkingsperiode. Beweeg over een cel voor het verschil en de "
+               "uitleg; klik op een kengetal voor het verloop over 12 perioden.",
+               "**Beide**: het totaal is gewogen naar m² (niet het gemiddelde van twee tuinen). Onderaan door naar de "
+               "geplante vakken, de watergift en de opmerkingen van de periode.",
+               "**Tuin 1 / Tuin 3**: *Opvallend* noemt een afdeling die ≥ 1 °C van de lichtlijn of ≥ 1 °C van een "
+               "andere afdeling afwijkt, ≥ 4 uur per dag RV ≥ 90 %, een uur boven 30 °C of onder 10 °C, en een "
+               "verschil met de vergelijking van ≥ 1,5 °C, ≥ 5 % RV of ≥ 25 % lichtsom, water of energie. Een klik "
+               "op een regel bij *Wat er gebeurde* opent het vak. In de grafieken: beweeg over een tijdstip voor "
+               "alle afdelingen tegelijk."],
+        bron="Klimaat per dag, watergift en energie uit Priva. Klimaat per uur (tuin 3) uit de Priva-bestanden op de "
+             "NAS, elk uur bijgewerkt: het gemiddelde van de minuten, vóór 7 oktober 2026 de waarde op het hele uur. "
+             "Geplant, Florgib, geoogst en opmerkingen uit de registratie; geoogste stelen = emmers × 100.",
+        kleuren="Groen/rood pijltje = beter/slechter dan de vergelijking; lichtgroen vak = de beste tuin (Beide); "
+                "⚠ = niet alle dagen, uren of vakken met data. Grafieken: vaste kleur per afdeling, grijs gestippeld "
+                "= buiten.",
+    )
+    if TUIN_WEERGAVE == "beide":
+        _tuinvgl_inhoud()
+    else:
+        _tuin_inhoud()
+
+
+TU_PERIODEN = (perioden.DAG, "Week")
+_TV_PER_SLEUTEL = {k.sleutel: k for k in TV_KENGETALLEN}
+TU_KENGETALLEN = [
+    *(_TV_PER_SLEUTEL[s] for s in ("temp", "temp_dag", "temp_nacht")),
+    Kengetal("temp_min", "Laagste uur", "Klimaat", "°C", 1, "Het koudste uur (uurgemiddelde) in de periode.",
+             n_eenheid="uren"),
+    Kengetal("temp_max", "Hoogste uur", "Klimaat", "°C", 1, "Het warmste uur (uurgemiddelde) in de periode.",
+             n_eenheid="uren"),
+    _TV_PER_SLEUTEL["afwijking"], _TV_PER_SLEUTEL["lichtsom"], _TV_PER_SLEUTEL["rv"],
+    Kengetal("rv_hoog", f"Uren RV ≥ {tuin_ov.RV_HOOG} %", "Klimaat", "u", 1,
+             f"Uren per etmaal met een RV van {tuin_ov.RV_HOOG} % of meer (bij ontbrekende uren omgerekend naar 24).",
+             n_eenheid="uren"),
+    Kengetal("vd", "Vochtdeficit", "Klimaat", "g/m³", 1, "Gemiddeld over de uren.", n_eenheid="uren"),
+    Kengetal("co2", "CO₂", "Klimaat", "ppm", 0, "Gemiddeld over de uren (een afdeling zonder meter: –).",
+             n_eenheid="uren"),
+    Kengetal("buis", "Verwarmingstemperatuur", "Klimaat", "°C", 1,
+             "Door Priva berekende verwarmingstemperatuur (de stookbehoefte), gemiddeld over de uren.",
+             n_eenheid="uren"),
+    *(_TV_PER_SLEUTEL[s] for s in ("bezetting", "geplant", "geoogst", "uitval")),
+    *(_TV_PER_SLEUTEL[s] for s in ("water", "warmte", "gas", "energie")),
+]
+BUITEN = "Buiten"
+BUITEN_KLEUR = "#8a8a80"
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _tu_uur(tuin_id, van, tot):
+    """(klimaat, meteo) per uur van een tuin over [van, tot]; tien minuten bewaard (elk uur nieuwe data)."""
+    return get_klimaat_uur(tuin_id, van, tot)
+
+
+def _tu_reeksen(uur, meteo, g, tuin_id, van, tot):
+    """
+    (DataFrame met Reeks, tijd, temp, rv, per_uur) voor de grafieken: per uur uit klimaat_uur, met buiten
+    erbij; zonder uurdata de etmaalwaarden per afdeling uit het klimaat per dag.
+    """
+    if not uur.empty:
+        df = pd.DataFrame({"Reeks": uur["afdeling"].map(tuin_ov.kolom), "tijd": pd.to_datetime(uur["tijdstip"]),
+                           "temp": uur["temp"], "rv": uur["rv"]})
+        if not meteo.empty:
+            df = pd.concat([df, pd.DataFrame({"Reeks": BUITEN, "tijd": pd.to_datetime(meteo["tijdstip"]),
+                                              "temp": meteo["buiten_temp"], "rv": meteo["buiten_rv"]})])
+        return df, True
+    dag = g.klimaat[(g.klimaat["tuin_id"] == tuin_id) & (g.klimaat["datum"] >= str(van))
+                    & (g.klimaat["datum"] <= str(tot))]
+    return pd.DataFrame({"Reeks": dag["afdeling"].astype(int).map(tuin_ov.kolom),
+                         "tijd": pd.to_datetime(dag["datum"]), "temp": dag["temp_24h"], "rv": dag["rv_24h"]}), False
+
+
+def _tu_grafiek(df, veld, titel, volgorde, per_uur, een_dag):
+    """Lijn per afdeling (vaste kleur) en buiten (grijs gestippeld); over een tijdstip alle waarden tegelijk."""
+    df = df.dropna(subset=[veld])
+    if df.empty:
+        st.caption(f"Geen {titel.split(' (')[0].lower()} in deze periode.")
+        return
+    domein = [r for r in volgorde + [BUITEN] if r in set(df["Reeks"])]
+    kleuren = [AFDELING_KLEUR.get(int(r.split()[-1]), BUITEN_KLEUR) if r != BUITEN else BUITEN_KLEUR for r in domein]
+    strepen = [[4, 3] if r == BUITEN else [1, 0] for r in domein]
+    if een_dag:
+        as_ = alt.Axis(format="%H:%M", labelAngle=0)
+    else:
+        as_ = alt.Axis(labelExpr="['zo','ma','di','wo','do','vr','za'][day(datum.value)] + ' ' "
+                                 "+ timeFormat(datum.value, '%d-%m')",
+                       tickCount="day", labelAngle=0, grid=True)
+    basis = alt.Chart(df).encode(x=alt.X("tijd:T", title=None, axis=as_))
+    lijnen = basis.mark_line(strokeWidth=2, point=not per_uur).encode(
+        y=alt.Y(f"{veld}:Q", title=titel, scale=alt.Scale(zero=False)),
+        color=alt.Color("Reeks:N", scale=alt.Scale(domain=domein, range=kleuren), legend=None),
+        strokeDash=alt.StrokeDash("Reeks:N", scale=alt.Scale(domain=domein, range=strepen), legend=None),
+        detail="Reeks:N")
+    kies = alt.selection_point(nearest=True, on="pointerover", fields=["tijd"], empty=False, clear="pointerout")
+    decimalen = 1 if veld == "temp" else 0
+    regel = basis.transform_pivot("Reeks", value=veld, groupby=["tijd"]).mark_rule(color="#6f6f6a").encode(
+        opacity=alt.condition(kies, alt.value(0.6), alt.value(0)),
+        tooltip=[alt.Tooltip("tijd:T", title="Tijd" if per_uur else "Dag",
+                             format="%d-%m %H:%M" if per_uur else "%d-%m-%y")]
+        + [alt.Tooltip(f"{r.replace('.', chr(92) + '.')}:Q", title=r, format=f",.{decimalen}f") for r in domein],
+    ).add_params(kies)
+    st.altair_chart((lijnen + regel).properties(height=230), use_container_width=True)
+
+
+def _tu_verloop_fn(g, tuin_id, sleutel, periode, vandaag, volgorde):
+    """Verloop over 12 perioden per afdeling en de hele tuin (voor de knopjes onder de tabel)."""
+    stappen = []
+    for stap in range(-11, 1):
+        s = perioden.verschuif(sleutel, periode, stap)
+        van, tot, _ = perioden.venster(s, periode, vandaag)
+        if tot >= van:
+            stappen.append((s, van, tot))
+
+    def verloop(k):
+        if not stappen:
+            return verloop_frame([])
+        uur = _tu_uur(tuin_id, stappen[0][1], stappen[-1][2])[0] if k.sleutel in tuin_ov.UUR_SLEUTELS else None
+        rijen = []
+        for s, van, tot in stappen:
+            u = tuin_ov.tabelwaarden(g, uur, tuin_id, van, tot)
+            for kol in volgorde:
+                rijen.append({"Periode": perioden.periode_label(s, periode), "Tuin": kol,
+                              "Waarde": u["waarden"].get(kol, {}).get(k.sleutel),
+                              "n": u["n"].get(kol, {}).get(k.sleutel, 0)})
+        return verloop_frame(rijen)
+
+    return verloop
+
+
+TU_GEBEURTENIS_KOLOMMEN = [
+    ("Datum", "Datum", "datum", None, "small"), ("Afd.", "Afd.", "getal", "%d", "small"),
+    ("Vak", "Vak", "getal", "%d", "small"), ("Code", "Code", "tekst", None, "medium"),
+    ("Wat", "Wat", "tekst", None, 90), ("Toelichting", "Toelichting", "tekst", None, "large"),
+]
+
+
+def _tuin_inhoud():
+    """Pagina Tuin bij Tuin 1 / Tuin 3: een dag of week in één tuin, per afdeling."""
+    vandaag = date.today()
+    g = _tv_gegevens(vakstatus_dataversie())
+    balk = layout.filterbalk("tuin")
+    eerste = min((t["start"] for t in g.teelten if t["tuin_id"] == TUIN_ID), default=vandaag - timedelta(days=365))
+    periode, sleutel = filters.periode(
+        "tu_periode", TU_PERIODEN, perioden.DAG,
+        opties_van=lambda n: perioden.reeks(eerste, vandaag, n),
+        standaard_van=lambda n: perioden.laatste_volledige(n, vandaag),
+        format_van=lambda n: lambda k: perioden.periode_label(k, n),
+        huidig_van=lambda n: perioden.periode_sleutel(vandaag, n)[0], plek=balk)
+    enkel = "dag" if periode == perioden.DAG else "week"
+    soort = filters.weergave("Vergelijk met", ("vorige", "vorig_jaar"), "tu_vergelijk", "vorige", plek=balk,
+                             format_func=lambda k: {"vorige": f"vorige {enkel}",
+                                                    "vorig_jaar": f"zelfde {enkel} vorig jaar"}[k])
+
+    van, tot, loopt = perioden.venster(sleutel, periode, vandaag)
+    if tot < van:
+        st.info("Deze week is vandaag begonnen: er is nog geen hele dag. Kies de vorige week of vandaag bij Dag.")
+        return
+    v_van, v_tot, _ = perioden.vergelijk_venster(sleutel, periode, soort, vandaag)
+    label = perioden.kort_label(sleutel, periode, soort)
+    uur, meteo = _tu_uur(TUIN_ID, van, tot)
+    uur_toen, _ = _tu_uur(TUIN_ID, v_van, v_tot)
+    nu = tuin_ov.tabelwaarden(g, uur, TUIN_ID, van, tot)
+    toen = tuin_ov.tabelwaarden(g, uur_toen, TUIN_ID, v_van, v_tot)
+    afds = sorteer_afdelingen(tuin_ov.afdelingen(g, TUIN_ID), TUIN_NUMMER)
+    volgorde = [tuin_ov.kolom(a) for a in afds]
+
+    # Samenvatting: wat opvalt en wat er gebeurde.
+    layout.sectie("Opvallend")
+    zinnen = tuin_ov.opvallend(nu["waarden"], toen["waarden"], nu["n"], nu["verwacht"], label, (tot - van).days + 1)
+    st.markdown("\n".join(f"- {z}" for z in zinnen) if zinnen
+                else "Niets opvallends: het klimaat bleef binnen de drempels (zie Uitleg).")
+
+    rijen = tuin_ov.gebeurtenissen(g, _opm_alle(vakstatus_dataversie()), TUIN_ID, van, tot)
+    layout.sectie("Wat er gebeurde", len(rijen))
+    if rijen:
+        st.caption(tuin_ov.samenvatting(rijen))
+        gebeurd = pd.DataFrame([{"Datum": format_datum(r["datum"]), "Afd.": r["afdeling"], "Vak": r["vak"],
+                                 "Code": r["code"] or "-", "Wat": r["soort"], "Toelichting": r["tekst"]}
+                                for r in rijen])
+        keuze = toon_tabel(gebeurd, TU_GEBEURTENIS_KOLOMMEN, vast=("Datum",), sleutel="tu_gebeurd")
+        gekozen = keuze.selection.rows if keuze else []
+        if gekozen and gekozen != st.session_state.get("tu_gebeurd_open"):
+            st.session_state["tu_gebeurd_open"] = gekozen
+            if rijen[gekozen[0]]["teelt_id"]:
+                vak_venster(rijen[gekozen[0]]["teelt_id"], vandaag)
+        elif not gekozen:
+            st.session_state["tu_gebeurd_open"] = None
+    else:
+        gebeurd = pd.DataFrame()
+        st.caption("Niets geregistreerd: geen planten, Florgib, oogst of opmerkingen.")
+
+    # Hoofdweergave: de kengetallen per afdeling, dan het verloop per uur.
+    layout.sectie("Per afdeling")
+    kolommen = volgorde + [tuin_ov.HELE_TUIN]
+    vergelijkingstabel.toon(
+        TU_KENGETALLEN, kolommen,
+        vergelijkingstabel.Tabeldata(nu=nu["waarden"], toen=toen["waarden"], n=nu["n"], n_toen=toen["n"],
+                                     verwacht=nu["verwacht"], ontbreekt=nu["ontbreekt"], label_toen=label,
+                                     beste=False, totaal_kolom=tuin_ov.HELE_TUIN),
+        sleutel="tu_verloop", verloop=_tu_verloop_fn(g, TUIN_ID, sleutel, periode, vandaag, kolommen),
+        verloop_titel=f"Verloop over 12 {'dagen' if periode == perioden.DAG else 'weken'}")
+    laatste_uur = uur["tijdstip"].max() if not uur.empty else None
+    uitleg_help.voetnoot(
+        (format_datum(van) if van == tot else f"{format_datum(van)} t/m {format_datum(tot)}")
+        + (" (loopt nog)" if loopt else "")
+        + f" · kleine regel = {'vorige ' + enkel if soort == 'vorige' else 'zelfde ' + enkel + ' vorig jaar'}"
+        + (f" · klimaat per uur t/m {laatste_uur[8:10]}-{laatste_uur[5:7]} {laatste_uur[11:]}" if laatste_uur else ""))
+
+    reeksen, per_uur = _tu_reeksen(uur, meteo, g, TUIN_ID, van, tot)
+    layout.sectie("Temperatuur en RV " + ("per uur" if per_uur else "per dag"))
+    if not per_uur and van == tot:
+        st.caption(f"Voor {TUIN_NAAM} is er (nog) geen klimaat per uur; kies Week voor het verloop per dag.")
+    else:
+        _tu_grafiek(reeksen, "temp", "Temperatuur (°C)", volgorde, per_uur, van == tot)
+        _tu_grafiek(reeksen, "rv", "RV (%)", volgorde, per_uur, van == tot)
+        legend.legenda([{"kleur": AFDELING_KLEUR.get(a, BUITEN_KLEUR), "vorm": "lijn", "label": tuin_ov.kolom(a)}
+                        for a in afds]
+                       + ([{"kleur": BUITEN_KLEUR, "vorm": "lijn", "label": "buiten",
+                            "stijl": "border-top-style:dashed;"}] if per_uur and not meteo.empty else []))
+
+    if not uur.empty:
+        with layout.uitklap("Klimaat per uur", len(uur) // max(len(afds), 1)):
+            breed = uur.pivot_table(index="tijdstip", columns="afdeling", values=["temp", "rv"]).sort_index()
+            breed.columns = [f"{'Temp' if v == 'temp' else 'RV'} afd. {a}" for v, a in breed.columns]
+            breed = breed[[f"{v} afd. {a}" for a in afds for v in ("Temp", "RV") if f"{v} afd. {a}" in breed]]
+            if not meteo.empty:
+                breed = breed.join(meteo.set_index("tijdstip")[["buiten_temp", "buiten_rv", "straling"]].rename(
+                    columns={"buiten_temp": "Temp buiten", "buiten_rv": "RV buiten", "straling": "Straling"}))
+            breed = breed.reset_index().rename(columns={"tijdstip": "Tijd"})
+            toon_tabel(breed, [("Tijd", "Tijd", "tekst", None, "medium")]
+                       + [(k, k, "getal", "%d" if k.startswith("RV") or k == "Straling" else "%.1f", "small")
+                          for k in breed.columns if k != "Tijd"], vast=("Tijd",))
+
+    tabel = pd.DataFrame([{"Groep": k.groep, "Kengetal": k.label, "Eenheid": k.eenheid,
+                           **{kol: nu["waarden"].get(kol, {}).get(k.sleutel) for kol in kolommen},
+                           **{f"{kol} ({label})": toen["waarden"].get(kol, {}).get(k.sleutel) for kol in kolommen}}
+                          for k in TU_KENGETALLEN])
+    layout.export(excel_bestand({"Per afdeling": tabel, "Wat er gebeurde": gebeurd,
+                                 "Klimaat per uur": uur, "Buiten per uur": meteo}),
+                  f"{TUIN_NAAM.lower().replace(' ', '_')}_{van:%d-%m-%y}" + ("" if van == tot else f"_{tot:%d-%m-%y}")
+                  + ".xlsx", sleutel="tu_excel")
+
 
 # --- TEELTVERGELIJKING: een teelt = alle vakken uit één plantweek ---
 #
@@ -4789,7 +5032,7 @@ def pagina_teelt():
 
 
 def pagina_tuinvergelijking():
-    _pagina_tuinvgl_1()
+    _pagina_tuin()
 
 
 def pagina_opmerkingen():

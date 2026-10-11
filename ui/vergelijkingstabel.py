@@ -51,6 +51,8 @@ class Tabeldata:
     - markering: {kolom: {sleutels}} met een prognose of lopende teelt (⏳)
     - toelichting: kleine regel onder de waarde; ontbreekt: tooltip bij "–"
     - label_toen: label van de vergelijking ("2025", "wk 38", "wk 33 '25")
+    - beste: lichtgroen vak voor de beste kolom (False bij afdelingen: daar is "beter" geen wedstrijd)
+    - totaal_kolom: nog een kolom die als totaal oogt (bijv. "Hele tuin" naast de afdelingen)
     """
     nu: dict
     toen: Optional[dict] = None
@@ -63,6 +65,8 @@ class Tabeldata:
     toelichting: dict = field(default_factory=dict)
     ontbreekt: dict = field(default_factory=dict)
     label_toen: str = ""
+    beste: bool = True
+    totaal_kolom: str = ""
 
 
 def waarde_tekst(k, waarde, n=None):
@@ -116,7 +120,7 @@ def tabel_html(kengetallen, kolommen, d):
             groep = k.groep
             rijen.append(f'<tr class="vt-groep"><td colspan="{len(kolommen) + 1}">{html.escape(groep)}</td></tr>')
         richting = kg.RICHTING.get(k.sleutel, 0)
-        winnaar = kg.beste({t: nu_tuinen[t].get(k.sleutel) for t in tuinen}, richting, k.decimalen)
+        winnaar = kg.beste({t: nu_tuinen[t].get(k.sleutel) for t in tuinen}, richting, k.decimalen) if d.beste else None
         cellen = []
         for kolom in kolommen:
             def haal(bron_dict):
@@ -142,7 +146,7 @@ def tabel_html(kengetallen, kolommen, d):
             markering = " ⏳" if k.sleutel in d.markering.get(kolom, ()) and waarde is not None else ""
             toelichting = haal(d.toelichting)
             titel = _tooltip(k, waarde, vorig, n, verwacht, haal(d.ontbreekt), d.label_toen)
-            klassen = " ".join(c for c in ("vt-totaal" if kolom == TOTAAL else "",
+            klassen = " ".join(c for c in ("vt-totaal" if kolom in (TOTAAL, d.totaal_kolom) else "",
                                            "vt-beste" if kolom == winnaar else "") if c)
             cellen.append(
                 f'<td class="{klassen}" title="{html.escape(titel)}">'
@@ -154,7 +158,8 @@ def tabel_html(kengetallen, kolommen, d):
             )
         rijen.append(f'<tr class="vt-rij"><td class="vt-onderwerp" title="{html.escape(k.uitleg)}">'
                      f'{html.escape(k.label)}<span class="vt-i">ⓘ</span></td>{"".join(cellen)}</tr>')
-    kop = "".join(f'<th class="{"vt-totaal" if k == TOTAAL else ""}">{html.escape(k)}</th>' for k in kolommen)
+    kop = "".join(f'<th class="{"vt-totaal" if k in (TOTAAL, d.totaal_kolom) else ""}">{html.escape(k)}</th>'
+                  for k in kolommen)
     kolgroep = '<colgroup><col class="vt-col-onderwerp">' + "<col>" * len(kolommen) + "</colgroup>"
     noten = " · ".join(f"{teken} alleen {html.escape(t)}" for t, teken in voetnoten.items())
     return (f'<div class="vt-wrap"><table class="vt">{kolgroep}<thead><tr><th></th>{kop}</tr></thead>'
