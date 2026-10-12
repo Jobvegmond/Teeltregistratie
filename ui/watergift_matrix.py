@@ -50,7 +50,9 @@ LEGENDA = [
 LINKS = (("Vak", 44), ("Plantw.", 54), ("Leeftijd", 56), ("Totaal", 60))
 
 CSS = """
-.wg-scroll { position: relative; overflow: auto; max-height: 75vh; border: 1px solid rgba(128,128,128,0.25);
+/* Geen maximale hoogte: alle vakken (tuin 3: 39) staan onder elkaar, de pagina scrolt; alleen zijwaarts
+   scrollt de tabel zelf (de weken). */
+.wg-scroll { position: relative; overflow-x: auto; overflow-y: hidden; border: 1px solid rgba(128,128,128,0.25);
              border-radius: 0.2rem; }
 table.wg { border-collapse: separate; border-spacing: 0; font-size: 12px; font-variant-numeric: tabular-nums;
            line-height: 1.15;
