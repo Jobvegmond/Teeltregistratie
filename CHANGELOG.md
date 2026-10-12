@@ -3,6 +3,14 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.11.1] - 2026-10-12
+
+### Gewijzigd
+- `priva_klimaat.py` begint zonder `--vanaf` bij de laatste dag die al in de database staat
+  (hooguit 3 dagen terug). Een lege database krijgt zo bij de eerste run alles uit de
+  bestanden (het jaar terug), en een gat na een storing vult zich vanzelf. De uurtaak op de
+  NAS vult daarmee ook productie, zonder losse aanvulling.
+
 ## [2.11.0] - 2026-10-11
 
 ### Toegevoegd

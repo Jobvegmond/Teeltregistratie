@@ -8,8 +8,12 @@ VP9508). Rekenwerk en inlezen in logic/klimaat_uur.py; de grafieken op de pagina
 
 Een uur dat er al staat wordt overschreven (de bestanden zijn de bron). Alleen voorbije uren.
 
+Zonder --vanaf begint het bij de laatste dag die al in de database staat (hooguit 3 dagen terug): een gat na
+een storing vult zich zo vanzelf, en een lege database (bijv. de eerste run tegen productie) krijgt alles
+wat er in de bestanden staat.
+
 Gebruik:
-    python priva_klimaat.py                      # laatste 3 dagen, naar DATABASE_URL
+    python priva_klimaat.py                      # vanaf de laatst opgeslagen dag, naar DATABASE_URL
     python priva_klimaat.py --vanaf 2025-10-07   # het hele jaar uit de historie-CSV
     python priva_klimaat.py --droog              # alleen tonen, niets opslaan
     python priva_klimaat.py --doel productie     # naar DATABASE_URL_PRODUCTIE
@@ -30,7 +34,7 @@ GEBRUIKER = "priva-klimaat"
 def lees_argumenten():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--map", default=os.environ.get("PRIVA_MAP", "/priva"), help="map Priva")
-    parser.add_argument("--vanaf", type=date.fromisoformat, help="eerste dag (standaard 3 dagen terug)")
+    parser.add_argument("--vanaf", type=date.fromisoformat, help="eerste dag (standaard: de laatst opgeslagen dag, hooguit 3 dagen terug)")
     parser.add_argument("--pcu", default="VP9508", help="regelaar; bepaalt de tuin (tuinen.priva_device_id)")
     parser.add_argument("--doel", choices=("app", "productie"), default="app",
                         help="app = DATABASE_URL (standaard), productie = DATABASE_URL_PRODUCTIE")
@@ -55,6 +59,23 @@ def lees_bestanden(map_, vanaf):
     return historie, live
 
 
+def begin_aanvulling(database, tuin_id):
+    """
+    De eerste dag om in te lezen: de laatste dag in klimaat_uur, hooguit 3 dagen terug (de klok van de
+    container loopt in UTC, dat vangt dit ruim op). Staat er nog niets, dan alles uit de bestanden.
+    """
+    try:
+        with database.get_connection() as conn:
+            c = conn.cursor()
+            c.execute("SELECT MAX(tijdstip) FROM klimaat_uur WHERE tuin_id = %s", (tuin_id,))
+            laatste = c.fetchone()[0]
+    except Exception:           # tabel bestaat nog niet (alleen bij --droog)
+        laatste = None
+    if laatste is None:
+        return date(2000, 1, 1)
+    return min(date.today() - timedelta(days=3), date.fromisoformat(laatste[:10]))
+
+
 def main():
     args = lees_argumenten()
     if args.doel == "productie":
@@ -77,8 +98,9 @@ def main():
         print(f"[{stempel}] FOUT: geen tuin met regelaar {args.pcu}", file=sys.stderr)
         sys.exit(1)
 
-    # De klok van de container loopt in UTC; "3 dagen terug" is ruim genoeg om dat op te vangen.
-    vanaf = args.vanaf or date.today() - timedelta(days=3)
+    if not args.droog:
+        database.init_db()      # maakt klimaat_uur en meteo_uur aan als ze er nog niet zijn (nieuw in 2.11.0)
+    vanaf = args.vanaf or begin_aanvulling(database, tuin["id"])
     historie, live = lees_bestanden(map_, vanaf)
     afd, meteo = ku.per_uur(historie, live)
     if not afd and not meteo:
@@ -103,9 +125,8 @@ def main():
     if args.droog:
         print(f"[{stempel}] DROOG, niets opgeslagen; zou opslaan: {samenvatting}")
         return
-    database.init_db()      # maakt klimaat_uur en meteo_uur aan als ze er nog niet zijn (nieuw in 2.11.0)
     database.upsert_klimaat_uur(afd, meteo, tuin["id"])
-    if args.vanaf:      # een grote aanvulling in het logboek; de uurlijkse run niet (te veel regels)
+    if (laatste - eerste).days > 7:      # een grote aanvulling in het logboek; de uurlijkse run niet
         database.log_wijziging(GEBRUIKER, "opgehaald", "klimaat_uur", None, samenvatting)
     print(f"[{stempel}] {samenvatting}")
 
