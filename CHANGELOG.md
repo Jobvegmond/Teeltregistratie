@@ -3,6 +3,34 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.11.0] - 2026-10-11
+
+### Toegevoegd
+- **Pagina Tuin** (was Tuin vergelijking). De tuinkeuze kiest de weergave: Beide = de
+  tuinvergelijking zoals hij was; **Tuin 1 / Tuin 3** = wat er op een **dag of in een week** in
+  die tuin gebeurde (`logic/tuin_overzicht.py`):
+  - *Opvallend*: een afdeling ≥ 1 °C van de lichtlijn of van een andere afdeling, ≥ 4 uur per
+    dag RV ≥ 90 %, een uur boven 30 / onder 10 °C, en een verschil met de vorige dag/week (of
+    vorig jaar) van ≥ 1,5 °C, ≥ 5 % RV of ≥ 25 % lichtsom, water of energie;
+  - *Wat er gebeurde*: geplant, Florgib, oogst (emmers per vak), afgerond en opmerkingen; een
+    klik opent het vak;
+  - *Per afdeling*: de kengetallen van de tuinvergelijking per afdeling en voor de hele tuin,
+    plus uit het klimaat per uur het laagste/hoogste uur, uren RV ≥ 90 %, vochtdeficit, CO₂ en
+    de verwarmingstemperatuur; verloop over 12 dagen/weken;
+  - *Temperatuur en RV per uur* per afdeling met buiten erbij (tuin 3); tuin 1 per dag tot de
+    Priva-bestanden van tuin 1 er zijn.
+- **Klimaat per uur** (`priva_klimaat.py`, tabellen `klimaat_uur` en `meteo_uur`, inlezen in
+  `logic/klimaat_uur.py`): per afdeling temperatuur, RV, vochtdeficit, CO₂ en
+  verwarmingstemperatuur, en buiten temperatuur, RV, straling en wind. Uit de minuutdata het
+  gemiddelde per uur, daarvoor (tot 07-10-26) de waarde op het hele uur. Gecontroleerd: het
+  daggemiddelde van de uren is gelijk aan het klimaat per dag van Priva (±0,1 °C).
+- **`priva_bestanden.py`**: draait de pulsmeters, de watergift en het klimaat per uur achter
+  elkaar, zodat de NAS-taak bij een nieuwe import niet meer aangepast hoeft te worden.
+- Perioden kennen "Dag" (`logic/perioden.py`); vorig jaar = 52 weken terug (zelfde weekdag).
+
+### Gewijzigd
+- Log van `priva_pulsmeters.py`: het tijdstip staat er met "UTC" bij (de klok van de container).
+
 ## [2.10.0] - 2026-10-09
 
 ### Toegevoegd

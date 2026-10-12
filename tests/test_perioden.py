@@ -52,5 +52,31 @@ class TestPerioden(unittest.TestCase):
                          (date(2025, 12, 21), date(2025, 12, 27)))
 
 
+class TestDag(unittest.TestCase):
+    def test_sleutel_label_en_grenzen(self):
+        sleutel, label = p.periode_sleutel(date(2026, 10, 10), "Dag")
+        self.assertEqual((sleutel, label), ((2026, 10, 10), "za 10 okt 2026"))
+        self.assertEqual(p.periode_grenzen(sleutel, "Dag"), (date(2026, 10, 10), date(2026, 10, 10)))
+        self.assertEqual(p.verschuif(sleutel, "Dag", 1), (2026, 10, 11))
+        self.assertEqual(p.laatste_volledige("Dag", date(2026, 3, 1)), (2026, 2, 28))
+
+    def test_venster_vandaag_loopt_nog(self):
+        self.assertEqual(p.venster((2026, 10, 11), "Dag", date(2026, 10, 11)),
+                         (date(2026, 10, 11), date(2026, 10, 11), True))
+        self.assertEqual(p.venster((2026, 10, 10), "Dag", date(2026, 10, 11)),
+                         (date(2026, 10, 10), date(2026, 10, 10), False))
+
+    def test_vergelijken(self):
+        # Vorig jaar = 52 weken terug: dezelfde weekdag (zaterdag 11 oktober 2025).
+        self.assertEqual(p.vergelijk_venster((2026, 10, 10), "Dag", "vorig_jaar", date(2026, 10, 11)),
+                         (date(2025, 10, 11), date(2025, 10, 11), "za 11 okt 2025"))
+        self.assertEqual(p.vergelijk_venster((2026, 3, 1), "Dag", "vorige", date(2026, 10, 11))[:2],
+                         (date(2026, 2, 28), date(2026, 2, 28)))
+        self.assertEqual(p.kort_label((2026, 10, 10), "Dag", "vorige"), "9 okt")
+        self.assertEqual(p.kort_label((2026, 10, 10), "Dag", "vorig_jaar"), "11 okt 2025")
+        self.assertEqual(p.reeks(date(2026, 10, 9), date(2026, 10, 11), "Dag"),
+                         [(2026, 10, 9), (2026, 10, 10), (2026, 10, 11)])
+
+
 if __name__ == "__main__":
     unittest.main()

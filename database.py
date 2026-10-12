@@ -592,6 +592,9 @@ def init_db():
         cursor.execute("ALTER TABLE water_kwaliteit_dag ADD COLUMN IF NOT EXISTS ph_gift REAL")
         # Elke gietbeurt per vak, met EC/pH/flow gemiddeld over de beurt (sinds 2.4.1).
         cursor.execute(WATERGIFT_BEURT_TABEL)
+        # Klimaat en meteo per uur uit de Priva-bestanden op de NAS (priva_klimaat.py, sinds 2.11.0).
+        cursor.execute(KLIMAAT_UUR_TABEL)
+        cursor.execute(METEO_UUR_TABEL)
         # Gewasbescherming, biologie en voeding: nu nog leeg, later gevuld via
         # integrations/behandelingen/. De pagina Watergift leest ze al.
         cursor.execute("""
@@ -1409,6 +1412,69 @@ def upsert_watergift_dag(vaknummer, datum, liter_per_m2, bron="priva", tuin_id=N
         conn.commit()
 
 
+KLIMAAT_UUR_TABEL = """
+    CREATE TABLE IF NOT EXISTS klimaat_uur (
+        id SERIAL PRIMARY KEY,
+        tuin_id INTEGER NOT NULL REFERENCES tuinen (id),
+        afdeling INTEGER NOT NULL,
+        tijdstip TEXT NOT NULL,
+        temp REAL, rv REAL, vd REAL, co2 REAL, verwarming REAL,
+        UNIQUE (tuin_id, afdeling, tijdstip)
+    )
+"""
+METEO_UUR_TABEL = """
+    CREATE TABLE IF NOT EXISTS meteo_uur (
+        id SERIAL PRIMARY KEY,
+        tuin_id INTEGER NOT NULL REFERENCES tuinen (id),
+        tijdstip TEXT NOT NULL,
+        buiten_temp REAL, buiten_rv REAL, straling REAL, wind REAL,
+        UNIQUE (tuin_id, tijdstip)
+    )
+"""
+KLIMAAT_UUR_VELDEN = ("temp", "rv", "vd", "co2", "verwarming")
+METEO_UUR_VELDEN = ("buiten_temp", "buiten_rv", "straling", "wind")
+
+
+def upsert_klimaat_uur(afdeling_uren, meteo_uren, tuin_id):
+    """
+    Klimaat per uur per afdeling en meteo per uur (logic.klimaat_uur.per_uur) in één keer opslaan; een uur
+    dat er al staat wordt overschreven. `tijdstip` = het begin van het uur, lokale tijd ("2026-10-09 14:00").
+    Geeft (aantal afdeling-uren, aantal meteo-uren).
+    """
+    from psycopg2.extras import execute_values
+    afd = [(tuin_id, n, f"{uur:%Y-%m-%d %H:%M}", *(w.get(v) for v in KLIMAAT_UUR_VELDEN))
+           for (uur, n), w in afdeling_uren.items()]
+    meteo = [(tuin_id, f"{uur:%Y-%m-%d %H:%M}", *(w.get(v) for v in METEO_UUR_VELDEN)) for uur, w in meteo_uren.items()]
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        if afd:
+            execute_values(cursor, f"""
+                INSERT INTO klimaat_uur (tuin_id, afdeling, tijdstip, {", ".join(KLIMAAT_UUR_VELDEN)}) VALUES %s
+                ON CONFLICT (tuin_id, afdeling, tijdstip) DO UPDATE SET
+                {", ".join(f"{v} = EXCLUDED.{v}" for v in KLIMAAT_UUR_VELDEN)}""", afd, page_size=1000)
+        if meteo:
+            execute_values(cursor, f"""
+                INSERT INTO meteo_uur (tuin_id, tijdstip, {", ".join(METEO_UUR_VELDEN)}) VALUES %s
+                ON CONFLICT (tuin_id, tijdstip) DO UPDATE SET
+                {", ".join(f"{v} = EXCLUDED.{v}" for v in METEO_UUR_VELDEN)}""", meteo, page_size=1000)
+        conn.commit()
+    return len(afd), len(meteo)
+
+
+def get_klimaat_uur(tuin_id, van, tot):
+    """(klimaat, meteo) als DataFrames per uur over de dagen van..tot (beide inclusief), tijdstip als tekst."""
+    grenzen = (str(van), f"{tot} 23:59")
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        klimaat = _df(cursor, f"""
+            SELECT afdeling, tijdstip, {", ".join(KLIMAAT_UUR_VELDEN)} FROM klimaat_uur
+            WHERE tuin_id = %s AND tijdstip BETWEEN %s AND %s ORDER BY tijdstip, afdeling""", (tuin_id, *grenzen))
+        meteo = _df(cursor, f"""
+            SELECT tijdstip, {", ".join(METEO_UUR_VELDEN)} FROM meteo_uur
+            WHERE tuin_id = %s AND tijdstip BETWEEN %s AND %s ORDER BY tijdstip""", (tuin_id, *grenzen))
+    return klimaat, meteo
+
+
 WATERGIFT_BRON_BESTAND_DAG = "priva-dag"          # afgeronde dag uit de Priva-bestanden (kraan-per-dag.csv)
 WATERGIFT_BRON_BESTAND_VANDAAG = "priva-vandaag"  # stand van vandaag tot nu toe (water-actueel.json)
 
@@ -2177,7 +2243,8 @@ def get_vergelijking_data():
         """)
         teelten = _df(cursor, """
             SELECT t.id, v.tuin_id, v.vaknummer, v.afdeling, t.code, t.datum_teelt_start, t.datum_oogst,
-                   t.aantal_planten, t.uitval_pct, t.lengte_eind, t.oogstgewicht, t.rijpheid, o.emmers
+                   t.aantal_planten, t.uitval_pct, t.lengte_eind, t.oogstgewicht, t.rijpheid, o.emmers,
+                   t.datum_half
             FROM teelten t
             JOIN teeltvakken v ON v.id = t.teeltvak_id
             LEFT JOIN (SELECT teelt_id, SUM(aantal_emmers) AS emmers FROM oogstregistraties GROUP BY teelt_id) o

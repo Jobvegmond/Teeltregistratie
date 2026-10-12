@@ -66,7 +66,9 @@ oogst, de afdelingscorrectie in het stookadvies), nooit om weken of perioden te 
   dan toont de pagina de laatst gekozen tuin met de melding "Beide kan hier niet".
 - Op de pagina **Teelt** kiest de tuinkeuze de weergave: Beide = vergelijken (Tuin 1 naast Tuin 3), Tuin 1 /
   Tuin 3 = opzoeken in die tuin. De teeltkeuze blijft staan.
-- **beide**: de pagina gaat altijd over beide tuinen (Tuin vergelijking); keuze uitgeschakeld met reden.
+- Op de pagina **Tuin** net zo: Beide = de tuinvergelijking (Tuin 1 naast Tuin 3, per m²), Tuin 1 / Tuin 3 = een
+  dag of week in die tuin per afdeling (opvallend, wat er gebeurde, kengetallen, temperatuur en RV per uur).
+- **beide**: de pagina gaat altijd over beide tuinen; keuze uitgeschakeld met reden (nu geen pagina).
 
 Registreren kan maar in één tuin: bij Beide vraagt de zijbalk "Registreren in". Hetzelfde geldt voor het plannen op
 Teeltoverzicht (concepttabel, jaarplanning): bij Beide de tuin uit "Registreren in", met de tuinnaam in de titel
