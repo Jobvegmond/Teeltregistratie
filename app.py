@@ -130,6 +130,7 @@ from ui.vergelijkingstabel import Kengetal, verloop_frame
 from config import (
     AFDELING_VOLGORDE, AFWIJKING_VENSTER_DAGEN, C_GRENZEN, FLORGIB_ACHTERSTAND_DAGEN,
     OP_KOERS_MARGE, OPMERKING_CATEGORIEEN, APP_VERSIE, WATERSYSTEMEN, EC_BAND, PH_BAND, RONDE_STARTVAK,
+    DIF_MIN, STOOK_MAX, EC_BEREIK, PH_BEREIK, TUINEN_ZONDER_PH_REGELING,
 )
 
 # --- PAGINA-INSTELLINGEN ---
@@ -2701,7 +2702,11 @@ def _pagina_tuin():
                "geplante vakken, de watergift en de opmerkingen van de periode.",
                "**Tuin 1 / Tuin 3**: *Opvallend* noemt een afdeling die ≥ 1 °C van de lichtlijn of ≥ 1 °C van een "
                "andere afdeling afwijkt, ≥ 4 uur per dag RV ≥ 90 %, een uur boven 30 °C of onder 10 °C, en een "
-               "verschil met de vergelijking van ≥ 1,5 °C, ≥ 5 % RV of ≥ 25 % lichtsom, water of energie. Een klik "
+               "verschil met de vergelijking van ≥ 1,5 °C, ≥ 5 % RV of ≥ 25 % lichtsom, water of energie. Verder de "
+               f"teeltstrategie: een DIF onder {fmt_kort(DIF_MIN, 1)} °C, een stooktemperatuur boven "
+               f"{fmt_kort(STOOK_MAX, 1)} °C en vakken met een EC buiten {fmt_kort(EC_BEREIK[0], 1)}–"
+               f"{fmt_kort(EC_BEREIK[1], 1)} of een pH buiten {fmt_kort(PH_BEREIK[0], 1)}–{fmt_kort(PH_BEREIK[1], 1)} "
+               "(tuin 3 zonder pH-regeling: alleen als signaal, niet vet). Een klik "
                "op een regel bij *Wat er gebeurde* opent het vak. In de grafieken: beweeg over een tijdstip voor "
                "alle afdelingen tegelijk."],
         bron="Klimaat per dag, watergift en energie uit Priva. Klimaat per uur (tuin 3) uit de Priva-bestanden op de "
@@ -2721,6 +2726,9 @@ TU_PERIODEN = (perioden.DAG, "Week")
 _TV_PER_SLEUTEL = {k.sleutel: k for k in TV_KENGETALLEN}
 TU_KENGETALLEN = [
     *(_TV_PER_SLEUTEL[s] for s in ("temp", "temp_dag", "temp_nacht")),
+    Kengetal("dif", "DIF (dag − nacht)", "Klimaat", "°C", 1,
+             f"Dagtemperatuur min nachttemperatuur. Streven: altijd minstens {fmt_kort(DIF_MIN, 1)} °C "
+             "(dag warmer dan nacht).", n_eenheid="dagen"),
     Kengetal("temp_min", "Laagste uur", "Klimaat", "°C", 1, "Het koudste uur (uurgemiddelde) in de periode.",
              n_eenheid="uren"),
     Kengetal("temp_max", "Hoogste uur", "Klimaat", "°C", 1, "Het warmste uur (uurgemiddelde) in de periode.",
@@ -2732,11 +2740,21 @@ TU_KENGETALLEN = [
     Kengetal("vd", "Vochtdeficit", "Klimaat", "g/m³", 1, "Gemiddeld over de uren.", n_eenheid="uren"),
     Kengetal("co2", "CO₂", "Klimaat", "ppm", 0, "Gemiddeld over de uren (een afdeling zonder meter: –).",
              n_eenheid="uren"),
-    Kengetal("buis", "Verwarmingstemperatuur", "Klimaat", "°C", 1,
-             "Door Priva berekende verwarmingstemperatuur (de stookbehoefte), gemiddeld over de uren.",
+    Kengetal("stook", "Stooktemperatuur", "Klimaat", "°C", 1,
+             "Door Priva berekende verwarmingstemperatuur (de stooklijn), gemiddeld over de uren.",
+             n_eenheid="uren"),
+    Kengetal("stook_max", "Hoogste stooktemperatuur", "Klimaat", "°C", 1,
+             f"Het hoogste uur van de stooklijn. Streven: nooit boven {fmt_kort(STOOK_MAX, 1)} °C.",
              n_eenheid="uren"),
     *(_TV_PER_SLEUTEL[s] for s in ("bezetting", "geplant", "geoogst", "uitval")),
-    *(_TV_PER_SLEUTEL[s] for s in ("water", "warmte", "gas", "energie")),
+    _TV_PER_SLEUTEL["water"],
+    Kengetal("ec", "EC gift", "Energie & water", "mS/cm", 1,
+             f"EC van de watergift, gewogen naar liters × m² vak. Streven: {fmt_kort(EC_BEREIK[0], 1)}–"
+             f"{fmt_kort(EC_BEREIK[1], 1)}.", n_eenheid="dagen"),
+    Kengetal("ph", "pH gift", "Energie & water", "", 1,
+             f"pH van de watergift, gewogen naar liters × m² vak. Streven: {fmt_kort(PH_BEREIK[0], 1)}–"
+             f"{fmt_kort(PH_BEREIK[1], 1)} (tuin 3 heeft geen pH-regeling).", n_eenheid="dagen"),
+    *(_TV_PER_SLEUTEL[s] for s in ("warmte", "gas", "energie")),
 ]
 BUITEN = "Buiten"
 BUITEN_KLEUR = "#8a8a80"
@@ -2862,7 +2880,8 @@ def _tuin_inhoud():
 
     # Samenvatting: wat opvalt en wat er gebeurde.
     layout.sectie("Opvallend")
-    zinnen = tuin_ov.opvallend(nu["waarden"], toen["waarden"], nu["n"], nu["verwacht"], label, (tot - van).days + 1)
+    zinnen = tuin_ov.opvallend(nu["waarden"], toen["waarden"], nu["n"], nu["verwacht"], label, (tot - van).days + 1,
+                               nu["dif_laag"], nu["water"], ph_regeling=TUIN_NUMMER not in TUINEN_ZONDER_PH_REGELING)
     st.markdown("\n".join(f"- {z}" for z in zinnen) if zinnen
                 else "Niets opvallends: het klimaat bleef binnen de drempels (zie Uitleg).")
 
@@ -2997,12 +3016,11 @@ TL_KENGETALLEN = [
 ]
 
 # Kolommen van de vakkentabel: (sleutel, kop, decimalen)
-TL_KOLOMMEN = [("fase1", "Fase 1 (d)", 0), ("fase2", "Fase 2 (d)", 0), ("teeltduur", "Duur (d)", 0),
+TL_KOLOMMEN = [("geplant", "Planten", 0), ("geoogst", "Geoogst (st)", 0), ("uitval", "Uitval %", 1),
+               ("lengte_fg", "Lengte half cm", 1), ("lengte", "Lengte cm", 1), ("gewicht", "Gewicht g", 0),
+               ("fase1", "Fase 1 (d)", 0), ("fase2", "Fase 2 (d)", 0), ("teeltduur", "Duur (d)", 0),
                ("lichtsom", "Licht/dag", 0), ("temp", "Etmaal °C", 1), ("afwijking", "Afw. lichtlijn", 1),
-               ("warmte", "Warmte MJ/m²", 0), ("water", "Water l/m²", 0), ("geplant", "Planten", 0),
-               ("geoogst", "Geoogst (st)", 0),
-               ("uitval", "Uitval %", 1), ("lengte", "Lengte cm", 1), ("gewicht", "Gewicht g", 0),
-               ("stek", "Stekcijfer", 0)]
+               ("warmte", "Warmte MJ/m²", 0), ("water", "Water l/m²", 0), ("stek", "Stekcijfer", 0)]
 
 
 @st.cache_data(ttl=600, show_spinner="Vakken ophalen…")
@@ -3135,9 +3153,11 @@ def _tl_vakkentabel(groep, vandaag, markeer=(), sleutel="tl_teelten", bij_klik=N
     aan). `markeer`: ids om op te lichten.
     """
     groep = sorted(groep, key=lambda t: _tv_volgorde(t["tuin_id"], t["afdeling"], t["vak"]))
+    meer_tuinen = len({t["tuin_id"] for t in groep}) > 1
     rijen = []
     for t in groep:
-        rij = {"Tuin": _tuinnaam_van.get(t["tuin_id"], "?"), "Afd.": t["afdeling"], "Vak": t["vak"],
+        rij = {**({"Tuin": _tuinnaam_van.get(t["tuin_id"], "?")} if meer_tuinen else {}),
+               "Afd.": t["afdeling"], "Vak": t["vak"],
                "Code": t["code"] or "-", "Status": "✅ afgerond" if t["afgerond"] else "⏳ lopend",
                "Geplant": format_datum(t["start"]), "Florgib": format_datum(t["florgib"]) if t["florgib"] else LEEG,
                "Oogst": (("⏳ " if t["prognose"] else "") + format_datum(t["oogst"])) if t["oogst"] else LEEG}
@@ -3164,7 +3184,8 @@ def _tl_vakkentabel(groep, vandaag, markeer=(), sleutel="tl_teelten", bij_klik=N
     for i, t in enumerate(groep):
         if t["id"] in markeer:
             for kop in ("Tuin", "Afd.", "Vak", "Code"):
-                kleuren.loc[i, kop] = "background-color: rgba(237,161,0,0.30); font-weight: 600"
+                if kop in kleuren.columns:
+                    kleuren.loc[i, kop] = "background-color: rgba(237,161,0,0.30); font-weight: 600"
 
     def _opmaak(sleutel, decimalen):
         def formatteer(x):
@@ -3173,13 +3194,19 @@ def _tl_vakkentabel(groep, vandaag, markeer=(), sleutel="tl_teelten", bij_klik=N
             return fmt_verschil(x, decimalen) if sleutel == "afwijking" else fmt_getal(x, decimalen)
         return formatteer
 
-    opmaak = {kop: _opmaak(sleutel, d) for sleutel, kop, d in TL_KOLOMMEN}
-    styler = df.style.apply(lambda _: kleuren, axis=None).format(opmaak)
+    # Streamlit toont een ontbrekend getal als "None", ook met een Styler-opmaak: de kengetallen worden zelf
+    # tekst ("–" als leeg), rechts uitgelijnd en met cijferspaties tot gelijke breedte, zodat sorteren klopt.
+    for sleutel, kop, d in TL_KOLOMMEN:
+        tekst = df[kop].map(_opmaak(sleutel, d))
+        breed = tekst.str.len().max()
+        df[kop] = tekst.map(lambda t: t if t == LEEG else t.rjust(breed, "\u2007"))
+    styler = df.style.apply(lambda _: kleuren, axis=None)
     keuze = st.dataframe(
         styler, hide_index=True, use_container_width=True, on_select="rerun", selection_mode="single-row",
         key=sleutel, column_config={
             "Tuin": st.column_config.TextColumn(pinned=True), "Afd.": st.column_config.NumberColumn(pinned=True),
             "Vak": st.column_config.NumberColumn(pinned=True), "Code": st.column_config.TextColumn(pinned=True),
+            **{kop: st.column_config.TextColumn(alignment="right") for _, kop, _ in TL_KOLOMMEN},
         })
     uitleg_help.voetnoot("Klik op een regel voor het vak. Groen/rood = minstens 5 % beter/slechter dan het "
                          "gemiddelde van de teelt.")
@@ -3401,7 +3428,9 @@ def _opzoeken_inhoud():
         "tl_teelt", sorted(per_week), teeltvgl.standaard_plantweek(teeltvgl.plantweken(alle)), plek=balk,
         naam="teelt", format_func=lambda w: f"Teelt wk {w[1]} '{str(w[0])[2:]} · {_vakken_tekst(per_week[w])}",
         breedte=230, spring_label="Spring naar plantweek")
-    groep = sorted([t for t in vakken if teeltvgl.plantweek(t["start"]) == week],
+    dagdata = _tl_dagdata(versie)
+    groep = sorted([teeltvgl.met_dagdata(t, dagdata, vandaag - timedelta(days=1))
+                    for t in vakken if teeltvgl.plantweek(t["start"]) == week],
                    key=lambda t: _tv_volgorde(t["tuin_id"], t["afdeling"], t["vak"]))
     meer_tuinen = len({t["tuin_id"] for t in groep}) > 1
     namen = {OP_ALLE: "Alle vakken", **{

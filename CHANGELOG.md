@@ -3,6 +3,30 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.12.0] - 2026-10-12
+
+### Toegevoegd
+- **Teeltstrategie op de pagina Tuin** (Tuin 1 / Tuin 3), met de streefwaarden uit de
+  bedrijfsomschrijving in `config.py` (`DIF_MIN`, `STOOK_MAX`, `EC_BEREIK`, `PH_BEREIK`):
+  - *Opvallend* noemt een DIF (dag − nacht) onder 2 °C (per dag, of op hoeveel dagen van de week),
+    een stooktemperatuur boven 15,5 °C (hoogste uur en aantal uren), en vakken met een EC buiten
+    1,0–2,0 of een pH buiten 5,0–5,5. Tuin 3 heeft geen pH-regeling: daar staat de pH er als
+    signaal (niet vet).
+  - *Per afdeling* heeft er de regels DIF, hoogste stooktemperatuur, EC gift en pH gift bij.
+    "Verwarmingstemperatuur" heet nu Stooktemperatuur (het is de berekende stooklijn).
+- Pagina Teelt, tabel *Vakken in deze teelt*: kolom **Lengte half cm** (de lengte bij de Florgib).
+
+### Gewijzigd
+- Pagina Teelt, *Vakken in deze teelt*: het resultaat (planten, geoogst, uitval, lengtes, gewicht) staat
+  vooraan, zodat het zonder zijwaarts scrollen in beeld is. Bij één tuin vervalt de kolom Tuin. Een lege
+  cel toont "–" in plaats van "None". Uitval blijft alleen voor afgeronde vakken.
+- Watergift: de matrix heeft geen maximale hoogte meer, dus geen eigen scrollbalk. Alle vakken
+  (tuin 3: 39) staan onder elkaar en de pagina scrolt. Zijwaarts (de weken) scrolt de tabel nog wel.
+
+### Gecorrigeerd
+- Pagina Teelt bij Tuin 1 / Tuin 3: licht, temperatuur, lichtlijn, warmte en water per vak bleven leeg in
+  *Vakken in deze teelt* (de vakken kregen hun dagdata niet mee, anders dan bij Beide).
+
 ## [2.11.1] - 2026-10-12
 
 ### Gewijzigd

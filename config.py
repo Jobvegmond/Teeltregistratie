@@ -10,6 +10,17 @@ rekenmodules in logic/ en het scherm lezen ze hieruit.
 LICHTLIJN_BASIS = 11.7
 LICHTLIJN_FACTOR = 0.0072
 
+# --- TEELTSTRATEGIE (streefwaarden; pagina Tuin, "Opvallend") ---
+# Uit de bedrijfsomschrijving: altijd een positieve DIF van minstens 2 °C (dag warmer dan nacht), de
+# stooklijn nooit boven 15,5 °C, EC van de gift 1,0–2,0 en pH het liefst 5,0–5,5. Tuin 3 heeft geen
+# pH-regeling: daar is een pH buiten het bereik alleen een signaal. Let op: dit is het streefbereik; de
+# ruimere EC_BAND/PH_BAND verderop bepalen wanneer de watergiftmatrix rood kleurt.
+DIF_MIN = 2.0
+STOOK_MAX = 15.5
+EC_BEREIK = (1.0, 2.0)
+PH_BEREIK = (5.0, 5.5)
+TUINEN_ZONDER_PH_REGELING = {3}     # tuinnummers
+
 # --- ENERGIE ---
 # Calorische waarde van aardgas (bovenwaarde Groningen-gas, geen rendementscorrectie),
 # om m³ gas om te rekenen naar MJ.
@@ -57,4 +68,4 @@ PH_BAND = {1: (4.8, 6.0), 3: (4.8, 6.0)}
 # --- VERSIE ---
 # Staat rechtsboven in de app. Ophogen bij elke wijziging op main (zie CHANGELOG.md):
 # derde getal bij een correctie, tweede bij iets nieuws, eerste bij een grote omzetting.
-APP_VERSIE = "2.11.1"
+APP_VERSIE = "2.12.0"

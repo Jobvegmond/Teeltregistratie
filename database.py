@@ -2232,7 +2232,7 @@ def get_vergelijking_data():
     - emmers: elke oogstregistratie met tuin, vak, teelt, datum en emmers
     - klimaat: per tuin/afdeling/dag etmaal-, dag- en nachttemperatuur, RV en lichtsom
     - energie / gas: per tuin per dag warmte (MJ) en gas (m3)
-    - water: per tuin/vak/dag liter per m²
+    - water: per tuin/vak/dag liter per m², EC en pH van de gift
     """
     with get_connection() as conn:
         cursor = conn.cursor()
@@ -2264,7 +2264,7 @@ def get_vergelijking_data():
         """)
         energie = _df(cursor, "SELECT tuin_id, datum, warmte_mj_totaal AS warmte_mj FROM energiedata_dag")
         gas = _df(cursor, "SELECT tuin_id, datum, gas_m3_totaal AS gas_m3 FROM gasdata_dag")
-        water = _df(cursor, "SELECT tuin_id, vaknummer, datum, liter_per_m2 FROM watergift_dag")
+        water = _df(cursor, "SELECT tuin_id, vaknummer, datum, liter_per_m2, ec, ph FROM watergift_dag")
 
     vakken["m2"] = [
         float(m2) if m2 else _standaard_oppervlakte(vak, nummer)
