@@ -9,7 +9,7 @@ Elke pagina, van boven naar beneden:
 
 | | Onderdeel | Component |
 |---|---|---|
-| a | Knop **Uitleg**, klein rechts in de kop naast de tuinkeuze. Geen paginatitel: de gevulde knop in de navigatiebalk laat de pagina zien | `layout.pagina_kop()` |
+| a | Knop **Uitleg**, klein rechts in de kopbalk (tabbladknoppen, daarachter de tuinkeuze). Geen paginatitel: de gevulde knop in de navigatiebalk laat de pagina zien | `layout.pagina_kop()` |
 | b | Eén filterbalk (één regel, loopt door op een smal scherm) | `layout.filterbalk()` + `ui/filters.py` |
 | c | Samenvatting (tabel) | `layout.sectie()` |
 | d | Hoofdweergave (matrix, tabel of grafiek), met legenda eronder | `legend.legenda()` |
@@ -17,6 +17,11 @@ Elke pagina, van boven naar beneden:
 | f | Export | `layout.export()` |
 
 Een onderdeel dat een pagina niet heeft, valt weg. De volgorde blijft.
+
+**Schermnummers.** De tabbladen zijn genummerd (1. Teeltoverzicht … 7. Meer) en elke sectie en elk
+openklapmenu op een pagina krijgt automatisch een volgnummer ("2.3"), zodat feedback naar een scherm kan
+verwijzen. Geef daarom elke hoofdweergave een `layout.sectie()`-kop en gebruik voor openklapmenu's
+`layout.uitklap()` (niet `st.expander`).
 
 ```python
 from ui import filters, layout, legend
@@ -31,7 +36,6 @@ layout.pagina_kop(
 )
 balk = layout.filterbalk("watergift")
 lengte, eind_zo = filters.periode("wg_periode", ["2 wk", "4 wk", "3 mnd"], "4 wk", ..., plek=balk)
-afdelingen = filters.afdelingen("afd_t3", ["1", "3", "4", "2"], plek=balk)
 vooruit = filters.schakelaar("Vooruitkijken", "wg_vooruit", True, plek=balk)
 ...                                   # hoofdweergave
 legend.legenda(wg_matrix.LEGENDA)
@@ -45,7 +49,7 @@ layout.export(excel, "watergift_tuin_3.xlsx")
 | Tuin | Alleen de globale keuze in de kop (Tuin 1 / Tuin 3 / Beide). Nooit een tuinfilter op een pagina. | `filters.tuin()` (in app.py, per pagina een modus in `TUIN_MODUS`) |
 | Periode (kalender) | Knoppengroep voor de lengte + ◀ [label ▾] ▶; klik op het label om te springen | `filters.periode()` |
 | Teelt (plantweek), pootweek | ◀ [Teelt wk 33 '26 · 8 vakken ▾] ▶ | `filters.bladeraar()` |
-| Afdeling | Pills, meervoudig, teeltvolgorde, standaard alles aan | `filters.afdelingen()` (in app.py: `afdeling_filters()`) |
+| Afdeling | Pills, meervoudig, teeltvolgorde, standaard alles aan (nu op geen enkele pagina: Teeltoverzicht en Watergift tonen altijd alle afdelingen) | `filters.afdelingen()` |
 | Overige filters (ras, categorie, type, gebruiker) | Pills bij ≤ 8 opties, anders keuzelijst met meervoudige keuze; niets gekozen = alles | `filters.keuzes()` |
 | Eén keuze uit een lange lijst (welke tabel) | Keuzelijst, altijd één gekozen | `filters.keuze()` |
 | Zoeken | Eén tekstveld, alleen op registerpagina's, altijd als laatste in de filterbalk | `filters.zoekveld()` |
@@ -67,7 +71,7 @@ oogst, de afdelingscorrectie in het stookadvies), nooit om weken of perioden te 
 - Op de pagina **Teelt** kiest de tuinkeuze de weergave: Beide = vergelijken (Tuin 1 naast Tuin 3), Tuin 1 /
   Tuin 3 = opzoeken in die tuin. De teeltkeuze blijft staan.
 - Op de pagina **Tuin** net zo: Beide = de tuinvergelijking (Tuin 1 naast Tuin 3, per m²), Tuin 1 / Tuin 3 = een
-  dag of week in die tuin per afdeling (opvallend, wat er gebeurde, kengetallen, temperatuur en RV per uur).
+  dag of week in die tuin per afdeling (wat er gebeurde, kengetallen, temperatuur en RV per uur).
 - **beide**: de pagina gaat altijd over beide tuinen; keuze uitgeschakeld met reden (nu geen pagina).
 
 Registreren kan maar in één tuin: bij Beide vraagt de zijbalk "Registreren in". Hetzelfde geldt voor het plannen op
@@ -78,8 +82,8 @@ van het openklapmenu.
 
 Elke keuze staat in `st.session_state["f_<sleutel>"]`, niet in de widget-key: Streamlit ruimt de
 state van een widget op zodra die een keer niet getekend wordt. Zo blijft een keuze staan als je van
-pagina wisselt. Gebruik dezelfde sleutel waar de keuze hetzelfde betekent (afdeling: `afd_t<tuin>`
-op Teeltoverzicht en Watergift) en een eigen sleutel waar niet.
+pagina wisselt. Gebruik dezelfde sleutel waar de keuze hetzelfde betekent (bijv. de teelt: `tl_teelt` bij
+Beide en bij één tuin op Teelt) en een eigen sleutel waar niet.
 
 Doorklikken naar een andere pagina met de juiste filters gaat met `ga_naar(url_path, {sleutel: waarde})`
 in app.py; `None` zet een filter terug op de standaard.

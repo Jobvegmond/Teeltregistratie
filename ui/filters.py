@@ -221,11 +221,11 @@ def keuze(label, opties, sleutel, standaard, plek=None, format_func=str, breedte
     return bewaard(sleutel)
 
 
-def zoekveld(sleutel, placeholder="Zoeken", label="Zoeken", plek=None):
+def zoekveld(sleutel, placeholder="Zoeken", label="Zoeken", plek=None, breedte=220):
     """Eén tekstveld, alleen op registerpagina's, altijd als laatste in de filterbalk."""
     plek = plek or st
     w = _klaarzetten(sleutel, "")
-    plek.text_input(label, key=w, on_change=_kopieer(sleutel, leeg=""), placeholder=placeholder, width=220)
+    plek.text_input(label, key=w, on_change=_kopieer(sleutel, leeg=""), placeholder=placeholder, width=breedte)
     return bewaard(sleutel, "").strip()
 
 

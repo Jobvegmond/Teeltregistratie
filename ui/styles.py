@@ -26,15 +26,21 @@ CSS = """
 [data-testid="stMain"] [data-testid="stTextArea"] { max-width: 720px; }
 /* Paginaopbouw (ui/layout.py): de knop Uitleg klein rechts in de rij met de tuinkeuze, sectiekoppen,
    filterbalk. Geen paginatitel: de gevulde knop in de navigatiebalk laat de pagina zien. */
-/* Streamlit verpakt elk blok in een stLayoutWrapper: de rij met de tuinkeuze over de hele breedte, de
-   knop Uitleg daarin helemaal rechts. */
-[data-testid="stLayoutWrapper"]:has(> .st-key-vem_tuinkeuze) { flex: 1 1 auto; width: 100%; }
+/* Kopbalk: de tabbladknoppen, direct daarachter de tuinkeuze (verticaal gecentreerd) en de knop Uitleg
+   helemaal rechts. Streamlit verpakt elk blok in een stLayoutWrapper; daarop zit de marge. */
+.st-key-vem_kopbalk {
+    flex-wrap: wrap; row-gap: 0.35rem; margin-bottom: 0.5rem; padding-bottom: 0.45rem;
+    border-bottom: 2px solid rgba(46, 106, 76, 0.25);
+}
+.st-key-vem_tuinkeuze { padding-left: 0.6rem; border-left: 1px solid rgba(46, 106, 76, 0.3); }
 [data-testid="stLayoutWrapper"]:has(> .st-key-vem_uitleg) { margin-left: auto; }
 .st-key-vem_uitleg [data-testid="stPopover"] button { min-height: 0; padding: 0.1rem 0.55rem; }
 .st-key-vem_uitleg [data-testid="stPopover"] button p,
 .st-key-vem_uitleg [data-testid="stPopover"] button span { font-size: 0.8rem; }
 .vem-sectie { font-size: 1rem; font-weight: 600; margin: 0.6rem 0 0.1rem; }
 .vem-sectie span { font-weight: 400; opacity: 0.65; }
+/* Schermnummer voor feedback ("2.3"): klein en grijs vóór het kopje. */
+.vem-sectie .vem-nr { font-weight: 500; font-size: 0.78rem; opacity: 0.5; margin-right: 0.45rem; }
 [class*="st-key-filterbalk_"] { flex-wrap: wrap; row-gap: 0.5rem; margin-bottom: 0.4rem; }
 [class*="st-key-filterbalk_"] [data-testid="stCheckbox"] { padding-bottom: 0.45rem; }
 /* Zijbalk: 330 px breed (standaard 300), net breed genoeg dat Florgib · Oogst · Opmerking · Wijzigen op één regel passen en

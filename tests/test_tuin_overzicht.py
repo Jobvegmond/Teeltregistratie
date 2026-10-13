@@ -40,9 +40,9 @@ class TestPerAfdeling(unittest.TestCase):
         w, n = u["waarden"], u["n"]
         self.assertEqual((w["Afd. 1"]["temp_min"], w["Afd. 1"]["temp_max"]), (15.0, 17.0))
         self.assertEqual((w["Afd. 1"]["vd"], w["Afd. 1"]["co2"]), (2.0, 500.0))
-        # Stooktemperatuur: gemiddeld 15,6, hoogste 16,2, één uur boven 15,5 °C.
+        # Stooktemperatuur: gemiddeld 15,6, hoogste 16,2.
         self.assertAlmostEqual(w["Afd. 1"]["stook"], 15.6)
-        self.assertEqual((w["Afd. 1"]["stook_max"], w["Afd. 1"]["stook_hoog"], w[HT]["stook_max"]), (16.2, 1.0, 16.2))
+        self.assertEqual((w["Afd. 1"]["stook_max"], w[HT]["stook_max"]), (16.2, 16.2))
         self.assertEqual((n["Afd. 1"]["vd"], u["verwacht"]["Afd. 1"]["vd"]), (2, 7 * 24))
         # Uren RV ≥ 90 per 24 gemeten uren: afd. 1 1 van 2, afd. 2 1 van 1; tuin gewogen (500 m² elk).
         self.assertEqual((w["Afd. 1"]["rv_hoog"], w["Afd. 2"]["rv_hoog"], w[HT]["rv_hoog"]), (12.0, 24.0, 18.0))
@@ -72,54 +72,9 @@ class TestTeeltstrategie(unittest.TestCase):
         u = to.tabelwaarden(self.gegevens(), None, 3, VAN, TOT)
         w = u["waarden"]
         self.assertAlmostEqual(w["Afd. 1"]["dif"], 3 - 1.5 * 2 / 7)
-        self.assertEqual(u["dif_laag"], {"Afd. 1": (2, 7), "Afd. 2": (0, 7)})
         # Vak 1: EC (1,6 × 3 + 2,4 × 1) / 4 = 1,8; hele tuin gewogen naar liters × 500 m².
         self.assertAlmostEqual(w["Afd. 1"]["ec"], 1.8)
         self.assertAlmostEqual(w[HT]["ec"], (1.6 * 3 + 2.4 + 1.5 * 2) / 6)
-        self.assertEqual(u["water"]["ec"]["buiten"], [])
-        self.assertEqual([(v, round(x, 2)) for v, x in u["water"]["ph"]["buiten"]], [(1, 6.1)])
-        self.assertEqual(u["water"]["ph"]["vakken"], 2)
-
-    def test_zinnen(self):
-        u = to.tabelwaarden(self.gegevens(), None, 3, VAN, TOT)
-        nu = {"Afd. 1": {"stook_max": 16.24, "stook_hoog": 3.0}, "Afd. 2": {"stook_max": 15.5}}
-        zinnen = to.opvallend(nu, {}, {}, {}, "", 7, u["dif_laag"], u["water"], ph_regeling=False)
-        self.assertEqual(zinnen, [
-            "**DIF kleiner dan 2 °C**: afd. 1 op 2 van 7 dagen.",
-            "**Stooktemperatuur boven 15,5 °C**: afd. 1 (hoogste 16,2 °C, 3 uur).",
-            "pH buiten 5,0–5,5: 1 van 2 vakken met gift (gemiddeld 5,8; verst eraf vak 1: 6,1), geen pH-regeling.",
-            "Geen klimaatdata in deze periode.",
-        ])
-        dag = to.opvallend({"Afd. 1": {"dif": 1.5}}, {}, {}, {}, "", 1, {"Afd. 1": (1, 1)},
-                           {"ec": {"buiten": [(4, 2.3)], "vakken": 8, "gem": 1.9}})
-        self.assertEqual(dag[:2], ["**DIF kleiner dan 2 °C**: afd. 1 (1,5 °C).",
-                                   "**EC buiten 1,0–2,0**: 1 van 8 vakken met gift (gemiddeld 1,9; verst eraf vak 4: 2,3)."])
-
-
-class TestOpvallend(unittest.TestCase):
-    def test_zinnen(self):
-        nu = {"Afd. 1": {"afwijking": 1.4, "temp": 19.0, "rv_hoog": 6.0, "temp_min": 9.5},
-              "Afd. 2": {"afwijking": 0.2, "temp": 20.2},
-              HT: {"temp": 19.6, "rv": 80.0, "lichtsom": 600.0}}
-        toen = {HT: {"temp": 17.8, "rv": 78.0, "lichtsom": 1000.0}}
-        n, verwacht = {HT: {"temp": 7}}, {HT: {"temp": 7}}
-        zinnen = to.opvallend(nu, toen, n, verwacht, "wk 38", 7)
-        self.assertEqual(zinnen, [
-            "**Warmer dan de lichtlijn**: afd. 1 (+1,4 °C).",
-            "**Verschil tussen afdelingen**: afd. 1 was 1,2 °C kouder dan afd. 2 (19,0 °C tegen 20,2 °C).",
-            "**Hoge RV**: afd. 1 6 uur per dag boven 90 %.",
-            "**Koud uur**: laagste uur afd. 1 (9,5 °C).",
-            "**Etmaaltemperatuur 1,8 °C hoger** dan wk 38 (19,6 °C tegen 17,8 °C).",
-            "**Lichtsom 40 % lager** dan wk 38.",
-        ])
-
-    def test_onvolledig_en_leeg(self):
-        self.assertEqual(to.opvallend({HT: {"temp": 18.0}}, {}, {HT: {"temp": 5}}, {HT: {"temp": 7}}, "", 7),
-                         ["Klimaat niet compleet: 5 van 7 dagen met data."])
-        self.assertEqual(to.opvallend({}, {}, {}, {}, "", 1), ["Geen klimaatdata in deze periode."])
-        self.assertEqual(to.opvallend({HT: {"water": 0.0, "temp_max": 20.0}}, {HT: {"water": 2.1}}, {}, {}, "9 okt", 1),
-                         ["**Geen watergift**, 9 okt wel."])
-
 
 class TestGebeurtenissen(unittest.TestCase):
     def test_per_vak_op_datum(self):

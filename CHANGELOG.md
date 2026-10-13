@@ -3,6 +3,26 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.13.0] - 2026-10-13
+
+### Toegevoegd
+- **Schermnummers** voor feedback: de tabbladen heten 1. Teeltoverzicht … 7. Meer, en elke sectie en
+  elk openklapmenu krijgt een volgnummer ("2.3", `layout.sectie`/`layout.uitklap`). Hoofdweergaven
+  zonder kop kregen er een: Tijdlijn, de watergiftmatrix (tuinnaam) en "Tuin 1 naast Tuin 3" (Tuin en
+  Teelt bij Beide).
+
+### Gewijzigd
+- **Kopbalk**: de tuinkeuze staat direct achter de tabbladknoppen op dezelfde regel, de knop Uitleg
+  rechts. Tabbladknoppen iets compacter.
+- Grafieken: "lichtlijn" heet nu **berekende etmaaltemperatuur** (vakpopup, stookadvies, klimaat).
+- Teeltoverzicht: de weergave **Vakken nu** en de **afdelingsknoppen** zijn weg (de tijdlijn toont alles).
+- Watergift: de **afdelingsknoppen** zijn weg; altijd alle afdelingen.
+- Tuin (Tuin 1 / Tuin 3): **Opvallend** is weg.
+- Teelt: keuzelijst Vak en het zoekveld smaller.
+- Kengetaltegels (o.a. Teelt): elke tegel zo breed als de inhoud, nooit een waarde over twee regels;
+  datumbereik binnen één jaar korter ("17-08 – 20-08-26").
+- Stek, *Hele week invullen*: alle velden op één regel; "— niet wijzigen —" heet nu "zo laten".
+
 ## [2.12.0] - 2026-10-12
 
 ### Toegevoegd
