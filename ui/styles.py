@@ -33,6 +33,8 @@ CSS = """
     border-bottom: 2px solid rgba(46, 106, 76, 0.25);
 }
 .st-key-vem_tuinkeuze { padding-left: 0.6rem; border-left: 1px solid rgba(46, 106, 76, 0.3); }
+/* Telefoon: de tuinkeuze staat dan op een eigen regel; geen scheidingsstreepje ervoor. */
+@media (max-width: 700px) { .st-key-vem_tuinkeuze { padding-left: 0; border-left: none; } }
 [data-testid="stLayoutWrapper"]:has(> .st-key-vem_uitleg) { margin-left: auto; }
 .st-key-vem_uitleg [data-testid="stPopover"] button { min-height: 0; padding: 0.1rem 0.55rem; }
 .st-key-vem_uitleg [data-testid="stPopover"] button p,

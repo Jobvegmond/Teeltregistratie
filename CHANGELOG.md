@@ -3,6 +3,14 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.13.1] - 2026-10-13
+
+### Gewijzigd
+- Tijdlijn (Teeltoverzicht): kortere labels links ("Oogst" in plaats van "Oogst per week") en geen
+  minimale breedte meer voor de labelkolom, zodat de tijdlijn op een telefoon direct links begint. In de
+  tooltip heet de regel nu "Vak" (was "y").
+- Op een telefoon staat de tuinkeuze zonder scheidingsstreepje op een eigen regel.
+
 ## [2.13.0] - 2026-10-13
 
 ### Toegevoegd

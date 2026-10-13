@@ -1953,7 +1953,8 @@ def _tl_frames(info, afdelingen, van, tot, vandaag, weken):
     vak_afd = {int(v): int(a) for v, a in zip(info["vakken"]["vaknummer"], info["vakken"]["afdeling"]) if a == a}
 
     stap = _tl_stap(weken)
-    oogst_rij = "Oogst per week" if stap == 1 else f"Oogst per {stap} wk"
+    # Korte labels: het langste label bepaalt hoe breed de kolom links is (op een telefoon kostbaar).
+    oogst_rij = "Oogst" if stap == 1 else f"Oogst/{stap} wk"
     volgorde, kopteksten = ["Week", oogst_rij], []
     for afdeling in sorteer_afdelingen(set(vak_afd.values()), tuin["nummer"]):
         if afdelingen is not None and afdeling not in afdelingen:
@@ -2067,14 +2068,14 @@ def _tl_grafiek(volgorde, frames, van, tot, vandaag, weken):
         orient="top", grid=True, labels=False, ticks=False, domain=False,
         tickCount={"interval": "week", "step": 1}))
     y = alt.Y("y:N", title=None, sort=volgorde, scale=alt.Scale(domain=volgorde), axis=alt.Axis(
-        labelExpr="indexof(datum.label, '§') == 0 ? '' : datum.label", labelLimit=140, minExtent=90,
+        labelExpr="indexof(datum.label, '§') == 0 ? '' : datum.label", labelLimit=80, minExtent=0,
         ticks=False, domain=False, labelFontSize=11))
     klik = alt.selection_point(name="tl_klik", fields=["sleutel"], on="click")
     lagen = [
         alt.Chart(balken).mark_bar(height=TL_RIJ - 8, cornerRadius=2, stroke="#000000", clip=True, cursor="pointer")
         .encode(x=x, x2="eind:T", y=y, color=alt.Color("kleur:N", scale=None),
                 opacity=alt.Opacity("dekking:Q", scale=None), strokeOpacity=alt.StrokeOpacity("lijn:Q", scale=None),
-                tooltip=["y:N", "Wat:N", "Periode:N", "Toelichting:N"])
+                tooltip=[alt.Tooltip("y:N", title="Vak"), "Wat:N", "Periode:N", "Toelichting:N"])
         .add_params(klik)
     ]
     for streep, dash, breedte in (("vol", [1, 0], 1.2), ("concept", [4, 2], 1.5),
@@ -2086,12 +2087,12 @@ def _tl_grafiek(volgorde, frames, van, tot, vandaag, weken):
                          .encode(x="start:T", x2="eind:T", y=y, stroke=alt.Stroke("rand:N", scale=None)))
     if not plan.empty:
         lagen.append(alt.Chart(plan).mark_tick(orient="vertical", thickness=2, size=TL_RIJ - 4, color="#1f1f1f")
-                     .encode(x="x:T", y=y, tooltip=["y:N", "Plan-oogst:N"]))
+                     .encode(x="x:T", y=y, tooltip=[alt.Tooltip("y:N", title="Vak"), "Plan-oogst:N"]))
     if not florgib.empty:
         lagen.append(alt.Chart(florgib).mark_point(size=45, strokeWidth=2, color=TL_FLORGIB, opacity=1)
                      .encode(x="x:T", y=y, fill=alt.condition("datum.soort == 'geregistreerd'",
                                                                alt.value(TL_FLORGIB), alt.value("transparent")),
-                             tooltip=["y:N", "Florgib:N"]))
+                             tooltip=[alt.Tooltip("y:N", title="Vak"), "Florgib:N"]))
     if not kopteksten.empty:
         lagen.append(alt.Chart(kopteksten).mark_text(align="left", dx=6, fontSize=11, fontWeight="bold")
                      .encode(x="x:T", y=y, text="tekst:N"))
