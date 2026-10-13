@@ -10,6 +10,9 @@ inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
   minimale breedte meer voor de labelkolom, zodat de tijdlijn op een telefoon direct links begint. In de
   tooltip heet de regel nu "Vak" (was "y").
 - Op een telefoon staat de tuinkeuze zonder scheidingsstreepje op een eigen regel.
+- Watergift: de vaste kolommen links zijn smaller (samen 140 in plaats van 214 px): koppen Pw, Lft en
+  Tot (volledige naam in de tooltip), plantweek "41" en leeftijd "5d", en de regels erboven heten
+  EC uitgang, EC gift en pH gift. Op een telefoon blijft zo meer ruimte voor de dagen.
 
 ## [2.13.0] - 2026-10-13
 

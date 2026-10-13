@@ -3497,8 +3497,8 @@ def _wg_matrix_gegevens(tuin, vakken_df, teelten, gift, kwaliteit, behandelingen
     kw_rijen = []
     # EC en pH van de giften van die dag, gewogen naar de liters (zoals Priva per gift rekent). Zonder
     # gietbeurten (vóór 2.4.1) het daggemiddelde van de doseerunit, met een melding in de tooltip.
-    for label, gift_sleutel, unit_sleutel, band in (("EC (mS/cm)", "ec_gift", "ec_gem", band_ec),
-                                                    ("pH", "ph_gift", "ph_gem", band_ph)):
+    for label, gift_sleutel, unit_sleutel, band in (("EC gift (mS/cm)", "ec_gift", "ec_gem", band_ec),
+                                                    ("pH gift", "ph_gift", "ph_gem", band_ph)):
         cellen = []
         for d in dagen_lijst:
             k = kw_dag.get(d) or {}
@@ -3517,10 +3517,10 @@ def _wg_matrix_gegevens(tuin, vakken_df, teelten, gift, kwaliteit, behandelingen
                 regels.append(f"buiten de band {fmt_getal(band[0], 1)}–{fmt_getal(band[1], 1)} ({status})")
             cellen.append({"waarde": fmt_getal(waarde, 2 if gift_sleutel == "ec_gift" else 1) if waarde is not None
                            else "", "buiten": bool(status), "tip": "\n".join(regels)})
-        kw_rijen.append({"label": f"{label} · giften", "cellen": cellen})
+        kw_rijen.append({"label": label.split(" (")[0], "cellen": cellen})
 
     # Uitgangswater (voorregeling), bovenaan: de EC van het water vóór bemesting.
-    for label, uitleg in (("EC uitgangswater", "gemeten EC van het water vóór bemesting (voorregeling)"),):
+    for label, uitleg in (("EC uitgang", "EC van het uitgangswater: gemeten vóór bemesting (voorregeling)"),):
         cellen = []
         for d in dagen_lijst:
             k = kw_dag.get(d) or {}
@@ -3542,8 +3542,9 @@ def _wg_matrix_gegevens(tuin, vakken_df, teelten, gift, kwaliteit, behandelingen
             if lopend:
                 totaal = wg.totaal_sinds_planten(
                     {d: r["liter_per_m2"] for (v, d), r in gift_dag.items() if v == vak}, lopend["start"], vandaag)
-                plantweek = f"wk {lopend['start'].isocalendar()[1]}"
-                leeftijd = f"{(vandaag - lopend['start']).days} d"
+                # Kort (de kolommen links zijn smal): "41" en "5d"; de kop zegt wat het is.
+                plantweek = str(lopend["start"].isocalendar()[1])
+                leeftijd = f"{(vandaag - lopend['start']).days}d"
                 tip_vak = f"Vak {vak} · afd. {afdeling} · {lopend['code'] or '-'} · geplant {format_datum(lopend['start'])}"
             else:
                 totaal, plantweek, leeftijd, tip_vak = None, "", "", f"Vak {vak} · afd. {afdeling} · leeg"
