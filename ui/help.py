@@ -1,7 +1,7 @@
 """
 Uitleg op één manier (UI-standaard, docs/ui-standaard.md):
 
-- uitleg(): de kleine knop "Uitleg" rechts in de kop, naast de tuinkeuze. Opent een popover met
+- uitleg(): de kleine knop "Uitleg" rechts in de kopbalk (na de tabbladknoppen en de tuinkeuze). Opent een popover met
   altijd dezelfde kopjes, in deze volgorde: Wat zie je · Hoe lees je het ·
   Waar komen de getallen vandaan · Wat betekenen de kleuren. Een kopje zonder
   tekst valt weg.

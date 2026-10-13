@@ -7,38 +7,24 @@ Pagina Tuin bij Tuin 1 / Tuin 3: wat er op een dag of in een week in één tuin 
   warmte en gas zijn er alleen voor de hele kas. Uit het klimaat per uur (tabel klimaat_uur, alleen
   waar de Priva-bestanden zijn) komen de laagste/hoogste temperatuur, vochtdeficit, CO2, de berekende
   stooktemperatuur en de uren met een hoge RV. Verder de DIF (dag − nacht) en EC/pH van de gift.
-- opvallend(): korte zinnen over wat afwijkt (lichtlijn, verschil tussen afdelingen, hoge RV, de
-  teeltstrategie uit config.py: DIF, stooklijn, EC/pH; verschil met de vergelijkingsperiode, onvolledige
-  data).
 - gebeurtenissen(): geplant, Florgib, oogst, afgerond en opmerkingen in de periode, per vak.
 
 Alleen rekenwerk; tests in tests/test_tuin_overzicht.py.
 """
 import copy
 
-from config import DIF_MIN, EC_BEREIK, PH_BEREIK, STOOK_MAX
 from logic import tuinvergelijking as tuinvgl
-from utils.format import fmt_getal, fmt_kort, fmt_verschil
+from utils.format import fmt_getal, fmt_kort
 
 HELE_TUIN = "Hele tuin"
 # Alleen voor de hele kas gemeten (geen meter per afdeling).
 ALLEEN_TUIN = ("warmte", "gas", "energie")
-# Uit klimaat_uur: gemiddelden (teller = som, noemer = aantal uren), uitersten, uren met RV ≥ RV_HOOG en
-# uren met een stooktemperatuur boven STOOK_MAX. "verwarming" = de door Priva berekende
-# verwarmingstemperatuur: de stooklijn (luchttemperatuur), niet de buis.
+# Uit klimaat_uur: gemiddelden (teller = som, noemer = aantal uren), uitersten en uren met RV ≥ RV_HOOG.
+# "verwarming" = de door Priva berekende verwarmingstemperatuur: de stooklijn (luchttemperatuur), niet de buis.
 UUR_GEMIDDELD = {"vd": "vd", "co2": "co2", "stook": "verwarming"}
-UUR_SLEUTELS = ("temp_min", "temp_max", "rv_hoog", "stook_max", "stook_hoog", *UUR_GEMIDDELD)
-UUR_UITERSTEN = {"temp_min": min, "temp_max": max, "stook_max": max, "stook_hoog": max}
+UUR_SLEUTELS = ("temp_min", "temp_max", "rv_hoog", "stook_max", *UUR_GEMIDDELD)
+UUR_UITERSTEN = {"temp_min": min, "temp_max": max, "stook_max": max}
 RV_HOOG = 90
-
-# Drempels voor opvallend().
-DREMPEL_LICHTLIJN = 1.0        # °C boven/onder de lichtlijn per afdeling
-DREMPEL_AFDELINGEN = 1.0       # °C verschil in etmaaltemperatuur tussen afdelingen
-DREMPEL_TEMP_VERSCHIL = 1.5    # °C verschil met de vergelijkingsperiode (hele tuin)
-DREMPEL_RV_VERSCHIL = 5        # %-punt RV verschil met de vergelijkingsperiode
-DREMPEL_RELATIEF = 0.25        # 25 % meer/minder lichtsom, water of energie dan de vergelijking
-DREMPEL_RV_UREN = 4            # uren per dag met RV ≥ RV_HOOG
-TEMP_HOOG, TEMP_LAAG = 30.0, 10.0
 
 
 def kolom(afdeling):
@@ -94,7 +80,6 @@ def uur_onderdelen(uur, afd_m2, van, tot):
         stook = groep["verwarming"].dropna()
         if len(stook):
             d["stook_max"] = (float(stook.max()), 1.0, len(stook), verwacht)
-            d["stook_hoog"] = (float((stook.round(1) > STOOK_MAX).sum()), 1.0, len(stook), verwacht)
         for sleutel, veld in UUR_GEMIDDELD.items():
             reeks = groep[veld].dropna()
             if len(reeks):
@@ -139,45 +124,10 @@ def water_kwaliteit(water, tuin_id, vak_m2, van, tot):
     return uit
 
 
-def water_signalen(g, tuin_id, van, tot):
-    """
-    Per vak de EC en pH van de gift over [van, tot] (gewogen naar liters) tegen EC_BEREIK en PH_BEREIK:
-    {"ec"/"ph": {"buiten": [(vak, waarde)] (verst buiten het bereik eerst), "vakken": n met gift,
-    "gem": gemiddelde over de vakken}}; een meting zonder data ontbreekt.
-    """
-    gift = _gift(g.water[g.water["tuin_id"] == tuin_id], van, tot)
-    uit = {}
-    for sleutel, (laag, hoog) in (("ec", EC_BEREIK), ("ph", PH_BEREIK)):
-        rijen = gift.dropna(subset=[sleutel]) if sleutel in gift.columns else gift.iloc[0:0]
-        if rijen.empty:
-            continue
-        per_vak = {int(vak): float((r[sleutel] * r["liter_per_m2"]).sum() / r["liter_per_m2"].sum())
-                   for vak, r in rijen.groupby("vaknummer")}
-        buiten = sorted(((vak, w) for vak, w in per_vak.items() if round(w, 1) < laag or round(w, 1) > hoog),
-                        key=lambda p: (-max(laag - p[1], p[1] - hoog), p[0]))
-        uit[sleutel] = {"buiten": buiten, "vakken": len(per_vak), "gem": sum(per_vak.values()) / len(per_vak)}
-    return uit
-
-
-def dif_laag(g, tuin_id, afds, van, tot):
-    """{kolom: (dagen met DIF < DIF_MIN, dagen met dag- en nachttemperatuur)} per afdeling."""
-    k = g.klimaat
-    k = k[(k["tuin_id"] == tuin_id) & (k["datum"] >= str(van)) & (k["datum"] <= str(tot))]
-    k = k.dropna(subset=["temp_dag", "temp_nacht"])
-    uit = {}
-    for a in afds:
-        rijen = k[k["afdeling"] == a]
-        if not rijen.empty:
-            dif = (rijen["temp_dag"] - rijen["temp_nacht"]).round(1)
-            uit[kolom(a)] = (int((dif < DIF_MIN).sum()), len(rijen))
-    return uit
-
-
 def tabelwaarden(g, uur, tuin_id, van, tot):
     """
     Zoals tuinvergelijking.tabelwaarden, met kolommen "Afd. n" (oplopend) en HELE_TUIN:
-    {"kolommen", "waarden", "n", "verwacht", "ontbreekt", "dif_laag", "water"} (de laatste twee voor
-    opvallend(): dif_laag() en water_signalen()).
+    {"kolommen", "waarden", "n", "verwacht", "ontbreekt"}.
     """
     afds = afdelingen(g, tuin_id)
     per = {}
@@ -217,114 +167,7 @@ def tabelwaarden(g, uur, tuin_id, van, tot):
         "n": {k: {s: d[2] for s, d in delen.items()} for k, delen in per.items()},
         "verwacht": {k: {s: d[3] for s, d in delen.items() if d[3] is not None} for k, delen in per.items()},
         "ontbreekt": ontbreekt,
-        "dif_laag": dif_laag(g, tuin_id, afds, van, tot),
-        "water": water_signalen(g, tuin_id, van, tot),
     }
-
-
-def _afd_lijst(paren, decimalen=1, eenheid="°C", teken=True):
-    """[("Afd. 2", 1.4), …] → "afd. 2 (+1,4 °C), afd. 3 (+1,1 °C)"."""
-    opmaak = fmt_verschil if teken else fmt_getal
-    return ", ".join(f"{k.lower()} ({opmaak(w, decimalen, eenheid)})" for k, w in paren)
-
-
-def _bereik(laag, hoog, decimalen=1):
-    return f"{fmt_getal(laag, decimalen)}–{fmt_getal(hoog, decimalen)}"
-
-
-def opvallend(nu, toen, n, verwacht, label_toen, dagen, dif_laag=None, water=None, ph_regeling=True):
-    """
-    Korte zinnen (markdown) over wat er opvalt, belangrijkste eerst. nu/toen/n/verwacht: {kolom: {sleutel:
-    waarde}} uit tabelwaarden (toen = de vergelijkingsperiode, mag leeg zijn); dagen: lengte van de periode.
-    dif_laag en water: uit tabelwaarden (teeltstrategie); ph_regeling False = de pH is alleen een signaal.
-    """
-    zinnen = []
-    tuin, tuin_toen = nu.get(HELE_TUIN, {}), toen.get(HELE_TUIN, {})
-    afds = {k: w for k, w in nu.items() if k != HELE_TUIN}
-
-    def per_afd(sleutel):
-        return {k: w[sleutel] for k, w in afds.items() if w.get(sleutel) is not None}
-
-    afwijking = per_afd("afwijking")
-    boven = sorted(((k, w) for k, w in afwijking.items() if w >= DREMPEL_LICHTLIJN), key=lambda p: -p[1])
-    onder = sorted(((k, w) for k, w in afwijking.items() if w <= -DREMPEL_LICHTLIJN), key=lambda p: p[1])
-    if boven:
-        zinnen.append(f"**Warmer dan de lichtlijn**: {_afd_lijst(boven)}.")
-    if onder:
-        zinnen.append(f"**Kouder dan de lichtlijn**: {_afd_lijst(onder)}.")
-
-    temp = per_afd("temp")
-    if len(temp) > 1:
-        warmst, koudst = max(temp, key=temp.get), min(temp, key=temp.get)
-        if temp[warmst] - temp[koudst] >= DREMPEL_AFDELINGEN:
-            zinnen.append(f"**Verschil tussen afdelingen**: {koudst.lower()} was "
-                          f"{fmt_getal(temp[warmst] - temp[koudst], 1, '°C')} kouder dan {warmst.lower()} "
-                          f"({fmt_getal(temp[koudst], 1, '°C')} tegen {fmt_getal(temp[warmst], 1, '°C')}).")
-
-    rv_hoog = sorted(((k, w) for k, w in per_afd("rv_hoog").items() if w >= DREMPEL_RV_UREN), key=lambda p: -p[1])
-    if rv_hoog:
-        per_dag = "" if dagen == 1 else " per dag"
-        zinnen.append(f"**Hoge RV**: " + ", ".join(f"{k.lower()} {fmt_kort(w, 1)} uur{per_dag}" for k, w in rv_hoog)
-                      + f" boven {RV_HOOG} %.")
-
-    hoog = sorted(((k, w) for k, w in per_afd("temp_max").items() if w >= TEMP_HOOG), key=lambda p: -p[1])
-    laag = sorted(((k, w) for k, w in per_afd("temp_min").items() if w <= TEMP_LAAG), key=lambda p: p[1])
-    if hoog:
-        zinnen.append(f"**Warm uur**: hoogste uur {_afd_lijst(hoog, teken=False)}.")
-    if laag:
-        zinnen.append(f"**Koud uur**: laagste uur {_afd_lijst(laag, teken=False)}.")
-
-    # Teeltstrategie (config.py): DIF, stooklijn, EC en pH van de gift.
-    te_laag = [(k, d) for k, d in (dif_laag or {}).items() if d[0]]
-    if te_laag and dagen == 1:
-        dif = per_afd("dif")
-        zinnen.append(f"**DIF kleiner dan {fmt_kort(DIF_MIN, 1)} °C**: "
-                      + ", ".join(f"{k.lower()} ({fmt_getal(dif[k], 1, '°C')})" if k in dif else k.lower()
-                                  for k, _ in te_laag) + ".")
-    elif te_laag:
-        zinnen.append(f"**DIF kleiner dan {fmt_kort(DIF_MIN, 1)} °C**: "
-                      + ", ".join(f"{k.lower()} op {d[0]} van {d[1]} dagen" for k, d in te_laag) + ".")
-    stook = sorted(((k, w) for k, w in per_afd("stook_max").items() if round(w, 1) > STOOK_MAX), key=lambda p: -p[1])
-    if stook:
-        uren = per_afd("stook_hoog")
-        zinnen.append(f"**Stooktemperatuur boven {fmt_kort(STOOK_MAX, 1)} °C**: "
-                      + ", ".join(f"{k.lower()} (hoogste {fmt_getal(w, 1, '°C')}, {fmt_kort(uren.get(k, 0))} uur)"
-                                  for k, w in stook) + ".")
-    for sleutel, naam, (laag_, hoog_) in (("ec", "EC", EC_BEREIK), ("ph", "pH", PH_BEREIK)):
-        w = (water or {}).get(sleutel)
-        if not w or not w["buiten"]:
-            continue
-        vak, waarde = w["buiten"][0]
-        tekst = (f"{naam} buiten {_bereik(laag_, hoog_)}**: {len(w['buiten'])} van {w['vakken']} vakken met gift "
-                 f"(gemiddeld {fmt_getal(w['gem'], 1)}; verst eraf vak {vak}: {fmt_getal(waarde, 1)})")
-        if sleutel == "ph" and not ph_regeling:
-            zinnen.append(f"{naam} buiten {_bereik(laag_, hoog_)}: {tekst.split('**: ', 1)[1]}, geen pH-regeling.")
-        else:
-            zinnen.append(f"**{tekst}.")
-
-    if label_toen:
-        for sleutel, naam, drempel, eenheid in (("temp", "Etmaaltemperatuur", DREMPEL_TEMP_VERSCHIL, "°C"),
-                                                ("rv", "RV", DREMPEL_RV_VERSCHIL, "%")):
-            a, b = tuin.get(sleutel), tuin_toen.get(sleutel)
-            if a is not None and b is not None and abs(a - b) >= drempel:
-                richting = "hoger" if a > b else "lager"
-                zinnen.append(f"**{naam} {fmt_getal(abs(a - b), 1 if eenheid == '°C' else 0, eenheid)} {richting}** "
-                              f"dan {label_toen} ({fmt_getal(a, 1 if eenheid == '°C' else 0, eenheid)} tegen "
-                              f"{fmt_getal(b, 1 if eenheid == '°C' else 0, eenheid)}).")
-        for sleutel, naam in (("lichtsom", "Lichtsom"), ("water", "Watergift"), ("energie", "Energie")):
-            a, b = tuin.get(sleutel), tuin_toen.get(sleutel)
-            if a == 0 and b:
-                zinnen.append(f"**Geen {naam.lower()}**, {label_toen} wel.")
-            elif a is not None and b and abs(a - b) / b >= DREMPEL_RELATIEF:
-                zinnen.append(f"**{naam} {fmt_getal(abs(a - b) / b * 100, 0, '%')} "
-                              f"{'hoger' if a > b else 'lager'}** dan {label_toen}.")
-
-    k_n, k_v = n.get(HELE_TUIN, {}).get("temp"), verwacht.get(HELE_TUIN, {}).get("temp")
-    if k_n is not None and k_v and k_n < k_v:
-        zinnen.append(f"Klimaat niet compleet: {k_n} van {k_v} dagen met data.")
-    elif tuin.get("temp") is None and tuin.get("temp_max") is None:
-        zinnen.append("Geen klimaatdata in deze periode.")
-    return zinnen
 
 
 def gebeurtenissen(g, opmerkingen, tuin_id, van, tot):
