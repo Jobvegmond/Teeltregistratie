@@ -46,8 +46,10 @@ LEGENDA = [
     {"kleur": "#d64541", "vorm": "lijn", "label": "EC/pH buiten de band (rode cijfers)"},
 ]
 
-# Vaste breedtes van de linkerkolommen (px), zodat ze bij zijwaarts scrollen blijven staan.
-LINKS = (("Vak", 44), ("Plantw.", 54), ("Leeftijd", 56), ("Totaal", 60))
+# Vaste breedtes van de linkerkolommen (px), zodat ze bij zijwaarts scrollen blijven staan. Smal (samen
+# 140 px), zodat er op een telefoon ruimte blijft voor de dagen; de volledige naam staat in de tooltip.
+LINKS = (("Vak", 30, "Vak"), ("Pw", 32, "Plantweek"), ("Lft", 36, "Leeftijd in dagen"),
+         ("Tot", 42, "Totale watergift van de lopende teelt (l/m²)"))
 
 CSS = """
 /* Geen maximale hoogte: alle vakken (tuin 3: 39) staan onder elkaar, de pagina scrolt; alleen zijwaarts
@@ -173,7 +175,7 @@ def bouw_html(m):
     }
     """
     dagen, vandaag = m["dagen"], m["vandaag"]
-    breedte_links = [b for _, b in LINKS]
+    breedte_links = [b for _, b, _ in LINKS]
     links_px = [sum(breedte_links[:i]) for i in range(len(LINKS))]
 
     def links_cel(i, inhoud, tag="td", extra="", attrs=""):
@@ -199,7 +201,8 @@ def bouw_html(m):
             weken.append([week, 1, dag])
     kop_wk = "".join(links_cel(i, "", "th") for i in range(len(LINKS)))
     kop_wk += "".join(f'<th colspan="{n}" class="{dagklasse(eerste)}">wk {w}</th>' for w, n, eerste in weken)
-    kop_dg = "".join(links_cel(i, escape(naam), "th") for i, (naam, _) in enumerate(LINKS))
+    kop_dg = "".join(links_cel(i, escape(naam), "th", attrs=f' title="{escape(uitleg)}"')
+                     for i, (naam, _, uitleg) in enumerate(LINKS))
     kop_dg += "".join(
         f'<th class="{dagklasse(d)}" data-klik="dag:{d.isoformat()}" title="Klik voor deze dag">'
         f'{DAGEN_KORT[d.weekday()]}<br>{d.day}</th>' for d in dagen)

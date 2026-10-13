@@ -1953,7 +1953,8 @@ def _tl_frames(info, afdelingen, van, tot, vandaag, weken):
     vak_afd = {int(v): int(a) for v, a in zip(info["vakken"]["vaknummer"], info["vakken"]["afdeling"]) if a == a}
 
     stap = _tl_stap(weken)
-    oogst_rij = "Oogst per week" if stap == 1 else f"Oogst per {stap} wk"
+    # Korte labels: het langste label bepaalt hoe breed de kolom links is (op een telefoon kostbaar).
+    oogst_rij = "Oogst" if stap == 1 else f"Oogst/{stap} wk"
     volgorde, kopteksten = ["Week", oogst_rij], []
     for afdeling in sorteer_afdelingen(set(vak_afd.values()), tuin["nummer"]):
         if afdelingen is not None and afdeling not in afdelingen:
@@ -2067,14 +2068,14 @@ def _tl_grafiek(volgorde, frames, van, tot, vandaag, weken):
         orient="top", grid=True, labels=False, ticks=False, domain=False,
         tickCount={"interval": "week", "step": 1}))
     y = alt.Y("y:N", title=None, sort=volgorde, scale=alt.Scale(domain=volgorde), axis=alt.Axis(
-        labelExpr="indexof(datum.label, '§') == 0 ? '' : datum.label", labelLimit=140, minExtent=90,
+        labelExpr="indexof(datum.label, '§') == 0 ? '' : datum.label", labelLimit=80, minExtent=0,
         ticks=False, domain=False, labelFontSize=11))
     klik = alt.selection_point(name="tl_klik", fields=["sleutel"], on="click")
     lagen = [
         alt.Chart(balken).mark_bar(height=TL_RIJ - 8, cornerRadius=2, stroke="#000000", clip=True, cursor="pointer")
         .encode(x=x, x2="eind:T", y=y, color=alt.Color("kleur:N", scale=None),
                 opacity=alt.Opacity("dekking:Q", scale=None), strokeOpacity=alt.StrokeOpacity("lijn:Q", scale=None),
-                tooltip=["y:N", "Wat:N", "Periode:N", "Toelichting:N"])
+                tooltip=[alt.Tooltip("y:N", title="Vak"), "Wat:N", "Periode:N", "Toelichting:N"])
         .add_params(klik)
     ]
     for streep, dash, breedte in (("vol", [1, 0], 1.2), ("concept", [4, 2], 1.5),
@@ -2086,12 +2087,12 @@ def _tl_grafiek(volgorde, frames, van, tot, vandaag, weken):
                          .encode(x="start:T", x2="eind:T", y=y, stroke=alt.Stroke("rand:N", scale=None)))
     if not plan.empty:
         lagen.append(alt.Chart(plan).mark_tick(orient="vertical", thickness=2, size=TL_RIJ - 4, color="#1f1f1f")
-                     .encode(x="x:T", y=y, tooltip=["y:N", "Plan-oogst:N"]))
+                     .encode(x="x:T", y=y, tooltip=[alt.Tooltip("y:N", title="Vak"), "Plan-oogst:N"]))
     if not florgib.empty:
         lagen.append(alt.Chart(florgib).mark_point(size=45, strokeWidth=2, color=TL_FLORGIB, opacity=1)
                      .encode(x="x:T", y=y, fill=alt.condition("datum.soort == 'geregistreerd'",
                                                                alt.value(TL_FLORGIB), alt.value("transparent")),
-                             tooltip=["y:N", "Florgib:N"]))
+                             tooltip=[alt.Tooltip("y:N", title="Vak"), "Florgib:N"]))
     if not kopteksten.empty:
         lagen.append(alt.Chart(kopteksten).mark_text(align="left", dx=6, fontSize=11, fontWeight="bold")
                      .encode(x="x:T", y=y, text="tekst:N"))
@@ -3496,8 +3497,8 @@ def _wg_matrix_gegevens(tuin, vakken_df, teelten, gift, kwaliteit, behandelingen
     kw_rijen = []
     # EC en pH van de giften van die dag, gewogen naar de liters (zoals Priva per gift rekent). Zonder
     # gietbeurten (vóór 2.4.1) het daggemiddelde van de doseerunit, met een melding in de tooltip.
-    for label, gift_sleutel, unit_sleutel, band in (("EC (mS/cm)", "ec_gift", "ec_gem", band_ec),
-                                                    ("pH", "ph_gift", "ph_gem", band_ph)):
+    for label, gift_sleutel, unit_sleutel, band in (("EC gift (mS/cm)", "ec_gift", "ec_gem", band_ec),
+                                                    ("pH gift", "ph_gift", "ph_gem", band_ph)):
         cellen = []
         for d in dagen_lijst:
             k = kw_dag.get(d) or {}
@@ -3516,10 +3517,10 @@ def _wg_matrix_gegevens(tuin, vakken_df, teelten, gift, kwaliteit, behandelingen
                 regels.append(f"buiten de band {fmt_getal(band[0], 1)}–{fmt_getal(band[1], 1)} ({status})")
             cellen.append({"waarde": fmt_getal(waarde, 2 if gift_sleutel == "ec_gift" else 1) if waarde is not None
                            else "", "buiten": bool(status), "tip": "\n".join(regels)})
-        kw_rijen.append({"label": f"{label} · giften", "cellen": cellen})
+        kw_rijen.append({"label": label.split(" (")[0], "cellen": cellen})
 
     # Uitgangswater (voorregeling), bovenaan: de EC van het water vóór bemesting.
-    for label, uitleg in (("EC uitgangswater", "gemeten EC van het water vóór bemesting (voorregeling)"),):
+    for label, uitleg in (("EC uitgang", "EC van het uitgangswater: gemeten vóór bemesting (voorregeling)"),):
         cellen = []
         for d in dagen_lijst:
             k = kw_dag.get(d) or {}
@@ -3541,8 +3542,9 @@ def _wg_matrix_gegevens(tuin, vakken_df, teelten, gift, kwaliteit, behandelingen
             if lopend:
                 totaal = wg.totaal_sinds_planten(
                     {d: r["liter_per_m2"] for (v, d), r in gift_dag.items() if v == vak}, lopend["start"], vandaag)
-                plantweek = f"wk {lopend['start'].isocalendar()[1]}"
-                leeftijd = f"{(vandaag - lopend['start']).days} d"
+                # Kort (de kolommen links zijn smal): "41" en "5d"; de kop zegt wat het is.
+                plantweek = str(lopend["start"].isocalendar()[1])
+                leeftijd = f"{(vandaag - lopend['start']).days}d"
                 tip_vak = f"Vak {vak} · afd. {afdeling} · {lopend['code'] or '-'} · geplant {format_datum(lopend['start'])}"
             else:
                 totaal, plantweek, leeftijd, tip_vak = None, "", "", f"Vak {vak} · afd. {afdeling} · leeg"
