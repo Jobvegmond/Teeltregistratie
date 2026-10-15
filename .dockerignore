@@ -18,6 +18,8 @@ Klimaat*/
 _brandweerrooster_wip/
 _oud-*/
 logs/
+# De Agro4all-export wordt bij het draaien aangekoppeld (-v .../agro4all:/agro4all:ro).
+agro4all/
 
 # Scripts die op je laptop of in DSM draaien, niet in de container.
 migreer_naar_nas.py
