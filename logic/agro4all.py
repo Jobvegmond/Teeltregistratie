@@ -72,6 +72,68 @@ def behandelingen(export, vakken_per_tuin):
     return list(middelen.values()), regels
 
 
+def _nummer(naam):
+    """Het getal in een naam ("Tuin 3" → 3, "Vak 12" → 12), of None."""
+    cijfers = "".join(c if c.isdigit() else " " for c in naam or "").split()
+    return int(cijfers[0]) if cijfers else None
+
+
+def _plaagnaam(plaag):
+    """De Nederlandse naam van een plaag, anders de eerste naam."""
+    namen = (plaag or {}).get("names") or []
+    return next((n["name"] for n in namen if n.get("language") == "nl"), namen[0]["name"] if namen else None)
+
+
+def export_uit_api(velden, registraties, secties_per_registratie, methodes, opgehaald):
+    """
+    De export (zie bovenaan) uit wat integrations.agro4all.ophalen() teruggeeft: de velden met hun secties,
+    de registraties zoals Agro4all ze geeft, per registratie-id de sectie-ids waarop hij staat, en
+    toepassingswijze-id → naam.
+    """
+    sectie_vak = {s["id"]: _nummer(s["name"]) for v in velden for s in v.get("sections", [])}
+    uit = []
+    for r in registraties:
+        moment = r.get("performedAt") or {}
+        producten = []
+        for sleutel, rol in (("appliedProducts", "product"), ("appliedAdditives", "toevoeging")):
+            for toegepast in r.get(sleutel) or []:
+                product, dosering = toegepast["product"], toegepast.get("dosage") or {}
+                producten.append({"naam": product["name"], "id": product["id"],
+                                  "categorie": product.get("productCategory"),
+                                  "toelating": (product.get("registrationNumber") or {}).get("nl"), "rol": rol,
+                                  "hoeveelheid": dosering.get("amount"), "eenheid": dosering.get("unit"),
+                                  "doel": _plaagnaam(toegepast.get("pest"))})
+        mix = r.get("mix")
+        uit.append({
+            "id": r["id"], "activiteit": r.get("activityType"), "tuin": _nummer((r.get("organizationField") or {})
+                                                                               .get("name")),
+            "start": moment.get("startTime"), "eind": moment.get("endTime"), "datum": moment.get("date"),
+            "methode": methodes.get(r.get("applicationMannerId")),
+            "mix": {"hoeveelheid": mix["amount"], "eenheid": mix["unit"]} if mix else None,
+            "vakken": sorted({sectie_vak[s] for s in secties_per_registratie.get(r["id"], ()) if s in sectie_vak}),
+            "producten": producten,
+        })
+    return {"opgehaald": opgehaald, "bron": BRON, "registraties": uit}
+
+
+def moment(registratie):
+    """Het tijdstip (epoch) van een registratie: de start, anders de datum; 0 als er geen is."""
+    return registratie.get("start") or registratie.get("datum") or 0
+
+
+def samenvoegen(oud, nieuw, van, opgehaald):
+    """
+    De export bijwerken met een deelexport vanaf `van` (epoch): alle registraties van vóór `van` uit de oude
+    export blijven, alles vanaf `van` komt uit de nieuwe (wat daar niet meer in staat, is in Agro4all
+    verwijderd). Een registratie die in beide staat (bijv. van datum veranderd) telt één keer: de nieuwe.
+    """
+    nieuwe = list((nieuw or {}).get("registraties", []))
+    ids = {r["id"] for r in nieuwe}
+    behouden = [r for r in (oud or {}).get("registraties", []) if moment(r) < van and r["id"] not in ids]
+    alle = sorted(behouden + nieuwe, key=lambda r: (moment(r), r["id"]))
+    return {"opgehaald": opgehaald, "bron": BRON, "registraties": alle}
+
+
 def overgeslagen(export, vakken_per_tuin):
     """(hele tuin, zonder vakken): aantallen registraties die niet per vak zijn (voor het log)."""
     hele, zonder = 0, 0

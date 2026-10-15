@@ -59,5 +59,48 @@ class TestBehandelingen(unittest.TestCase):
         self.assertEqual((regels[0]["opmerking"], regels[0]["mix"]), ("toevoeging", "12,5 l"))
 
 
+
+class TestUitApi(unittest.TestCase):
+    def test_zoals_agro4all_het_geeft(self):
+        velden = [{"name": "Tuin 3", "sections": [{"id": "s11", "name": "Vak 11"}, {"id": "s12", "name": "Vak 12"}]}]
+        registraties = [{
+            "id": "r1", "activityType": "CROP_PROTECTION", "applicationMannerId": "m1",
+            "organizationField": {"name": "Tuin 3"}, "performedAt": {"startTime": 1791868680, "endTime": 1791872280},
+            "mix": {"amount": 100, "unit": "l"},
+            "appliedProducts": [{"dosage": {"amount": 900, "unit": "ml"}, "product": {
+                "id": "p", "name": "Rizolex vloeibaar", "productCategory": "CROP_PROTECTION",
+                "registrationNumber": {"nl": "11098"}}, "pest": {"names": [
+                    {"language": "la", "name": "Rhizoctonia sp"}, {"language": "nl", "name": "Rhizoctonia soorten"}]}}],
+            "appliedAdditives": [{"dosage": {"amount": 85, "unit": "l"}, "product": {
+                "id": "q", "name": "MOTTO", "productCategory": "ADMISSION_SUBSTANCE"}}]}]
+        export = a4.export_uit_api(velden, registraties, {"r1": {"s12", "s11", "onbekend"}}, {"m1": "Spuiten"}, "nu")
+        r = export["registraties"][0]
+        self.assertEqual((r["tuin"], r["methode"], r["vakken"], r["mix"]),
+                         (3, "Spuiten", [11, 12], {"hoeveelheid": 100, "eenheid": "l"}))
+        self.assertEqual(r["producten"][0], {"naam": "Rizolex vloeibaar", "id": "p", "categorie": "CROP_PROTECTION",
+                                             "toelating": "11098", "rol": "product", "hoeveelheid": 900,
+                                             "eenheid": "ml", "doel": "Rhizoctonia soorten"})
+        self.assertEqual((r["producten"][1]["rol"], r["producten"][1]["doel"]), ("toevoeging", None))
+        # Dezelfde regels als uit een export.
+        _, regels = a4.behandelingen(export, VAKKEN)
+        self.assertEqual(len(regels), 4)
+
+
+
+class TestSamenvoegen(unittest.TestCase):
+    def test_oud_blijft_nieuw_vervangt(self):
+        oud = {"registraties": [{"id": "a", "start": 100}, {"id": "b", "start": 200}, {"id": "c", "datum": 300},
+                                {"id": "d", "start": 150}]}
+        nieuw = {"registraties": [{"id": "c", "datum": 310}, {"id": "e", "start": 400}, {"id": "d", "start": 260}]}
+        uit = a4.samenvoegen(oud, nieuw, 200, "nu")
+        # a (vóór 200) blijft; b viel in het venster maar is weg (verwijderd); d is verschoven: de nieuwe telt.
+        self.assertEqual([(r["id"], a4.moment(r)) for r in uit["registraties"]],
+                         [("a", 100), ("d", 260), ("c", 310), ("e", 400)])
+        self.assertEqual(uit["opgehaald"], "nu")
+
+    def test_zonder_oude_export(self):
+        self.assertEqual(len(a4.samenvoegen(None, {"registraties": [{"id": "x", "start": 5}]}, 0, "nu")["registraties"]), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
