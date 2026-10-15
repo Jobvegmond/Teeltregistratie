@@ -3,6 +3,25 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.14.0] - 2026-10-15
+
+### Toegevoegd
+- **Behandelingen uit Agro4all** (gewasbescherming, biologie, voeding) per vak: `agro4all_import.py`
+  (rekenwerk in `logic/agro4all.py`) leest een export van alle registraties met de vakken waarop ze zijn
+  uitgevoerd en vervangt daarmee de behandelingen in de database. Registraties op de hele tuin (zonder
+  vakken of op alle vakken) vallen weg. De hoeveelheid is die van de hele registratie (in de tankmix), met
+  het aantal vakken erbij. Draait elk uur mee in `priva_bestanden.py` (map agro4all op de NAS).
+  - **Tijdlijn**: per vak per dag een driehoekje (rood = gewasbescherming, groen = biologie, bruin =
+    voeding); een klik toont de middelen, hoeveelheid, tankmix, waartegen en op welke vakken.
+  - **Watergift**: een gekleurd hoekje linksonder in de dagcel, de middelen in de tooltip (de oude
+    subregel met codes is weg).
+  - **Vakpopup**: openklapmenu *Behandelingen* over de teelt; pagina Teelt (één tuin): de tabel
+    *Behandelingen (Agro4all)* met tankmix, waartegen en op hoeveel vakken.
+- Eerste export (15-10-26): 34 registraties van tuin 3 (21-09 t/m 14-10-26), waarvan 32 per vak.
+
+### Verwijderd
+- De lege plaatsvervanger `integrations/behandelingen/` (vervangen door de Agro4all-import).
+
 ## [2.13.1] - 2026-10-13
 
 ### Gewijzigd

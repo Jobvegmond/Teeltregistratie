@@ -44,7 +44,8 @@ LEGENDA = [
     {"kleur": OOGST_VERWACHT, "label": "verwachte oogst"},
     {"kleur": "#2E6A4C", "label": "vandaag"},
     {"kleur": "#d64541", "vorm": "lijn", "label": "EC/pH buiten de band (rode cijfers)"},
-]
+] + [{"label": f"{soort} (hoekje linksonder)", "stijl": f"background:linear-gradient(45deg,{kleur} 50%,transparent 50%);"}
+     for soort, kleur in TYPE_KLEUR.items()]
 
 # Vaste breedtes van de linkerkolommen (px), zodat ze bij zijwaarts scrollen blijven staan. Smal (samen
 # 140 px), zodat er op een telefoon ruimte blijft voor de dagen; de volledige naam staat in de tooltip.
@@ -89,9 +90,11 @@ table.wg tr.afdgrens td { border-top: 3px solid rgba(128,128,128,0.55); }
 table.wg tr.kw td.l { text-align: left; padding-left: 6px; font-weight: 600; }
 table.wg tr.kw td { font-size: 11px; }
 table.wg tr.kw td.buiten { color: #d64541; font-weight: 700; }
-table.wg tr.beh td { height: 12px; font-size: 9px; border-bottom: 1px solid rgba(128,128,128,0.2); }
-table.wg tr.beh span { display: inline-block; padding: 0 2px; border-radius: 3px; color: #fff; margin: 0 1px; }
 table.wg td.florgib, table.wg td.florgib-v { position: relative; }
+/* Behandeling (Agro4all) op die dag: een gekleurd hoekje linksonder; de middelen staan in de tooltip. */
+table.wg td.beh { position: relative; }
+table.wg td.beh::before { content: ""; position: absolute; left: 0; bottom: 0; width: 0; height: 0;
+    border-top: 8px solid transparent; border-left: 8px solid var(--beh-kleur); }
 table.wg td.florgib-v::after { content: ""; position: absolute; top: 2px; right: 2px; width: 6px; height: 6px;
                                 border-radius: 50%; border: 1.5px solid #8e44ad; box-sizing: border-box; }
 table.wg td.florgib::after { content: ""; position: absolute; top: 2px; right: 2px; width: 6px; height: 6px;
@@ -167,11 +170,11 @@ def _celstijl(cel, maximum):
 def bouw_html(m):
     """
     m = {
-      "dagen": [date], "vandaag": date, "maximum": float, "toon_behandelingen": bool,
+      "dagen": [date], "vandaag": date, "maximum": float,
       "kwaliteit": [{"label": "EC", "cellen": [{"waarde", "buiten", "tip"}]}],
       "afdelingen": [{"naam", "vakken": [{"vak", "plantweek", "leeftijd", "totaal", "tip",
-                                           "cellen": [{"liter", "bron", "markering", "tip"}],
-                                           "behandelingen": [[(code, type)] per dag]}]}],
+                                           "cellen": [{"liter", "bron", "markering", "tip",
+                                                       "behandeling": soort of None}]}]}],
     }
     """
     dagen, vandaag = m["dagen"], m["vandaag"]
@@ -227,16 +230,14 @@ def bouw_html(m):
                     klas.append("florgib")
                 elif c.get("markering") and "florgib_verwacht" in c["markering"]:
                     klas.append("florgib-v")
-                regel += (f'<td class="{dagklasse(d, " ".join(klas))}" style="{_celstijl(c, m["maximum"])}"'
+                stijl = _celstijl(c, m["maximum"])
+                if c.get("behandeling"):
+                    klas.append("beh")
+                    stijl = "; ".join(x for x in (stijl, f"--beh-kleur: {TYPE_KLEUR.get(c['behandeling'], '#777')}")
+                                      if x)
+                regel += (f'<td class="{dagklasse(d, " ".join(klas))}" style="{stijl}"'
                           f'{klik} title="{escape(c["tip"])}">{_getal(c.get("liter") or None)}</td>')
             rijen.append(f'<tr class="afdgrens">{regel}</tr>' if i == 0 else f"<tr>{regel}</tr>")
-            if m["toon_behandelingen"]:
-                sub = "".join(links_cel(i, "") for i in range(len(LINKS)))
-                for d, codes in zip(dagen, v["behandelingen"]):
-                    inhoud = "".join(f'<span style="background:{TYPE_KLEUR.get(t, "#777")}">{escape(code)}</span>'
-                                     for code, t in codes)
-                    sub += f'<td class="{dagklasse(d)}">{inhoud}</td>'
-                rijen.append(f'<tr class="beh">{sub}</tr>')
 
     return (f'<div class="wg-scroll"><table class="wg"><thead><tr class="wk">{kop_wk}</tr>'
             f'<tr class="dg">{kop_dg}</tr></thead><tbody>{"".join(rijen)}</tbody></table></div>')

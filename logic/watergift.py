@@ -193,14 +193,31 @@ def gemiddelde(waarden):
     return sum(waarden) / len(waarden) if waarden else None
 
 
-def toon_behandelingen(behandelingen):
-    """De subregel met behandelingen verschijnt pas als er behandelingen zijn; zolang de tabel leeg is niet."""
-    return bool(behandelingen)
+# Bij meer soorten op één dag krijgt de cel de kleur van de eerste in deze volgorde.
+BEHANDELING_VOLGORDE = ("gewasbescherming", "biologie", "voeding")
 
 
 def behandelingen_per_vak_dag(behandelingen):
-    """{(vak, dag): [(code, type), ...]} uit behandelingregels (dicts met vaknummer, datum, code, type)."""
+    """{(vak, dag): [behandelingregels]} uit dicts met (minstens) vaknummer, datum en type."""
     uit = {}
     for b in behandelingen:
-        uit.setdefault((int(b["vaknummer"]), als_datum(b["datum"])), []).append((b["code"], b["type"]))
+        uit.setdefault((int(b["vaknummer"]), als_datum(b["datum"])), []).append(b)
     return uit
+
+
+def hoofdsoort(regels):
+    """De soort waarvan de cel de kleur krijgt (gewasbescherming vóór biologie vóór voeding), of None."""
+    soorten = {r.get("type") for r in regels}
+    return next((s for s in BEHANDELING_VOLGORDE if s in soorten), None)
+
+
+def behandeling_tekst(b):
+    """Eén regel: "Rizolex vloeibaar 900 ml in 100 l (tegen Rhizoctonia soorten)"."""
+    hoeveel = ""
+    if b.get("dosering") is not None:
+        dosering = f"{b['dosering']:g}".replace(".", ",")
+        hoeveel = f" {dosering} {b.get('eenheid') or ''}".rstrip()
+    mix = f" in {b['mix']}" if b.get("mix") else ""
+    doel = f" (tegen {b['doel']})" if b.get("doel") else ""
+    naam = b.get("naam") or b.get("middel") or "?"
+    return f"{naam}{hoeveel}{mix}{doel}"

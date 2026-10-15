@@ -595,8 +595,7 @@ def init_db():
         # Klimaat en meteo per uur uit de Priva-bestanden op de NAS (priva_klimaat.py, sinds 2.11.0).
         cursor.execute(KLIMAAT_UUR_TABEL)
         cursor.execute(METEO_UUR_TABEL)
-        # Gewasbescherming, biologie en voeding: nu nog leeg, later gevuld via
-        # integrations/behandelingen/. De pagina Watergift leest ze al.
+        # Gewasbescherming, biologie en voeding per vak (sinds 2.14.0 uit Agro4all, agro4all_import.py).
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS middel (
                 id SERIAL PRIMARY KEY,
@@ -626,6 +625,10 @@ def init_db():
                 UNIQUE (bron, extern_id)
             )
         """)
+        # Bij Agro4all (2.14.0): de registratie (één bespuiting of inzet, met alle middelen erin), waartegen,
+        # de tankmix en op hoeveel vakken; de dosering is die van de hele registratie.
+        for kolom in ("registratie TEXT", "doel TEXT", "mix TEXT", "aantal_vakken INTEGER"):
+            cursor.execute(f"ALTER TABLE behandeling ADD COLUMN IF NOT EXISTS {kolom}")
 
         # Opmerkingen per vak (teelt), bijv. een afwijking in de groei.
         cursor.execute("""
@@ -1649,7 +1652,7 @@ def get_watergift_overzicht(tuin_id, van, tot):
     (nooit per vak of dag), als lijsten van dicts:
     - gift: vaknummer, datum, liter_per_m2, bron, beurten, ec, ph (van de gift van dat vak)
     - kwaliteit: watersysteem, datum, ec_gem, ph_gem, ec_min, ec_max, ph_min, ph_max, ec_doel, ec_aanvoer, recept
-    - behandelingen: vaknummer, datum, code, naam, type, dosering, eenheid, methode
+    - behandelingen: vaknummer, datum, code, naam, type, dosering, eenheid, methode, doel, mix, aantal_vakken
     - eerste_emmer: {teelt_id: eerste oogstdag}
     `van` mag vroeg liggen (bijv. de plantdag van de oudste lopende teelt) voor de totalen per teelt.
     """
@@ -1671,7 +1674,8 @@ def get_watergift_overzicht(tuin_id, van, tot):
         """, (tuin_id, str(van), str(tot)))
         kwaliteit = rijen(cursor)
         cursor.execute("""
-            SELECT b.vaknummer, b.datum, m.code, m.naam, m.type, b.dosering, b.eenheid, b.methode
+            SELECT b.vaknummer, b.datum, m.code, m.naam, m.type, b.dosering, b.eenheid, b.methode, b.doel, b.mix,
+                   b.aantal_vakken
             FROM behandeling b LEFT JOIN middel m ON m.id = b.middel_id
             WHERE b.tuin_id = %s AND b.datum BETWEEN %s AND %s
         """, (tuin_id, str(van), str(tot)))
@@ -1704,41 +1708,54 @@ def get_watergift_vak(tuin_id, vaknummer, van, tot):
         return cursor.fetchall()
 
 
-# --- BEHANDELINGEN (gewasbescherming, biologie, voeding; nu nog leeg) ---
+# --- BEHANDELINGEN (gewasbescherming, biologie, voeding; uit Agro4all) ---
 
-def upsert_middel(middel, bron):
-    """Een middel (integrations.behandelingen.Middel) opslaan of bijwerken op (bron, code); geeft het id."""
+BEHANDELING_KOLOMMEN = ("tuin_id", "vaknummer", "datum", "dosering", "eenheid", "methode", "opmerking", "extern_id",
+                        "registratie", "doel", "mix", "aantal_vakken")
+
+
+def vervang_behandelingen(bron, middelen, regels):
+    """
+    Alle behandelingen van één bron in één keer vervangen (een registratie kan in de bron gewijzigd of
+    verwijderd zijn). middelen: [{code, naam, type, doel, werkzaam, eenheid}]; regels: dicts met
+    BEHANDELING_KOLOMMEN en middel_code. Geeft (aantal middelen, aantal regels).
+    """
+    from psycopg2.extras import execute_values
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("""
-            INSERT INTO middel (bron, code, naam, type, doel, werkzaam, eenheid)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (bron, code) DO UPDATE SET naam = EXCLUDED.naam, type = EXCLUDED.type,
-                doel = EXCLUDED.doel, werkzaam = EXCLUDED.werkzaam, eenheid = EXCLUDED.eenheid
-            RETURNING id
-        """, (bron, middel.code, middel.naam, middel.type, middel.doel, middel.werkzaam, middel.eenheid))
-        middel_id = cursor.fetchone()[0]
+        ids = {}
+        for m in middelen:
+            cursor.execute("""
+                INSERT INTO middel (bron, code, naam, type, doel, werkzaam, eenheid)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (bron, code) DO UPDATE SET naam = EXCLUDED.naam, type = EXCLUDED.type,
+                    doel = EXCLUDED.doel, werkzaam = EXCLUDED.werkzaam, eenheid = EXCLUDED.eenheid
+                RETURNING id
+            """, (bron, m["code"], m["naam"], m["type"], m.get("doel"), m.get("werkzaam"), m.get("eenheid")))
+            ids[m["code"]] = cursor.fetchone()[0]
+        cursor.execute("DELETE FROM behandeling WHERE bron = %s", (bron,))
+        if regels:
+            execute_values(cursor, f"""
+                INSERT INTO behandeling ({", ".join(BEHANDELING_KOLOMMEN)}, middel_id, bron) VALUES %s""",
+                [tuple(r.get(k) for k in BEHANDELING_KOLOMMEN) + (ids[r["middel_code"]], bron) for r in regels],
+                page_size=500)
         conn.commit()
-    return middel_id
+    return len(middelen), len(regels)
 
 
-def upsert_behandeling(behandeling, middel_id, bron):
-    """Een behandeling (integrations.behandelingen.Behandeling) opslaan of bijwerken op (bron, extern_id)."""
-    tuin = next((t for t in get_tuinen() if t["nummer"] == behandeling.tuin_nummer), None)
+def get_behandelingen(tuin_id, van, tot, vaknummer=None):
+    """Behandelingen van een tuin (of één vak) over van..tot als dicts, op datum en vak."""
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("""
-            INSERT INTO behandeling (tuin_id, vaknummer, datum, middel_id, dosering, eenheid, methode, opmerking,
-                                     bron, extern_id)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (bron, extern_id) DO UPDATE SET tuin_id = EXCLUDED.tuin_id, vaknummer = EXCLUDED.vaknummer,
-                datum = EXCLUDED.datum, middel_id = EXCLUDED.middel_id, dosering = EXCLUDED.dosering,
-                eenheid = EXCLUDED.eenheid, methode = EXCLUDED.methode, opmerking = EXCLUDED.opmerking
-        """, (tuin["id"] if tuin else None, behandeling.vaknummer, str(behandeling.datum), middel_id,
-              behandeling.dosering, behandeling.eenheid, behandeling.methode, behandeling.opmerking, bron,
-              behandeling.extern_id))
-        conn.commit()
-
+        cursor.execute(f"""
+            SELECT b.vaknummer, b.datum, m.naam AS middel, m.type, b.dosering, b.eenheid, b.methode, b.opmerking,
+                   b.registratie, b.doel, b.mix, b.aantal_vakken
+            FROM behandeling b LEFT JOIN middel m ON m.id = b.middel_id
+            WHERE b.tuin_id = %s AND b.datum BETWEEN %s AND %s {"AND b.vaknummer = %s" if vaknummer else ""}
+            ORDER BY b.datum, b.vaknummer, m.naam
+        """, (tuin_id, str(van), str(tot)) + ((int(vaknummer),) if vaknummer else ()))
+        kolommen = [k[0] for k in cursor.description]
+        return [dict(zip(kolommen, r)) for r in cursor.fetchall()]
 
 def get_watergift_dagen_voor_periode(vaknummer, datum_start, datum_eind, tuin_id=None):
     """Losse dagregels (datum, liter_per_m2) voor grafieken, gesorteerd op datum."""
@@ -2135,8 +2152,8 @@ def get_opzoek_gegevens(teelt_ids, van, tot):
             WHERE tuin_id = ANY(%(tuinen)s) AND vaknummer = ANY(%(vakken)s) AND datum BETWEEN %(van)s AND %(tot)s
             ORDER BY start, vaknummer""", bereik)
         uit["behandelingen"] = _df(c, """
-            SELECT b.tuin_id, b.vaknummer AS vak, b.datum, m.naam AS middel, m.type, b.dosering, b.eenheid,
-                   b.methode, b.opmerking
+            SELECT b.tuin_id, b.vaknummer AS vak, b.datum, m.naam AS middel, m.type, b.doel, b.dosering, b.eenheid,
+                   b.mix, b.aantal_vakken, b.methode, b.opmerking
             FROM behandeling b LEFT JOIN middel m ON m.id = b.middel_id
             WHERE b.tuin_id = ANY(%(tuinen)s) AND b.vaknummer = ANY(%(vakken)s)
               AND b.datum BETWEEN %(van)s AND %(tot)s

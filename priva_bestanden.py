@@ -1,13 +1,15 @@
 """
-Alle imports uit de Priva-bestanden op de NAS achter elkaar: pulsmeters (warmte en gas), watergift en
-klimaat per uur. Eén taak in de Synology Taakplanner hoeft zo niet bij elke nieuwe import aangepast te worden.
+Alle imports uit de bestanden op de NAS achter elkaar: uit de Priva-bestanden de pulsmeters (warmte en gas),
+de watergift en het klimaat per uur, en de behandelingen uit de Agro4all-export. Eén taak in de Synology
+Taakplanner hoeft zo niet bij elke nieuwe import aangepast te worden.
 
 Elk script draait los; gaat er één mis, dan draaien de andere toch en sluit dit af met een foutcode
-(voor de mail bij een fout). Extra argumenten (bijv. --droog of --doel productie) gaan naar alle drie.
+(voor de mail bij een fout). Extra argumenten (bijv. --droog of --doel productie) gaan naar alle scripts.
 
 Synology Taakplanner (root), elk uur:
     LOG=/volume2/Appdata/VEMteelt/logs/priva-bestanden.log
     /usr/local/bin/docker run --rm -v /volume2/Priva:/priva:ro \\
+        -v /volume2/Appdata/VEMteelt/agro4all:/agro4all:ro \\
         --env-file /volume2/Appdata/VEMteelt/.env.taak vemteelt-app:latest \\
         python priva_bestanden.py >> "$LOG" 2>&1
 """
@@ -16,7 +18,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-SCRIPTS = ("priva_pulsmeters.py", "priva_watergift.py", "priva_klimaat.py")
+SCRIPTS = ("priva_pulsmeters.py", "priva_watergift.py", "priva_klimaat.py", "agro4all_import.py")
 
 
 def main():

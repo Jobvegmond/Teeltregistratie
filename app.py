@@ -100,6 +100,7 @@ from database import (
     wijzig_opmerking,
     verwijder_opmerking,
     get_vergelijking_data,
+    get_behandelingen,
     get_klimaat_uur,
     get_teeltvergelijking_data,
     warmte_per_bezette_m2,
@@ -2057,12 +2058,28 @@ def _tl_frames(info, afdelingen, van, tot, vandaag, weken):
                    for i in range((tot - van).days // (7 * stap) + 1)]
     balken = pd.DataFrame(balken)
     balken["lijn"] = balken["lijn"].fillna(0.12)   # dunne rand om elke balk, niet om kopregels en lege plekken
-    return volgorde, [balken] + [pd.DataFrame(x) for x in (randen, florgib, plan, kopteksten, oogst, weeknummers)],         stukken
+    return (volgorde, [balken] + [pd.DataFrame(x) for x in (randen, florgib, plan, kopteksten, oogst, weeknummers)]
+            + [_tl_behandelingen(tuin["id"], volgorde, van, tot)], stukken)
+
+
+def _tl_behandelingen(tuin_id, volgorde, van, tot):
+    """Per vak per dag met behandelingen één punt: kleur = de hoofdsoort, tooltip = de middelen."""
+    zichtbaar = set(volgorde)
+    per = wg.behandelingen_per_vak_dag(_behandelingen(tuin_id, van, tot))
+    rijen = []
+    for (vak, dag), regels in sorted(per.items()):
+        if f"Vak {vak}" not in zichtbaar:
+            continue
+        soort = wg.hoofdsoort(regels)
+        rijen.append({"x": pd.Timestamp(dag) + pd.Timedelta(hours=12), "y": f"Vak {vak}",
+                      "kleur": wg_matrix.TYPE_KLEUR.get(soort, "#777"), "sleutel": f"b:{vak}:{dag.isoformat()}",
+                      "Behandeling": f"{format_datum(dag)} · " + "; ".join(wg.behandeling_tekst(r) for r in regels)})
+    return pd.DataFrame(rijen)
 
 
 def _tl_grafiek(volgorde, frames, van, tot, vandaag, weken):
-    """De Altair-grafiek van één tuin; de laag met de balken is klikbaar (selectie 'tl_klik')."""
-    balken, randen, florgib, plan, kopteksten, oogst, weeknummers = frames
+    """De Altair-grafiek van één tuin; klikbaar: de balken (selectie 'tl_klik') en de behandelingen ('tl_beh')."""
+    balken, randen, florgib, plan, kopteksten, oogst, weeknummers, behandelingen = frames
     schaal = alt.Scale(domain=[pd.Timestamp(van).isoformat(), pd.Timestamp(tot).isoformat()])
     x = alt.X("start:T", title=None, scale=schaal, axis=alt.Axis(
         orient="top", grid=True, labels=False, ticks=False, domain=False,
@@ -2093,6 +2110,13 @@ def _tl_grafiek(volgorde, frames, van, tot, vandaag, weken):
                      .encode(x="x:T", y=y, fill=alt.condition("datum.soort == 'geregistreerd'",
                                                                alt.value(TL_FLORGIB), alt.value("transparent")),
                              tooltip=[alt.Tooltip("y:N", title="Vak"), "Florgib:N"]))
+    if not behandelingen.empty:
+        # Driehoekje bovenaan de regel, zodat de balk zichtbaar blijft.
+        lagen.append(alt.Chart(behandelingen).mark_point(shape="triangle-down", size=55, filled=True, opacity=1,
+                                                         yOffset=-(TL_RIJ - 8) / 2 + 2, cursor="pointer")
+                     .encode(x="x:T", y=y, color=alt.Color("kleur:N", scale=None),
+                             tooltip=[alt.Tooltip("y:N", title="Vak"), "Behandeling:N"])
+                     .add_params(alt.selection_point(name="tl_beh", fields=["sleutel"], on="click")))
     if not kopteksten.empty:
         lagen.append(alt.Chart(kopteksten).mark_text(align="left", dx=6, fontSize=11, fontWeight="bold")
                      .encode(x="x:T", y=y, text="tekst:N"))
@@ -2110,7 +2134,8 @@ def _tl_grafiek(volgorde, frames, van, tot, vandaag, weken):
 
 def _tl_geklikt(widget, versie):
     """Callback van de tijdlijn: onthoud wat er geklikt is en begin de grafiek opnieuw (lege keuze)."""
-    items = (st.session_state.get(widget) or {}).get("selection", {}).get("tl_klik") or []
+    selectie = (st.session_state.get(widget) or {}).get("selection", {})
+    items = selectie.get("tl_beh") or selectie.get("tl_klik") or []
     if items and items[0].get("sleutel"):
         st.session_state[f"{versie}_klik"] = items[0]["sleutel"]
         st.session_state[versie] += 1
@@ -2250,7 +2275,8 @@ def _tl_toon(infos, afdelingen, van, tot, weken, data, vandaag):
         st.session_state.setdefault(versie, 0)
         widget = f"tl_grafiek_{tuin['nummer']}_{st.session_state[versie]}"
         st.altair_chart(_tl_grafiek(volgorde, frames, van, tot, vandaag, weken), use_container_width=True,
-                        on_select=lambda w=widget, v=versie: _tl_geklikt(w, v), selection_mode="tl_klik", key=widget)
+                        on_select=lambda w=widget, v=versie: _tl_geklikt(w, v),
+                        selection_mode=["tl_klik"] + (["tl_beh"] if not frames[-1].empty else []), key=widget)
         geklikt = st.session_state.pop(f"{versie}_klik", None)
         if geklikt:
             soort, nummer = geklikt.split(":")[:2]
@@ -2260,9 +2286,36 @@ def _tl_toon(infos, afdelingen, van, tot, weken, data, vandaag):
                 _nu_afdeling_venster(info, int(nummer), data, vandaag)
             elif soort == "c":
                 _tl_concept_venster(int(nummer), info, stukken, vandaag)
+            elif soort == "b":
+                _tl_behandeling_venster(info, int(nummer), date.fromisoformat(geklikt.split(":", 2)[2]))
             else:
                 vak, zondag = nummer, date.fromisoformat(geklikt.split(":", 2)[2])
                 _tl_nieuw_venster(int(vak), zondag, info, stukken, vandaag)
+
+
+def _tl_behandeling_venster(info, vak, dag):
+    """Klik op een driehoekje: de behandelingen van die dag op dat vak, met de vakken van elke registratie."""
+    tuin = info["tuin"]
+
+    @st.dialog(f"Behandeling vak {vak} · {tuin['naam']} · {format_datum(dag)}", width="large")
+    def _venster():
+        alle = _behandelingen(tuin["id"], dag, dag)
+        registraties = {b["registratie"] for b in alle if int(b["vaknummer"]) == vak}
+        rijen = [b for b in alle if b["registratie"] in registraties and int(b["vaknummer"]) == vak]
+        vakken = {r: sorted({int(b["vaknummer"]) for b in alle if b["registratie"] == r}) for r in registraties}
+        for r in sorted(registraties, key=str):
+            eerste = next(b for b in rijen if b["registratie"] == r)
+            st.markdown(f"**{eerste['type'].capitalize() if eerste['type'] else 'Behandeling'}**"
+                        + (f" · {eerste['methode']}" if eerste.get("methode") else "")
+                        + (f" · tankmix {eerste['mix']}" if eerste.get("mix") else "")
+                        + f" · op {len(vakken[r])} {'vak' if len(vakken[r]) == 1 else 'vakken'}: "
+                        + ", ".join(str(v) for v in vakken[r]))
+            st.markdown("\n".join(f"- {wg.behandeling_tekst(b)}"
+                                   + (" (toevoeging)" if b.get("opmerking") == "toevoeging" else "")
+                                   for b in rijen if b["registratie"] == r))
+        uitleg_help.voetnoot("Uit Agro4all. De hoeveelheid is die van de hele registratie (alle vakken samen).")
+
+    _venster()
 
 
 def _tl_legenda():
@@ -2280,6 +2333,8 @@ def _tl_legenda():
         {"kleur": TL_FLORGIB, "vorm": "ring", "label": "verwachte Florgib"},
         {"kleur": TL_ROOD, "vorm": "lijn", "label": "vandaag", "stijl": "border-top-style:dashed;"},
     ])
+    legend.legenda([{"kleur": kleur, "label": soort, "stijl": "clip-path:polygon(0 0,100% 0,50% 100%);"}
+                    for soort, kleur in wg_matrix.TYPE_KLEUR.items()], titel="Behandeling (Agro4all, ▼):")
 
 
 # --- TUINVERGELIJKING: wat er in een periode in de kas gebeurde, per m² ---
@@ -2886,6 +2941,46 @@ def vak_venster(teelt_id, vandaag, vakken=None):
     _venster()
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def _behandelingen(tuin_id, van, tot):
+    """Behandelingen (Agro4all) van een tuin over van..tot; tien minuten bewaard (de import draait elk uur)."""
+    return get_behandelingen(tuin_id, van, tot)
+
+
+BEH_KOLOMMEN = [
+    ("Datum", "Datum", "datum", None, "small"), ("Vak", "Vak", "getal", "%d", "small"),
+    ("Soort", "Soort", "tekst", None, "medium"), ("Middel", "Middel", "tekst", None, "medium"),
+    ("Hoeveelheid", "Hoeveelheid", "tekst", None, "medium"), ("Tegen", "Tegen", "tekst", None, "medium"),
+    ("Methode", "Methode", "tekst", None, "small"), ("Vakken", "Op vakken", "tekst", None, "medium"),
+]
+
+
+def toon_behandelingen(rijen, sleutel=None, met_vak=False):
+    """
+    Behandelingen als tabel, oud naar nieuw: per middel de hoeveelheid van de hele registratie (in de tankmix)
+    en op hoeveel vakken die registratie is uitgevoerd.
+    """
+    if not rijen:
+        st.caption("Geen behandelingen geregistreerd (Agro4all; behandelingen op de hele tuin staan er niet bij).")
+        return
+    vakken_per_registratie = {}
+    for b in rijen:
+        vakken_per_registratie.setdefault(b.get("registratie"), set()).add(int(b["vaknummer"]))
+    df = pd.DataFrame([{
+        "Datum": format_datum(b["datum"]), "Vak": b["vaknummer"], "Soort": b["type"] or "-", "Middel": b["middel"],
+        "Hoeveelheid": (f"{fmt_kort(b['dosering'], 2)} {b['eenheid'] or ''}".strip() if b["dosering"] is not None
+                        else "-") + (f" in {b['mix']}" if b.get("mix") else "")
+                       + (" (toevoeging)" if b.get("opmerking") == "toevoeging" else ""),
+        "Tegen": b.get("doel") or "-", "Methode": b.get("methode") or "-",
+        "Vakken": str(b["aantal_vakken"]) if b.get("aantal_vakken") else "-",
+    } for b in rijen])
+    if met_vak:
+        df["Vakken"] = [", ".join(str(v) for v in sorted(vakken_per_registratie.get(b.get("registratie"), ())))
+                        for b in rijen]
+    kolommen = [k for k in BEH_KOLOMMEN if met_vak or k[0] != "Vak"]
+    toon_tabel(df, kolommen, vast=("Datum",), sleutel=sleutel)
+
+
 def vak_details(teelt_id, vandaag, vakken=None):
     """
     Alles over één vak, voor lopende en afgeronde vakken: kengetallen, opmerkingen, tijdlijn (met watergift),
@@ -2961,6 +3056,9 @@ def vak_details(teelt_id, vandaag, vakken=None):
     toon_opmerkingen(teelt_id)
     teelt_detail(s, klimaat, water, model)
     toon_watergift_vak(t["tuin_id"], t["vaknummer"], start, eind, florgib=s["florgib"])
+    behandeld = [b for b in _behandelingen(t["tuin_id"], start, eind) if int(b["vaknummer"]) == int(t["vaknummer"])]
+    with layout.uitklap("Behandelingen", len(behandeld)):
+        toon_behandelingen(behandeld)
     with layout.uitklap("Vergelijking met vorig jaar en de referentievakken"):
         st.dataframe(_nu_vergelijking(s, {"tuin": tuin, "alle": alle}, data), hide_index=True,
                      use_container_width=True)
@@ -3177,10 +3275,11 @@ OP_SECTIES = [
         ("fase", "Fase", "tekst"), ("gedaan", "Gedaan", "getal:2"), ("plan_oogst", "Plan", "datum"),
         ("prognose_oogst", "Prognose", "datum"), ("correctie_c", "Correctie (°C)", "getal:1"),
         ("stooklijn", "Stooklijn (°C)", "getal:1")]),
-    ("Behandelingen", "behandelingen", [
-        ("datum", "Datum", "datum"), ("code", "Code", "tekst"), ("middel", "Middel", "tekst"),
-        ("type", "Soort", "tekst"), ("dosering", "Dosering", "getal:2"), ("eenheid", "Eenheid", "tekst"),
-        ("methode", "Methode", "tekst"), ("opmerking", "Opmerking", "tekst")]),
+    ("Behandelingen (Agro4all)", "behandelingen", [
+        ("datum", "Datum", "datum"), ("code", "Code", "tekst"), ("type", "Soort", "tekst"),
+        ("middel", "Middel", "tekst"), ("dosering", "Hoeveelheid", "getal:2"), ("eenheid", "Eenheid", "tekst"),
+        ("mix", "Tankmix", "tekst"), ("doel", "Tegen", "tekst"), ("methode", "Methode", "tekst"),
+        ("aantal_vakken", "Op vakken", "getal:0"), ("opmerking", "Opmerking", "tekst")]),
     ("Teelthistorie (leerdata)", "historie", [
         ("code", "Code", "tekst"), ("startdatum", "Geplant", "datum"), ("oogstdatum", "Oogst", "datum"),
         ("teeltduur_dagen", "Teeltduur (d)", "getal:0"), ("florgib_datum", "Florgib", "datum"),
@@ -3491,7 +3590,6 @@ def _wg_matrix_gegevens(tuin, vakken_df, teelten, gift, kwaliteit, behandelingen
     gift_dag = {(int(r["vaknummer"]), wg.als_datum(r["datum"])): r for r in gift}
     kw_dag = {wg.als_datum(k["datum"]): k for k in kwaliteit}
     beh = wg.behandelingen_per_vak_dag(behandelingen)
-    toon_beh = wg.toon_behandelingen(behandelingen)
     band_ec, band_ph = EC_BAND.get(tuin["nummer"]), PH_BAND.get(tuin["nummer"])
 
     kw_rijen = []
@@ -3576,13 +3674,16 @@ def _wg_matrix_gegevens(tuin, vakken_df, teelten, gift, kwaliteit, behandelingen
                                   + (f" · {', '.join(extra)}" if extra else ""))
                 else:
                     regels.append("vak leeg")
+                behandeld = beh.get((vak, d), [])
+                regels += [f"{b['type']}: {wg.behandeling_tekst(b)}" for b in behandeld]
                 cellen.append({"liter": liter, "markering": mark, "kleur": teelt["kleur"] if teelt else None,
                                "tint": teelt["tint"] if teelt else 0,
-                               "concept": bool(teelt and teelt["concept"]), "tip": "\n".join(regels)})
+                               "concept": bool(teelt and teelt["concept"]), "tip": "\n".join(regels),
+                               "behandeling": wg.hoofdsoort(behandeld)})
                 excel_rij[format_datum(d)] = liter if liter else None
             vak_rijen.append({"vak": vak, "plantweek": plantweek, "leeftijd": leeftijd,
                               "totaal": fmt_getal(totaal, 0) if totaal is not None else "", "tip": tip_vak,
-                              "cellen": cellen, "behandelingen": [beh.get((vak, d), []) for d in dagen_lijst]})
+                              "cellen": cellen})
             excel.append(excel_rij)
         afd_rijen.append({"naam": f"Afd. {afdeling}", "vakken": vak_rijen})
 
@@ -3594,7 +3695,7 @@ def _wg_matrix_gegevens(tuin, vakken_df, teelten, gift, kwaliteit, behandelingen
             k = kw_dag.get(d) or {}
             rij[format_datum(d)] = k.get(sleutel) if k.get(sleutel) is not None else k.get(reserve)
         excel_kw.append(rij)
-    return ({"dagen": dagen_lijst, "vandaag": vandaag, "maximum": maximum, "toon_behandelingen": toon_beh,
+    return ({"dagen": dagen_lijst, "vandaag": vandaag, "maximum": maximum,
              "kwaliteit": kw_rijen, "afdelingen": afd_rijen}, pd.DataFrame(excel_kw + excel))
 
 
