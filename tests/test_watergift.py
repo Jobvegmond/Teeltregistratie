@@ -1,8 +1,7 @@
-"""Tests voor logic/watergift.py en de adapter voor behandelingen."""
+"""Tests voor logic/watergift.py."""
 import unittest
 from datetime import date, timedelta
 
-from integrations import behandelingen as beh
 from logic import watergift as wg
 
 WATERSYSTEMEN = {1: {1: None}, 3: {1: [1, 2, 3], 2: [4, 5]}}
@@ -18,39 +17,6 @@ class TestKoppeling(unittest.TestCase):
         self.assertIsNone(wg.watersysteem_van_vak(WATERSYSTEMEN, 3, 9))
         self.assertEqual(wg.vakken_van_watersysteem(WATERSYSTEMEN, 3, 2, range(1, 40)), [4, 5])
         self.assertEqual(wg.vakken_van_watersysteem(WATERSYSTEMEN, 3, 7, range(1, 40)), [])
-
-
-class NepDatabase:
-    def __init__(self):
-        self.middelen, self.behandelingen = {}, []
-
-    def upsert_middel(self, middel, bron):
-        return self.middelen.setdefault((bron, middel.code), len(self.middelen) + 1)
-
-    def upsert_behandeling(self, behandeling, middel_id, bron):
-        self.behandelingen.append((bron, behandeling.extern_id, middel_id))
-
-
-class NepBron:
-    naam = "test"
-
-    def fetch_behandelingen(self, van, tot):
-        m = beh.Middel("ENT", "Entonem", "biologie")
-        return [beh.Behandeling(date(2026, 9, 28), 3, 12, m, extern_id="a"),
-                beh.Behandeling(date(2026, 9, 28), 3, 13, m, extern_id="b")]
-
-
-class TestBehandelingen(unittest.TestCase):
-    def test_lege_bron_schrijft_niets(self):
-        db = NepDatabase()
-        self.assertEqual(beh.synchroniseer(beh.LegeBron(), date(2026, 9, 1), date(2026, 9, 30), database=db), 0)
-        self.assertEqual((db.middelen, db.behandelingen), ({}, []))
-
-    def test_bron_via_dezelfde_vorm(self):
-        db = NepDatabase()
-        self.assertEqual(beh.synchroniseer(NepBron(), date(2026, 9, 1), date(2026, 9, 30), database=db), 2)
-        self.assertEqual(db.middelen, {("test", "ENT"): 1})
-        self.assertEqual(db.behandelingen, [("test", "a", 1), ("test", "b", 1)])
 
 
 if __name__ == "__main__":
@@ -161,25 +127,32 @@ class TestMatrixLogica(unittest.TestCase):
         self.assertEqual(wg.periode(date(2026, 9, 27), 4), (date(2026, 9, 6), date(2026, 10, 3)))
 
 
-class TestBehandelingenSubregel(unittest.TestCase):
-    """De subregel met middelcodes staat er alleen als er behandelingen zijn."""
+class TestBehandelingen(unittest.TestCase):
+    """Een behandeling kleurt het hoekje van de dagcel (soort) en staat in de tooltip."""
 
     def matrix(self, behandelingen):
         from ui import watergift_matrix as wm
         dagen = [date(2026, 9, 28), date(2026, 9, 29)]
         per_dag = wg.behandelingen_per_vak_dag(behandelingen)
-        m = {"dagen": dagen, "vandaag": date(2026, 9, 30), "maximum": 5.0,
-             "toon_behandelingen": wg.toon_behandelingen(behandelingen), "kwaliteit": [],
+        m = {"dagen": dagen, "vandaag": date(2026, 9, 30), "maximum": 5.0, "kwaliteit": [],
              "afdelingen": [{"naam": "Afd. 1", "vakken": [
-                 {"vak": 3, "plantweek": "wk 35", "leeftijd": "30 d", "totaal": "40", "tip": "",
-                  "cellen": [{"liter": 2.0, "bron": "priva", "markering": set(), "tip": ""}] * 2,
-                  "behandelingen": [per_dag.get((3, d), []) for d in dagen]}]}]}
+                 {"vak": 3, "plantweek": "35", "leeftijd": "30d", "totaal": "40", "tip": "",
+                  "cellen": [{"liter": 2.0, "bron": "priva", "markering": set(), "tip": "",
+                              "behandeling": wg.hoofdsoort(per_dag.get((3, d), []))} for d in dagen]}]}]}
         return wm.bouw_html(m)
 
-    def test_verborgen_bij_lege_tabel(self):
-        self.assertNotIn('class="beh"', self.matrix([]))
+    def test_zonder_behandelingen_geen_hoekje(self):
+        self.assertNotIn(" beh", self.matrix([]))
 
-    def test_zichtbaar_met_testdata(self):
-        html = self.matrix([{"vaknummer": 3, "datum": "2026-09-29", "code": "ENT", "type": "biologie"}])
-        self.assertIn('class="beh"', html)
-        self.assertIn(">ENT</span>", html)
+    def test_hoekje_in_de_kleur_van_de_hoofdsoort(self):
+        html = self.matrix([{"vaknummer": 3, "datum": "2026-09-29", "type": "biologie"},
+                            {"vaknummer": 3, "datum": "2026-09-29", "type": "gewasbescherming"}])
+        self.assertEqual(html.count(" beh"), 1)
+        self.assertIn("--beh-kleur: #d64541", html)          # gewasbescherming gaat voor biologie
+
+    def test_tekst(self):
+        self.assertEqual(wg.behandeling_tekst({"naam": "Rizolex vloeibaar", "dosering": 900.0, "eenheid": "ml",
+                                               "mix": "100 l", "doel": "Rhizoctonia soorten"}),
+                         "Rizolex vloeibaar 900 ml in 100 l (tegen Rhizoctonia soorten)")
+        self.assertEqual(wg.behandeling_tekst({"middel": "Power Food 3.0", "dosering": 2.5, "eenheid": "kg"}),
+                         "Power Food 3.0 2,5 kg")
