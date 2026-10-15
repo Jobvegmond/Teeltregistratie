@@ -627,7 +627,9 @@ def init_db():
         """)
         # Bij Agro4all (2.14.0): de registratie (één bespuiting of inzet, met alle middelen erin), waartegen,
         # de tankmix en op hoeveel vakken; de dosering is die van de hele registratie.
-        for kolom in ("registratie TEXT", "doel TEXT", "mix TEXT", "aantal_vakken INTEGER"):
+        # Sinds 2.14.1 is de dosering die van het vak (naar rato van de m²); het totaal staat ernaast.
+        for kolom in ("registratie TEXT", "doel TEXT", "mix TEXT", "aantal_vakken INTEGER", "dosering_totaal REAL",
+                      "mix_totaal TEXT"):
             cursor.execute(f"ALTER TABLE behandeling ADD COLUMN IF NOT EXISTS {kolom}")
 
         # Opmerkingen per vak (teelt), bijv. een afwijking in de groei.
@@ -1711,7 +1713,7 @@ def get_watergift_vak(tuin_id, vaknummer, van, tot):
 # --- BEHANDELINGEN (gewasbescherming, biologie, voeding; uit Agro4all) ---
 
 BEHANDELING_KOLOMMEN = ("tuin_id", "vaknummer", "datum", "dosering", "eenheid", "methode", "opmerking", "extern_id",
-                        "registratie", "doel", "mix", "aantal_vakken")
+                        "registratie", "doel", "mix", "aantal_vakken", "dosering_totaal", "mix_totaal")
 
 
 def vervang_behandelingen(bron, middelen, regels):
@@ -1749,7 +1751,7 @@ def get_behandelingen(tuin_id, van, tot, vaknummer=None):
         cursor = conn.cursor()
         cursor.execute(f"""
             SELECT b.vaknummer, b.datum, m.naam AS middel, m.type, b.dosering, b.eenheid, b.methode, b.opmerking,
-                   b.registratie, b.doel, b.mix, b.aantal_vakken
+                   b.registratie, b.doel, b.mix, b.aantal_vakken, b.dosering_totaal, b.mix_totaal
             FROM behandeling b LEFT JOIN middel m ON m.id = b.middel_id
             WHERE b.tuin_id = %s AND b.datum BETWEEN %s AND %s {"AND b.vaknummer = %s" if vaknummer else ""}
             ORDER BY b.datum, b.vaknummer, m.naam

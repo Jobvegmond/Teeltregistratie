@@ -2312,8 +2312,12 @@ def _tl_behandeling_venster(info, vak, dag):
                         + ", ".join(str(v) for v in vakken[r]))
             st.markdown("\n".join(f"- {wg.behandeling_tekst(b)}"
                                    + (" (toevoeging)" if b.get("opmerking") == "toevoeging" else "")
+                                   + (f" · totaal {fmt_kort(b['dosering_totaal'], 2)} {b['eenheid'] or ''}".rstrip()
+                                      + (f" in {b['mix_totaal']}" if b.get("mix_totaal") else "")
+                                      if b.get("dosering_totaal") is not None and len(vakken[r]) > 1 else "")
                                    for b in rijen if b["registratie"] == r))
-        uitleg_help.voetnoot("Uit Agro4all. De hoeveelheid is die van de hele registratie (alle vakken samen).")
+        uitleg_help.voetnoot("Uit Agro4all. Hoeveelheid voor dit vak: het totaal van de registratie naar rato van "
+                             "de m² over de vakken verdeeld.")
 
     _venster()
 
@@ -2957,8 +2961,8 @@ BEH_KOLOMMEN = [
 
 def toon_behandelingen(rijen, sleutel=None, met_vak=False):
     """
-    Behandelingen als tabel, oud naar nieuw: per middel de hoeveelheid van de hele registratie (in de tankmix)
-    en op hoeveel vakken die registratie is uitgevoerd.
+    Behandelingen als tabel, oud naar nieuw: per middel de hoeveelheid voor het vak (het totaal van de
+    registratie naar rato van de m²; in de tankmix) en op hoeveel vakken die registratie is uitgevoerd.
     """
     if not rijen:
         st.caption("Geen behandelingen geregistreerd (Agro4all; behandelingen op de hele tuin staan er niet bij).")

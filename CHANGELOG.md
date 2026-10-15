@@ -3,6 +3,17 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.14.1] - 2026-10-15
+
+### Gewijzigd
+- Behandelingen uit Agro4all: de hoeveelheid (en de tankmix) is nu die **per vak**. Agro4all registreert
+  het totaal; dat wordt naar rato van de m² over de vakken van de registratie verdeeld (vak 19 en 20 van
+  tuin 3 krijgen als halve vakken de helft). Het totaal staat ernaast (`dosering_totaal`, `mix_totaal`)
+  en in de popup op de tijdlijn.
+- `agro4all_samenvoegen.py` voor de geplande Claude-taak "Agro4all-behandelingen naar de NAS" (werkdagen
+  07, 12 en 17 uur): de registraties van de laatste 14 dagen samenvoegen met de export op de NAS.
+  `agro4all_import.py` kan ook zelf ophalen zodra er een toegangstoken van Agro4all is (`AGRO4ALL_PAT`).
+
 ## [2.14.0] - 2026-10-15
 
 ### Toegevoegd

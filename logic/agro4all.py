@@ -7,8 +7,9 @@ per registratie: id, activiteit (CROP_PROTECTION / BIO / FERTILIZER), tuin, star
 mix, vakken en producten (naam, id, categorie, toelating, rol, hoeveelheid, eenheid, doel).
 
 behandelingen() maakt daar per vak per middel een regel van. Registraties op de hele tuin (zonder vakken, of
-op alle vakken van de tuin) vallen weg: die zeggen niets over één teelt. De hoeveelheid is die van de hele
-registratie (bijv. 900 ml in 100 l, verdeeld over 4 vakken).
+op alle vakken van de tuin) vallen weg: die zeggen niets over één teelt. Agro4all registreert het totaal van
+de registratie; dat wordt naar rato van de m² over de vakken verdeeld (bijv. 3600 ml in 400 l over vier
+vakken van 540 m² = 900 ml in 100 l per vak). Het totaal blijft erbij (dosering_totaal, mix_totaal).
 
 Alleen rekenwerk; tests in tests/test_agro4all.py.
 """
@@ -41,11 +42,27 @@ def _getal_tekst(waarde):
     return f"{waarde:g}".replace(".", ",")
 
 
-def behandelingen(export, vakken_per_tuin):
+def aandelen(vakken, vak_m2):
+    """{vak: deel van het totaal} naar rato van de m² (vak_m2: {vak: m²}); zonder m² gelijk verdeeld."""
+    m2 = {v: vak_m2.get(v) or 0 for v in vakken}
+    totaal = sum(m2.values())
+    return {v: (m2[v] / totaal if totaal else 1 / len(vakken)) for v in vakken}
+
+
+def _rond(waarde):
+    """Een aandeel netjes: vanaf 100 hele getallen (ml, g, stuks), daaronder twee decimalen."""
+    if waarde is None:
+        return None
+    return float(round(waarde)) if abs(waarde) >= 100 else round(waarde, 2)
+
+
+def behandelingen(export, vakken_per_tuin, vak_m2=None):
     """
     (middelen, regels) voor database.vervang_behandelingen. vakken_per_tuin: {tuinnummer: aantal vakken}; een
-    registratie op al die vakken (of op geen enkel vak) telt niet mee. Middel-code = het Agro4all-product-id.
+    registratie op al die vakken (of op geen enkel vak) telt niet mee. vak_m2: {(tuinnummer, vak): m²} voor de
+    verdeling naar rato (zonder: gelijk). Middel-code = het Agro4all-product-id.
     """
+    vak_m2 = vak_m2 or {}
     middelen, regels = {}, []
     for r in export.get("registraties", []):
         vakken = sorted(set(r.get("vakken") or []))
@@ -53,21 +70,27 @@ def behandelingen(export, vakken_per_tuin):
         if not vakken or dag is None or len(vakken) >= vakken_per_tuin.get(r.get("tuin"), 10 ** 6):
             continue
         mix = r.get("mix") or {}
-        mix_tekst = f"{_getal_tekst(mix['hoeveelheid'])} {mix.get('eenheid') or ''}".strip() \
-            if mix.get("hoeveelheid") is not None else None
+        deel = aandelen(vakken, {v: vak_m2.get((r["tuin"], v)) for v in vakken})
+
+        def mix_tekst(factor):
+            if mix.get("hoeveelheid") is None:
+                return None
+            return f"{_getal_tekst(round(mix['hoeveelheid'] * factor, 1))} {mix.get('eenheid') or ''}".strip()
         for i, p in enumerate(r.get("producten") or []):
             code = p.get("id") or p["naam"]
             middelen.setdefault(code, {"code": code, "naam": p["naam"], "type": soort(r.get("activiteit"),
                                                                                        p.get("categorie")),
                                        "werkzaam": None, "eenheid": p.get("eenheid"),
                                        "doel": p.get("doel")})
+            totaal = p.get("hoeveelheid")
             for vak in vakken:
                 regels.append({
                     "tuin_nummer": r["tuin"], "vaknummer": int(vak), "datum": dag, "middel_code": code,
-                    "dosering": p.get("hoeveelheid"), "eenheid": p.get("eenheid"), "methode": r.get("methode"),
+                    "dosering": _rond(totaal * deel[vak]) if totaal is not None else None,
+                    "dosering_totaal": totaal, "eenheid": p.get("eenheid"), "methode": r.get("methode"),
                     "opmerking": "toevoeging" if p.get("rol") == "toevoeging" else None,
                     "extern_id": f"{r['id']}:{vak}:{i}", "registratie": r["id"], "doel": p.get("doel"),
-                    "mix": mix_tekst, "aantal_vakken": len(vakken),
+                    "mix": mix_tekst(deel[vak]), "mix_totaal": mix_tekst(1), "aantal_vakken": len(vakken),
                 })
     return list(middelen.values()), regels
 

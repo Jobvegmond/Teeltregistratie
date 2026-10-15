@@ -39,10 +39,26 @@ class TestBehandelingen(unittest.TestCase):
         middelen, regels = a4.behandelingen(export, VAKKEN)
         self.assertEqual({m["code"]: m["type"] for m in middelen}, {"p-ser": "gewasbescherming", "p-nat": "biologie"})
         self.assertEqual([(r["vaknummer"], r["middel_code"], r["dosering"]) for r in regels],
-                         [(11, "p-ser", 1000), (12, "p-ser", 1000), (11, "p-nat", 600), (12, "p-nat", 600)])
+                         [(11, "p-ser", 500), (12, "p-ser", 500), (11, "p-nat", 300), (12, "p-nat", 300)])
         r = regels[0]
-        self.assertEqual((r["datum"], r["mix"], r["aantal_vakken"], r["registratie"], r["extern_id"]),
+        self.assertEqual((r["datum"], r["mix_totaal"], r["aantal_vakken"], r["registratie"], r["extern_id"]),
                          (date(2026, 10, 13), "100 l", 2, "r1", "r1:11:0"))
+
+    def test_naar_rato_van_de_m2(self):
+        # Vak 19 en 20 zijn halve vakken: 3600 ml in 400 l over 540 + 540 + 270 + 270 m².
+        export = {"registraties": [registratie("r", [18, 19, 20, 21], mix={"hoeveelheid": 400, "eenheid": "l"},
+                                               producten=[{"naam": "Rizolex vloeibaar", "id": "p", "hoeveelheid": 3600,
+                                                           "eenheid": "ml", "categorie": "CROP_PROTECTION"}])]}
+        vak_m2 = {(3, 18): 540, (3, 19): 270, (3, 20): 270, (3, 21): 540}
+        _, regels = a4.behandelingen(export, VAKKEN, vak_m2)
+        per_vak = {r["vaknummer"]: (r["dosering"], r["mix"]) for r in regels}
+        self.assertEqual(per_vak, {18: (1200.0, "133,3 l"), 19: (600.0, "66,7 l"), 20: (600.0, "66,7 l"),
+                                   21: (1200.0, "133,3 l")})
+        self.assertEqual({(r["dosering_totaal"], r["mix_totaal"]) for r in regels}, {(3600, "400 l")})
+        self.assertEqual(sum(r["dosering"] for r in regels), 3600)
+        # Zonder m²: gelijk verdeeld.
+        _, gelijk = a4.behandelingen(export, VAKKEN)
+        self.assertEqual({r["dosering"] for r in gelijk}, {900.0})
 
     def test_hele_tuin_en_zonder_vakken_vallen_weg(self):
         export = {"registraties": [registratie("alle", list(range(1, 40))), registratie("geen", []),
@@ -57,6 +73,7 @@ class TestBehandelingen(unittest.TestCase):
              "hoeveelheid": 85, "eenheid": "l", "doel": None}])]}
         _, regels = a4.behandelingen(export, VAKKEN)
         self.assertEqual((regels[0]["opmerking"], regels[0]["mix"]), ("toevoeging", "12,5 l"))
+        self.assertEqual(regels[0]["dosering"], 85)
 
 
 
