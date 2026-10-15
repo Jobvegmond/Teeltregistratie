@@ -38,13 +38,15 @@ class TestReeksen(unittest.TestCase):
 class TestRegels(unittest.TestCase):
     def test_middelen_en_overslaan(self):
         beh = [(7, date(2026, 9, 28), "GBM", ["Ri", "Fg", "La", "Ve", "Vec"]),
-               (8, date(2026, 9, 28), "Bio", ["B5", "IM", "Zz"])]
+               (8, date(2026, 9, 28), "Bio", ["B5", "IM", "Hy", "Zz"])]
         middelen, regels, onbekend = kr.regels(beh, 3, "klimaatregistratie-tuin3")
         self.assertEqual([(r["vaknummer"], r["middel_code"]) for r in regels],
-                         [(7, "Rizolex"), (7, "Vectine"), (8, "Natrubac 08"), (8, "IJzer en mangaan"), (8, "code Zz")])
+                         [(7, "Rizolex"), (7, "Vectine"), (8, "Biota 500"), (8, "IJzer en mangaan"), (8, "Hypoaspis"),
+                          (8, "code Zz")])
+        self.assertEqual(regels[4]["methode"], "gestrooid")
         self.assertEqual(onbekend, {"Zz": 1})
         soorten = {m["naam"]: m["type"] for m in middelen}
-        self.assertEqual((soorten["Rizolex"], soorten["Natrubac 08"], soorten["IJzer en mangaan"], soorten["code Zz"]),
+        self.assertEqual((soorten["Rizolex"], soorten["Biota 500"], soorten["IJzer en mangaan"], soorten["code Zz"]),
                          ("gewasbescherming", "biologie", "voeding", "biologie"))
         self.assertTrue(all(r["dosering"] is None for r in regels))
         self.assertEqual(regels[0]["registratie"], "klimaatregistratie-tuin3:2026-09-28:GBM:Ri Fg La Ve Vec")

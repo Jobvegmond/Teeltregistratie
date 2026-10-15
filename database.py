@@ -1741,6 +1741,11 @@ def vervang_behandelingen(bron, middelen, regels):
                 INSERT INTO behandeling ({", ".join(BEHANDELING_KOLOMMEN)}, middel_id, bron) VALUES %s""",
                 [tuple(r.get(k) for k in BEHANDELING_KOLOMMEN) + (ids[r["middel_code"]], bron) for r in regels],
                 page_size=500)
+        # Middelen van deze bron die nergens meer voorkomen (bijv. een verbeterde code) weg.
+        cursor.execute("""
+            DELETE FROM middel WHERE bron = %s
+              AND id NOT IN (SELECT middel_id FROM behandeling WHERE middel_id IS NOT NULL)
+        """, (bron,))
         conn.commit()
     return len(middelen), len(regels)
 

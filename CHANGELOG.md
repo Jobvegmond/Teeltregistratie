@@ -10,8 +10,8 @@ inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
   regels GBM en Bio): `klimaatregistratie_import.py`, rekenwerk in `logic/klimaatregistratie.py`. Codes in
   aaneengesloten dagcellen (en meer codes in één cel) zijn één behandeling op de eerste dag van de reeks.
   De codes en hun middel staan in `logic/klimaatregistratie.CODES` (Te = Teppeki, Ba = Batavia, Ru =
-  Runner, No = Nocturn, Sc = SilicaPower, B5 = Natrubac, M = MONcontrol, P = Power Food, IM = ijzer en
-  mangaan, …); Fg (Florgib) en de tikfouten La en Ja tellen niet mee. Zonder hoeveelheden. Alleen dagen
+  Runner, No = Nocturn, Sc = SilicaPower, B5 = Biota 500, B8 = Biota 820, Hi = Hicure, Hy = Hypoaspis
+  (gestrooid), M = MONcontrol, P = Power Food, IM = ijzer en mangaan, …); Fg (Florgib) en de tikfouten La en Ja tellen niet mee. Zonder hoeveelheden. Alleen dagen
   vóór de eerste Agro4all-behandeling in die tuin. Eerste inlezing: 3.609 behandelingen van 02-01-24 t/m
   17-09-26 (5.932 regels). Ze staan met dezelfde driehoekjes op de tijdlijn, in Watergift, de vakpopup en
   bij Teelt; de popup noemt de bron.

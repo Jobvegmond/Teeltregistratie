@@ -12,7 +12,7 @@ tikfouten worden overgeslagen. Alleen rekenwerk; tests in tests/test_klimaatregi
 """
 from datetime import date, timedelta
 
-# Code → (middel, soort). Soort zoals bij Agro4all (logic/agro4all.soort): toegelaten middelen =
+# Code → (middel, soort[, methode]). Soort zoals bij Agro4all (logic/agro4all.soort): toegelaten middelen =
 # gewasbescherming, biostimulanten/natuurlijke vijanden/bijvoer = biologie, meststoffen = voeding.
 CODES = {
     "Te": ("Teppeki", "gewasbescherming"), "Pe": ("Pediment", "gewasbescherming"),
@@ -24,7 +24,8 @@ CODES = {
     "Vec": ("Vectine", "gewasbescherming"), "Lu": ("Luna Privilege", "gewasbescherming"),
     "Ri": ("Rizolex", "gewasbescherming"), "Ra": ("Ranman", "gewasbescherming"),
     "Se": ("Serenade", "gewasbescherming"), "As": ("Asperello", "gewasbescherming"),
-    "Sc": ("SilicaPower", "biologie"), "B5": ("Natrubac 08", "biologie"),
+    "Sc": ("SilicaPower", "biologie"), "B5": ("Biota 500", "biologie"), "B8": ("Biota 820", "biologie"),
+    "Hi": ("Hicure", "biologie"), "Hy": ("Hypoaspis", "biologie", "gestrooid"),
     "Rs": ("Root & Shoot", "biologie"), "RS": ("Root & Shoot", "biologie"),
     "M": ("MONcontrol", "biologie"), "P": ("Power Food", "biologie"), "D6": ("D-6 Force", "biologie"),
     "Xt": ("X-Tend", "voeding"), "Co": ("ConSecta", "voeding"),
@@ -114,7 +115,8 @@ def regels(behandelingen_, tuin_nummer, bron):
         for code in codes:
             if code in OVERSLAAN:
                 continue
-            naam, soort = CODES.get(code, (None, None))
+            naam, soort, *rest = CODES.get(code, (None, None))
+            methode = rest[0] if rest else None
             if naam is None:
                 onbekend[code] = onbekend.get(code, 0) + 1
                 naam, soort = f"code {code}", "biologie" if regel == "Bio" else "gewasbescherming"
@@ -123,7 +125,7 @@ def regels(behandelingen_, tuin_nummer, bron):
             gezien.add(naam)
             middelen.setdefault(naam, {"code": naam, "naam": naam, "type": soort, "eenheid": None})
             uit.append({"tuin_nummer": tuin_nummer, "vaknummer": vak, "datum": dag, "middel_code": naam,
-                        "dosering": None, "eenheid": None, "methode": None,
+                        "dosering": None, "eenheid": None, "methode": methode,
                         "opmerking": f"klimaatregistratie ({regel}: {' '.join(codes)})",
                         "extern_id": f"{bron}:{vak}:{dag.isoformat()}:{regel}:{naam}",
                         "registratie": f"{bron}:{dag.isoformat()}:{regel}:{' '.join(codes)}",
