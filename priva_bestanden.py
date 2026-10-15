@@ -1,6 +1,7 @@
 """
 Alle imports uit de bestanden op de NAS achter elkaar: uit de Priva-bestanden de pulsmeters (warmte en gas),
-de watergift en het klimaat per uur, en de behandelingen uit de Agro4all-export. Eén taak in de Synology
+de watergift en het klimaat per uur, en de behandelingen uit de Agro4all-export en de historie uit de
+klimaatregistratie (klimaatregistratie-tuin*.json in de map agro4all). Eén taak in de Synology
 Taakplanner hoeft zo niet bij elke nieuwe import aangepast te worden.
 
 Elk script draait los; gaat er één mis, dan draaien de andere toch en sluit dit af met een foutcode
@@ -18,7 +19,9 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-SCRIPTS = ("priva_pulsmeters.py", "priva_watergift.py", "priva_klimaat.py", "agro4all_import.py")
+# Agro4all vóór de klimaatregistratie: die laatste neemt alleen de dagen vóór de eerste Agro4all-behandeling.
+SCRIPTS = ("priva_pulsmeters.py", "priva_watergift.py", "priva_klimaat.py", "agro4all_import.py",
+           "klimaatregistratie_import.py")
 
 
 def main():

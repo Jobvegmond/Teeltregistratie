@@ -1746,12 +1746,13 @@ def vervang_behandelingen(bron, middelen, regels):
 
 
 def get_behandelingen(tuin_id, van, tot, vaknummer=None):
-    """Behandelingen van een tuin (of één vak) over van..tot als dicts, op datum en vak."""
+    """Behandelingen van een tuin (of één vak) over van..tot als dicts, op datum en vak (Agro4all en de
+    historie uit de klimaatregistratie)."""
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(f"""
             SELECT b.vaknummer, b.datum, m.naam AS middel, m.type, b.dosering, b.eenheid, b.methode, b.opmerking,
-                   b.registratie, b.doel, b.mix, b.aantal_vakken, b.dosering_totaal, b.mix_totaal
+                   b.registratie, b.doel, b.mix, b.aantal_vakken, b.dosering_totaal, b.mix_totaal, b.bron
             FROM behandeling b LEFT JOIN middel m ON m.id = b.middel_id
             WHERE b.tuin_id = %s AND b.datum BETWEEN %s AND %s {"AND b.vaknummer = %s" if vaknummer else ""}
             ORDER BY b.datum, b.vaknummer, m.naam

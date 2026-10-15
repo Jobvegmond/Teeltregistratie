@@ -2305,7 +2305,9 @@ def _tl_behandeling_venster(info, vak, dag):
         vakken = {r: sorted({int(b["vaknummer"]) for b in alle if b["registratie"] == r}) for r in registraties}
         for r in sorted(registraties, key=str):
             eerste = next(b for b in rijen if b["registratie"] == r)
+            historie = str(eerste.get("bron") or "").startswith("klimaatregistratie")
             st.markdown(f"**{eerste['type'].capitalize() if eerste['type'] else 'Behandeling'}**"
+                        + (" · klimaatregistratie" if historie else "")
                         + (f" · {eerste['methode']}" if eerste.get("methode") else "")
                         + (f" · tankmix {eerste['mix']}" if eerste.get("mix") else "")
                         + f" · op {len(vakken[r])} {'vak' if len(vakken[r]) == 1 else 'vakken'}: "
@@ -2316,8 +2318,9 @@ def _tl_behandeling_venster(info, vak, dag):
                                       + (f" in {b['mix_totaal']}" if b.get("mix_totaal") else "")
                                       if b.get("dosering_totaal") is not None and len(vakken[r]) > 1 else "")
                                    for b in rijen if b["registratie"] == r))
-        uitleg_help.voetnoot("Uit Agro4all. Hoeveelheid voor dit vak: het totaal van de registratie naar rato van "
-                             "de m² over de vakken verdeeld.")
+        uitleg_help.voetnoot("Agro4all: hoeveelheid voor dit vak (het totaal van de registratie naar rato van de m² "
+                             "over de vakken verdeeld). Klimaatregistratie (vóór Agro4all): alleen het middel, op de "
+                             "eerste dag van een reeks codes.")
 
     _venster()
 
@@ -2338,7 +2341,7 @@ def _tl_legenda():
         {"kleur": TL_ROOD, "vorm": "lijn", "label": "vandaag", "stijl": "border-top-style:dashed;"},
     ])
     legend.legenda([{"kleur": kleur, "label": soort, "stijl": "clip-path:polygon(0 0,100% 0,50% 100%);"}
-                    for soort, kleur in wg_matrix.TYPE_KLEUR.items()], titel="Behandeling (Agro4all, ▼):")
+                    for soort, kleur in wg_matrix.TYPE_KLEUR.items()], titel="Behandeling (▼):")
 
 
 # --- TUINVERGELIJKING: wat er in een periode in de kas gebeurde, per m² ---
@@ -2965,7 +2968,8 @@ def toon_behandelingen(rijen, sleutel=None, met_vak=False):
     registratie naar rato van de m²; in de tankmix) en op hoeveel vakken die registratie is uitgevoerd.
     """
     if not rijen:
-        st.caption("Geen behandelingen geregistreerd (Agro4all; behandelingen op de hele tuin staan er niet bij).")
+        st.caption("Geen behandelingen geregistreerd (Agro4all en klimaatregistratie; behandelingen op de hele "
+                   "tuin staan er niet bij).")
         return
     vakken_per_registratie = {}
     for b in rijen:
@@ -3279,7 +3283,7 @@ OP_SECTIES = [
         ("fase", "Fase", "tekst"), ("gedaan", "Gedaan", "getal:2"), ("plan_oogst", "Plan", "datum"),
         ("prognose_oogst", "Prognose", "datum"), ("correctie_c", "Correctie (°C)", "getal:1"),
         ("stooklijn", "Stooklijn (°C)", "getal:1")]),
-    ("Behandelingen (Agro4all)", "behandelingen", [
+    ("Behandelingen", "behandelingen", [
         ("datum", "Datum", "datum"), ("code", "Code", "tekst"), ("type", "Soort", "tekst"),
         ("middel", "Middel", "tekst"), ("dosering", "Hoeveelheid", "getal:2"), ("eenheid", "Eenheid", "tekst"),
         ("mix", "Tankmix", "tekst"), ("doel", "Tegen", "tekst"), ("methode", "Methode", "tekst"),

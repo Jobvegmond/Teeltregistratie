@@ -3,6 +3,21 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.15.0] - 2026-10-15
+
+### Toegevoegd
+- **Historie van de behandelingen** uit het teeltlogboek "Klimaatregistratie tuin 3" (blad Overview,
+  regels GBM en Bio): `klimaatregistratie_import.py`, rekenwerk in `logic/klimaatregistratie.py`. Codes in
+  aaneengesloten dagcellen (en meer codes in één cel) zijn één behandeling op de eerste dag van de reeks.
+  De codes en hun middel staan in `logic/klimaatregistratie.CODES` (Te = Teppeki, Ba = Batavia, Ru =
+  Runner, No = Nocturn, Sc = SilicaPower, B5 = Natrubac, M = MONcontrol, P = Power Food, IM = ijzer en
+  mangaan, …); Fg (Florgib) en de tikfouten La en Ja tellen niet mee. Zonder hoeveelheden. Alleen dagen
+  vóór de eerste Agro4all-behandeling in die tuin. Eerste inlezing: 3.609 behandelingen van 02-01-24 t/m
+  17-09-26 (5.932 regels). Ze staan met dezelfde driehoekjes op de tijdlijn, in Watergift, de vakpopup en
+  bij Teelt; de popup noemt de bron.
+- Het Excel-bestand wordt op de pc omgezet naar `klimaatregistratie-tuin3.json` in de map agro4all op de
+  NAS; de uurtaak (`priva_bestanden.py`) leest het in.
+
 ## [2.14.1] - 2026-10-15
 
 ### Gewijzigd
