@@ -77,8 +77,10 @@ def main():
         with open(pad, encoding="utf-8") as f:
             export = json.load(f)
     tuinen = {t["nummer"]: t for t in database.get_tuinen()}
-    vakken_per_tuin = {nr: len(database.get_vakgegevens(t["id"])) for nr, t in tuinen.items()}
-    middelen, regels = a4.behandelingen(export, vakken_per_tuin)
+    vakgegevens = {nr: database.get_vakgegevens(t["id"]) for nr, t in tuinen.items()}
+    vakken_per_tuin = {nr: len(v) for nr, v in vakgegevens.items()}
+    vak_m2 = {(nr, int(vak)): g["oppervlakte_m2"] for nr, v in vakgegevens.items() for vak, g in v.items()}
+    middelen, regels = a4.behandelingen(export, vakken_per_tuin, vak_m2)
     for r in regels:
         r["tuin_id"] = tuinen[r.pop("tuin_nummer")]["id"]
     hele, zonder = a4.overgeslagen(export, vakken_per_tuin)
@@ -91,7 +93,7 @@ def main():
     if args.droog:
         print(f"[{stempel}] DROOG, niets opgeslagen; zou opslaan: {samenvatting}")
         return
-    database.init_db()      # de kolommen registratie, doel, mix en aantal_vakken (nieuw in 2.14.0)
+    database.init_db()      # de kolommen van behandeling (registratie, doel, mix, … 2.14.0; totalen 2.14.1)
     database.vervang_behandelingen(a4.BRON, middelen, regels)
     print(f"[{stempel}] {samenvatting}")
 

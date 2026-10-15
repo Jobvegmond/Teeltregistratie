@@ -3,6 +3,32 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.15.0] - 2026-10-15
+
+### Toegevoegd
+- **Historie van de behandelingen** uit het teeltlogboek "Klimaatregistratie tuin 3" (blad Overview,
+  regels GBM en Bio): `klimaatregistratie_import.py`, rekenwerk in `logic/klimaatregistratie.py`. Codes in
+  aaneengesloten dagcellen (en meer codes in één cel) zijn één behandeling op de eerste dag van de reeks.
+  De codes en hun middel staan in `logic/klimaatregistratie.CODES` (Te = Teppeki, Ba = Batavia, Ru =
+  Runner, No = Nocturn, Sc = SilicaPower, B5 = Biota 500, B8 = Biota 820, Hi = Hicure, Hy = Hypoaspis
+  (gestrooid), M = MONcontrol, P = Power Food, IM = ijzer en mangaan, …); Fg (Florgib) en de tikfouten La en Ja tellen niet mee. Zonder hoeveelheden. Alleen dagen
+  vóór de eerste Agro4all-behandeling in die tuin. Eerste inlezing: 3.609 behandelingen van 02-01-24 t/m
+  17-09-26 (5.932 regels). Ze staan met dezelfde driehoekjes op de tijdlijn, in Watergift, de vakpopup en
+  bij Teelt; de popup noemt de bron.
+- Het Excel-bestand wordt op de pc omgezet naar `klimaatregistratie-tuin3.json` in de map agro4all op de
+  NAS; de uurtaak (`priva_bestanden.py`) leest het in.
+
+## [2.14.1] - 2026-10-15
+
+### Gewijzigd
+- Behandelingen uit Agro4all: de hoeveelheid (en de tankmix) is nu die **per vak**. Agro4all registreert
+  het totaal; dat wordt naar rato van de m² over de vakken van de registratie verdeeld (vak 19 en 20 van
+  tuin 3 krijgen als halve vakken de helft). Het totaal staat ernaast (`dosering_totaal`, `mix_totaal`)
+  en in de popup op de tijdlijn.
+- `agro4all_samenvoegen.py` voor de geplande Claude-taak "Agro4all-behandelingen naar de NAS" (werkdagen
+  07, 12 en 17 uur): de registraties van de laatste 14 dagen samenvoegen met de export op de NAS.
+  `agro4all_import.py` kan ook zelf ophalen zodra er een toegangstoken van Agro4all is (`AGRO4ALL_PAT`).
+
 ## [2.14.0] - 2026-10-15
 
 ### Toegevoegd
