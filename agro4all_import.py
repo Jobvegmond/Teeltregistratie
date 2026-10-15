@@ -1,11 +1,11 @@
 """
 Behandelingen (gewasbescherming, biologie, voeding) per vak uit een Agro4all-export in de database.
 
-De export is een JSON-bestand met alle registraties en de vakken waarop ze zijn uitgevoerd (vorm: zie
-logic/agro4all.py). Het wordt nu gemaakt via de Agro4all-koppeling van Claude en op de NAS gezet in
-/volume2/Appdata/VEMteelt/agro4all/registraties.json. Elke run vervangt alle Agro4all-behandelingen in de
-database door wat er in het bestand staat (een registratie kan in Agro4all gewijzigd of verwijderd zijn).
-Registraties op de hele tuin vallen weg (zie logic/agro4all.py).
+Staat er een toegangstoken in AGRO4ALL_PAT, dan haalt het script eerst alle registraties met hun vakken op
+bij Agro4all (integrations/agro4all.py) en schrijft het de export opnieuw; anders leest het de export die de
+geplande Claude-taak op de NAS zet (agro4all_samenvoegen.py; JSON, vorm: zie logic/agro4all.py). Elke run vervangt alle Agro4all-behandelingen in de
+database door de export (een registratie kan in Agro4all gewijzigd of verwijderd zijn). Registraties op de
+hele tuin vallen weg (zie logic/agro4all.py).
 
 Gebruik:
     python agro4all_import.py                      # bestand uit AGRO4ALL_BESTAND, naar DATABASE_URL
@@ -13,8 +13,9 @@ Gebruik:
     python agro4all_import.py --droog              # alleen tonen, niets opslaan
     python agro4all_import.py --doel productie     # naar DATABASE_URL_PRODUCTIE
 
-In de container: de map agro4all alleen-lezen erbij (-v /volume2/Appdata/VEMteelt/agro4all:/agro4all:ro);
-draait elk uur via priva_bestanden.py. Zonder bestand: een melding, geen fout (er is dan niets nieuws).
+In de container: de map agro4all erbij (-v /volume2/Appdata/VEMteelt/agro4all:/agro4all:ro; schrijfbaar
+als er met AGRO4ALL_PAT wordt opgehaald). Draait elk uur via priva_bestanden.py. Zonder token en zonder export:
+een melding, geen fout. Mislukt het ophalen: een foutcode (mail), de database blijft staan.
 """
 import argparse
 import json
@@ -30,6 +31,7 @@ def lees_argumenten():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--bestand", default=os.environ.get("AGRO4ALL_BESTAND", "/agro4all/registraties.json"),
                         help="de Agro4all-export (JSON)")
+    parser.add_argument("--niet-ophalen", action="store_true", help="alleen de export inlezen die er staat")
     parser.add_argument("--doel", choices=("app", "productie"), default="app",
                         help="app = DATABASE_URL (standaard), productie = DATABASE_URL_PRODUCTIE")
     parser.add_argument("--droog", action="store_true", help="alleen tonen, niets opslaan")
@@ -42,8 +44,24 @@ def main():
     args = lees_argumenten()
     stempel = f"{datetime.now(timezone.utc):%d-%m-%y %H:%M} UTC"
     pad = Path(args.bestand)
-    if not pad.exists():
-        print(f"[{stempel}] Geen Agro4all-export in {pad}; niets gedaan.")
+    export = None
+    from integrations import agro4all as koppeling
+    token = koppeling.toegang()
+    if not args.niet_ophalen and token:
+        from logic import agro4all as a4
+        try:
+            velden, registraties, secties, methodes = koppeling.ophalen(token)
+        except Exception as fout:        # netwerk, verlopen toegang: melden, de database blijft staan
+            print(f"[{stempel}] FOUT bij ophalen uit Agro4all: {fout}", file=sys.stderr)
+            sys.exit(1)
+        export = a4.export_uit_api(velden, registraties, secties, methodes,
+                                   datetime.now(timezone.utc).isoformat(timespec="seconds"))
+        if not args.droog:              # de export bewaren (ter controle, en als het ophalen later mislukt)
+            tijdelijk = pad.with_suffix(".tmp")
+            tijdelijk.write_text(json.dumps(export, ensure_ascii=False, indent=1), encoding="utf-8")
+            tijdelijk.replace(pad)
+    elif not pad.exists():
+        print(f"[{stempel}] Geen Agro4all-export in {pad} en geen AGRO4ALL_PAT; niets gedaan.")
         return
     if args.doel == "productie":
         doel_url = os.environ.get("DATABASE_URL_PRODUCTIE")
@@ -55,8 +73,9 @@ def main():
     import database
     from logic import agro4all as a4
 
-    with open(pad, encoding="utf-8") as f:
-        export = json.load(f)
+    if export is None:
+        with open(pad, encoding="utf-8") as f:
+            export = json.load(f)
     tuinen = {t["nummer"]: t for t in database.get_tuinen()}
     vakken_per_tuin = {nr: len(database.get_vakgegevens(t["id"])) for nr, t in tuinen.items()}
     middelen, regels = a4.behandelingen(export, vakken_per_tuin)
@@ -65,10 +84,10 @@ def main():
     hele, zonder = a4.overgeslagen(export, vakken_per_tuin)
     registraties = {r["registratie"] for r in regels}
     dagen = sorted({r["datum"] for r in regels})
-    samenvatting = (f"{len(registraties)} registraties per vak → {len(regels)} regels, {len(middelen)} middelen"
+    samenvatting = (f"{len(registraties)} registraties per vak, {len(regels)} regels, {len(middelen)} middelen"
                     + (f" ({dagen[0]:%d-%m-%y} t/m {dagen[-1]:%d-%m-%y})" if dagen else "")
                     + f"; overgeslagen: {hele} op de hele tuin, {zonder} zonder vakken"
-                    + f" · export van {export.get('opgehaald', '?')[:16]}")
+                    + f"; export van {export.get('opgehaald', '?')[:16]}")
     if args.droog:
         print(f"[{stempel}] DROOG, niets opgeslagen; zou opslaan: {samenvatting}")
         return
