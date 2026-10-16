@@ -94,7 +94,7 @@ table.wg td.florgib, table.wg td.florgib-v { position: relative; }
 /* Behandeling (Agro4all) op die dag: een gekleurd hoekje linksonder; de middelen staan in de tooltip. */
 table.wg td.beh { position: relative; }
 table.wg td.beh::before { content: ""; position: absolute; left: 0; bottom: 0; width: 0; height: 0;
-    border-top: 8px solid transparent; border-left: 8px solid var(--beh-kleur); }
+    border-top: 11px solid transparent; border-left: 11px solid var(--beh-kleur); }
 table.wg td.florgib-v::after { content: ""; position: absolute; top: 2px; right: 2px; width: 6px; height: 6px;
                                 border-radius: 50%; border: 1.5px solid #8e44ad; box-sizing: border-box; }
 table.wg td.florgib::after { content: ""; position: absolute; top: 2px; right: 2px; width: 6px; height: 6px;

@@ -2112,8 +2112,9 @@ def _tl_grafiek(volgorde, frames, van, tot, vandaag, weken):
                              tooltip=[alt.Tooltip("y:N", title="Vak"), "Florgib:N"]))
     if not behandelingen.empty:
         # Driehoekje bovenaan de regel, zodat de balk zichtbaar blijft.
-        lagen.append(alt.Chart(behandelingen).mark_point(shape="triangle-down", size=55, filled=True, opacity=1,
-                                                         yOffset=-(TL_RIJ - 8) / 2 + 2, cursor="pointer")
+        lagen.append(alt.Chart(behandelingen).mark_point(shape="triangle-down", size=120, filled=True, opacity=1,
+                                                         stroke="white", strokeWidth=1,
+                                                         yOffset=-(TL_RIJ - 8) / 2 + 1, cursor="pointer")
                      .encode(x="x:T", y=y, color=alt.Color("kleur:N", scale=None),
                              tooltip=[alt.Tooltip("y:N", title="Vak"), "Behandeling:N"])
                      .add_params(alt.selection_point(name="tl_beh", fields=["sleutel"], on="click")))

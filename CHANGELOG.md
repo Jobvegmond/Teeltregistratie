@@ -3,6 +3,12 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.15.1] - 2026-10-16
+
+### Gewijzigd
+- Behandelingen beter te vinden: het driehoekje op de tijdlijn is ruim twee keer zo groot (met een wit
+  randje), het hoekje in de Watergift-matrix 11 in plaats van 8 px.
+
 ## [2.15.0] - 2026-10-15
 
 ### Toegevoegd
