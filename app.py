@@ -3961,7 +3961,8 @@ REGISTER_LOPEND = [
     ("Tuin", "tekst"), ("Afd.", "getal0"), ("Vak", "getal0"), ("Code", "tekst"), ("Plantdatum", "datum"),
     ("Plantweek", "getal0"), ("Leeftijd (d)", "getal0"), ("Planten", "getal0"), ("Florgib", "datum"),
     ("Lengte bij Florgib (cm)", "getal1"), ("Plan-oogst", "datum"), ("Prognose", "datum"),
-    ("Voor (−) / achter (+) (d)", "teken0"), ("Emmers tot nu", "getal0"),
+    ("Voor (−) / achter (+) (d)", "teken0"), ("Emmers tot nu", "getal0"), ("Water tot nu (l/m²)", "getal0"),
+    ("Water tot nu (l)", "getal0"),
 ]
 REGISTER_TE_STARTEN = [
     ("Tuin", "tekst"), ("Afd.", "getal0"), ("Vak", "getal0"), ("Code", "tekst"), ("Plantdatum", "datum"),
@@ -3973,7 +3974,8 @@ REGISTER_AFGEROND = [
     ("Fase 2 (d)", "getal0"), ("Geplant", "getal0"), ("Geoogst (stelen)", "getal0"), ("Uitval (%)", "getal1"),
     ("Oogstlengte (cm)", "getal1"),
     ("Oogstgewicht (g)", "getal0"), ("Lichtsom/dag", "getal0"), ("Etmaal (°C)", "getal1"),
-    ("Afw. lichtlijn (°C)", "teken1"), ("Water (l/m²)", "getal0"), ("Warmte (MJ/m²)", "getal0"),
+    ("Afw. lichtlijn (°C)", "teken1"), ("Water (l/m²)", "getal0"), ("Water (l)", "getal0"),
+    ("Warmte (MJ/m²)", "getal0"),
 ]
 
 
@@ -3989,6 +3991,11 @@ def _register_kolommen(kolommen):
             decimalen = int(soort[-1])
             uit.append((naam, naam, "getal", f"%.{decimalen}f" if decimalen else "%d", "small"))
     return uit
+
+
+def _liters(liter_per_m2, m2):
+    """Watergift van het hele vak (l) uit l/m² × de oppervlakte van het vak; None als een van beide ontbreekt."""
+    return liter_per_m2 * m2 if liter_per_m2 is not None and m2 else None
 
 
 def _register_rijen(vandaag):
@@ -4017,12 +4024,14 @@ def _register_rijen(vandaag):
         vakken.append(t)
         if not t["afgerond"]:
             stelen = vs._getal(k.get("stelen"))
+            water = teeltvgl.met_dagdata(t, dd, gisteren)["water"]     # l/m² van planten t/m gisteren
             lopend.append({**basis, "Leeftijd (d)": (vandaag - start).days,
                            "Planten": vs._getal(k.get("aantal_planten")), "Florgib": t["florgib"],
                            "Lengte bij Florgib (cm)": vs._getal(k.get("lengte_half")), "Plan-oogst": plan,
                            "Prognose": prognose,
                            "Voor (−) / achter (+) (d)": (prognose - plan).days if prognose and plan else None,
-                           "Emmers tot nu": stelen / 100 if stelen else None})
+                           "Emmers tot nu": stelen / 100 if stelen else None,
+                           "Water tot nu (l/m²)": water, "Water tot nu (l)": _liters(water, t["m2"])})
         else:
             t = teeltvgl.met_dagdata(t, dd, gisteren)
             afgerond.append({**basis, "Florgib": t["florgib"], "Oogstdatum": t["oogst_echt"],
@@ -4031,7 +4040,8 @@ def _register_rijen(vandaag):
                              "Uitval (%)": t["uitval"], "Oogstlengte (cm)": t["lengte"],
                              "Oogstgewicht (g)": t["gewicht"], "Lichtsom/dag": t["lichtsom"],
                              "Etmaal (°C)": t["temp"], "Afw. lichtlijn (°C)": t["afwijking"],
-                             "Water (l/m²)": t["water"], "Warmte (MJ/m²)": t["warmte"]})
+                             "Water (l/m²)": t["water"], "Water (l)": _liters(t["water"], t["m2"]),
+                             "Warmte (MJ/m²)": t["warmte"]})
     return lopend, te_starten, afgerond, vakken
 
 

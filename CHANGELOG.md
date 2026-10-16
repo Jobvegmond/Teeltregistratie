@@ -3,6 +3,13 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.15.2] - 2026-10-16
+
+### Toegevoegd
+- Vakkenregister (Teeltoverzicht): de watergift per vak in liters (l/m² × de oppervlakte van het vak).
+  Lopende vakken: *Water tot nu (l/m²)* en *Water tot nu (l)*, van planten t/m gisteren; afgeronde vakken:
+  *Water (l)* naast *Water (l/m²)*.
+
 ## [2.15.1] - 2026-10-16
 
 ### Gewijzigd
