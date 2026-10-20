@@ -3,6 +3,19 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.16.0] - 2026-10-20
+
+### Toegevoegd
+- **Rapport "Teelt afgerond"** (`teelt_rapport.py`, opmaak in `logic/teelt_rapport.py`): zodra van een teelt
+  (alle vakken uit één plantweek, beide tuinen) het laatste vak geoogst is, gaat er een mail naar
+  info@tanacetum.nl met als onderwerp "Teelt afgerond; plantweek N (jaar)". Daarin per tuin, in totaal en
+  voor dezelfde plantweek vorig jaar: planten, stelen, uitval, teeltduur en fasen, lengtes, oogstgewicht,
+  lichtsom, etmaaltemperatuur, afwijking van de berekende etmaaltemperatuur, water, energie (warmte + gas)
+  en stekcijfer; daaronder hetzelfde per vak. Dezelfde cijfers als de pagina Teelt.
+- Draait elk uur mee in `priva_bestanden.py`; de tabel `teelt_rapport` onthoudt wat al gemaild is. Alleen
+  teelten die vanaf 20-10-2026 zijn afgerond. Versturen via SMTP (`SMTP_SERVER`, `SMTP_GEBRUIKER`,
+  `SMTP_WACHTWOORD` in `.env.taak`); zonder die instellingen wordt er niets verstuurd.
+
 ## [2.15.2] - 2026-10-16
 
 ### Toegevoegd
