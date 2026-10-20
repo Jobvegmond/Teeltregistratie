@@ -57,19 +57,25 @@ def vakken_en_tuinen(database):
     return vakken, [(t["naam"], t["id"]) for t in tuinen], {t["id"]: t["nummer"] for t in tuinen}
 
 
+def instelling(naam, standaard=None):
+    """Een instelling uit de omgeving, zonder spaties of een Windows-regeleinde (\r) eromheen."""
+    waarde = os.environ.get(naam)
+    return waarde.strip() if waarde and waarde.strip() else standaard
+
+
 def mailen(onderwerp, tekst, html_tekst, aan):
     bericht = EmailMessage()
     bericht["Subject"] = onderwerp
-    bericht["From"] = os.environ.get("RAPPORT_VAN") or os.environ["SMTP_GEBRUIKER"]
+    bericht["From"] = instelling("RAPPORT_VAN") or instelling("SMTP_GEBRUIKER")
     bericht["To"] = ", ".join(aan)
     bericht.set_content(tekst)
     bericht.add_alternative(html_tekst, subtype="html")
-    poort = int(os.environ.get("SMTP_POORT", "587"))
+    poort = int(instelling("SMTP_POORT", "587"))
     verbinding = smtplib.SMTP_SSL if poort == 465 else smtplib.SMTP
-    with verbinding(os.environ["SMTP_SERVER"], poort, timeout=60) as smtp:
+    with verbinding(instelling("SMTP_SERVER"), poort, timeout=60) as smtp:
         if poort != 465:
             smtp.starttls()
-        smtp.login(os.environ["SMTP_GEBRUIKER"], os.environ["SMTP_WACHTWOORD"])
+        smtp.login(instelling("SMTP_GEBRUIKER"), instelling("SMTP_WACHTWOORD"))
         smtp.send_message(bericht)
 
 
@@ -113,8 +119,8 @@ def main():
         lijst = list(sorteer_afdelingen({afdeling}, nummer)) if afdeling is not None else []
         return lijst.index(afdeling) if afdeling in lijst else 99
 
-    aan = [a.strip() for a in (args.test or os.environ.get("RAPPORT_AAN", RAPPORT_AAN)).split(",") if a.strip()]
-    smtp_klaar = all(os.environ.get(k) for k in ("SMTP_SERVER", "SMTP_GEBRUIKER", "SMTP_WACHTWOORD"))
+    aan = [a.strip() for a in (args.test or instelling("RAPPORT_AAN", RAPPORT_AAN)).split(",") if a.strip()]
+    smtp_klaar = all(instelling(k) for k in ("SMTP_SERVER", "SMTP_GEBRUIKER", "SMTP_WACHTWOORD"))
     fout = False
     for week in nieuw:
         laatste, groep = afgerond[week]
