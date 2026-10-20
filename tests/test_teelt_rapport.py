@@ -50,6 +50,7 @@ class TestBericht(unittest.TestCase):
         self.assertNotIn("Planten", rijen[0])
         self.assertNotIn("Fase 1 d", rijen[0])
         self.assertIn("Uitval %", rijen[0])
+        self.assertEqual(list(rijen[0])[-1], "Gewicht g")          # klimaat, water, energie en stek alleen bovenaan
         self.assertEqual(rijen[1]["Gewicht g"], "650")
         self.assertIn("<table", html)
         self.assertIn("Plantweek 32 (2026) is afgerond", html)

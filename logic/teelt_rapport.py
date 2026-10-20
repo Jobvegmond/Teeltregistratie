@@ -34,8 +34,9 @@ KENGETALLEN = [
     ("warmte", "Energie (warmte + gas)", 0, "MJ/m²"), ("stek", "Stekcijfer", 1, ""),
 ]
 TEKEN = {"afwijking"}
-# In de tabel per vak niet (wel in de samenvatting): de aantallen en de twee fasen.
-NIET_PER_VAK = {"geplant", "geoogst", "fase1", "fase2"}
+# In de tabel per vak niet (wel in de samenvatting): de aantallen, de twee fasen, klimaat, input en stek. Per vak
+# blijven de datums, uitval, teeltduur, de lengtes en het gewicht.
+NIET_PER_VAK = {"geplant", "geoogst", "fase1", "fase2", "lichtsom", "temp", "afwijking", "water", "warmte", "stek"}
 # Korte koppen voor de tabel per vak.
 KORT = {"geplant": "Planten", "geoogst": "Stelen", "uitval": "Uitval %", "teeltduur": "Duur d", "fase1": "Fase 1 d",
         "fase2": "Fase 2 d", "lengte_fg": "Lengte FG cm", "lengte": "Lengte cm", "gewicht": "Gewicht g",
