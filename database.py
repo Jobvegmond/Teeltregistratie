@@ -595,6 +595,15 @@ def init_db():
         # Klimaat en meteo per uur uit de Priva-bestanden op de NAS (priva_klimaat.py, sinds 2.11.0).
         cursor.execute(KLIMAAT_UUR_TABEL)
         cursor.execute(METEO_UUR_TABEL)
+        # Welke rapporten "Teelt afgerond" al gemaild zijn (teelt_rapport.py, sinds 2.16.0).
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS teelt_rapport (
+                plantweek TEXT PRIMARY KEY,
+                laatste_oogst TEXT,
+                aan TEXT,
+                verstuurd_op TIMESTAMPTZ DEFAULT now()
+            )
+        """)
         # Gewasbescherming, biologie en voeding per vak (sinds 2.14.0 uit Agro4all, agro4all_import.py).
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS middel (
@@ -1464,6 +1473,26 @@ def upsert_klimaat_uur(afdeling_uren, meteo_uren, tuin_id):
                 {", ".join(f"{v} = EXCLUDED.{v}" for v in METEO_UUR_VELDEN)}""", meteo, page_size=1000)
         conn.commit()
     return len(afd), len(meteo)
+
+
+def get_teelt_rapporten():
+    """De plantweken ("2026-34") waarvan het rapport "Teelt afgerond" al gemaild is."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT plantweek FROM teelt_rapport")
+        return {r[0] for r in cursor.fetchall()}
+
+
+def markeer_teelt_rapport(plantweek, laatste_oogst, aan):
+    """Onthoud dat het rapport van deze plantweek gemaild is (opnieuw mailen werkt het tijdstip bij)."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO teelt_rapport (plantweek, laatste_oogst, aan) VALUES (%s, %s, %s)
+            ON CONFLICT (plantweek) DO UPDATE SET laatste_oogst = EXCLUDED.laatste_oogst, aan = EXCLUDED.aan,
+                verstuurd_op = now()
+        """, (plantweek, str(laatste_oogst), aan))
+        conn.commit()
 
 
 def get_klimaat_uur(tuin_id, van, tot):

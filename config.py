@@ -20,6 +20,14 @@ STOOK_MAX = 15.5
 EC_BEREIK = (1.0, 2.0)
 PH_BEREIK = (5.0, 5.5)
 
+# --- RAPPORT "TEELT AFGEROND" (teelt_rapport.py) ---
+# Mail zodra het laatste vak van een plantweek geoogst is. Alleen teelten die op of na RAPPORT_VANAF zijn afgerond
+# (oudere niet alsnog). Het adres kan in de omgeving overschreven worden (RAPPORT_AAN).
+from datetime import date as _date
+RAPPORT_AAN = "info@tanacetum.nl"
+RAPPORT_VANAF = _date(2026, 10, 20)
+APP_URL = "https://vemteelt.onrender.com"
+
 # --- ENERGIE ---
 # Calorische waarde van aardgas (bovenwaarde Groningen-gas, geen rendementscorrectie),
 # om m³ gas om te rekenen naar MJ.
@@ -67,4 +75,4 @@ PH_BAND = {1: (4.8, 6.0), 3: (4.8, 6.0)}
 # --- VERSIE ---
 # Staat rechtsboven in de app. Ophogen bij elke wijziging op main (zie CHANGELOG.md):
 # derde getal bij een correctie, tweede bij iets nieuws, eerste bij een grote omzetting.
-APP_VERSIE = "2.15.0"
+APP_VERSIE = "2.16.0"
