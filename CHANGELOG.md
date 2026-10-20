@@ -3,6 +3,14 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.16.2] - 2026-10-20
+
+### Gewijzigd
+- `teelt_rapport.py`: Microsoft 365 staat SMTP met wachtwoord niet toe ("SmtpClientAuthentication is disabled
+  for the Tenant"). Nu ook **Direct Send**: op poort 25 zonder inloggen afleveren bij
+  `tanacetum-nl.mail.protection.outlook.com` (alleen ontvangers binnen tanacetum.nl; het openbare IP van de
+  NAS hoort in het SPF-record). Als reserve ook versturen via Microsoft Graph (app-registratie met Mail.Send).
+
 ## [2.16.1] - 2026-10-20
 
 ### Gewijzigd
