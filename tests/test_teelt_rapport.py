@@ -36,14 +36,20 @@ class TestBericht(unittest.TestCase):
         onderwerp, tekst, html = tr.bericht((2026, 32), groep, [], TUINEN, laatste, app_url="https://voorbeeld")
         self.assertEqual(onderwerp, "Teelt afgerond; plantweek 32 (2026)")
         self.assertIn("3 vakken (Tuin 1: 1, Tuin 3: 2)", tekst)
-        self.assertIn("24-09-2026", tekst)
+        self.assertIn("wk 39 do (24-09-2026)", tekst)          # do 24-09: week van zo 20-09 t/m za 26-09
         kolommen, samen = tr.samenvatting(groep, [], TUINEN)
         self.assertEqual(kolommen, ["Tuin 1", "Tuin 3", "Totaal", "Vorig jaar"])
         lengte = dict(samen)["Oogstlengte"]
         self.assertEqual((lengte["Tuin 3"], lengte["Vorig jaar"]), ("78,0 cm", "–"))   # (80 + 76) / 2, zelfde m²
         rijen = tr.per_vak(groep, dict((i, n) for n, i in TUINEN))
-        self.assertEqual([(r["Tuin"], r["Vak"], r["Oogst"]) for r in rijen],
-                         [("Tuin 1", "2", "20-09"), ("Tuin 3", "5", "22-09"), ("Tuin 3", "6", "24-09")])
+        self.assertEqual([(r["Tuin"], r["Vak"], r["Geplant"], r["Oogst"]) for r in rijen],
+                         [("Tuin 1", "2", "wk 32 wo", "wk 39 zo"), ("Tuin 3", "5", "wk 32 ma", "wk 39 di"),
+                          ("Tuin 3", "6", "wk 32 di", "wk 39 do")])
+        self.assertNotIn("Code", rijen[0])
+        self.assertNotIn("Afd.", rijen[0])
+        self.assertNotIn("Planten", rijen[0])
+        self.assertNotIn("Fase 1 d", rijen[0])
+        self.assertIn("Uitval %", rijen[0])
         self.assertEqual(rijen[1]["Gewicht g"], "650")
         self.assertIn("<table", html)
         self.assertIn("Plantweek 32 (2026) is afgerond", html)

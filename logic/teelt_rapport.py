@@ -9,7 +9,19 @@ Alleen rekenwerk en opmaak; versturen doet teelt_rapport.py. Tests in tests/test
 import html
 
 from logic import teeltvergelijking as teeltvgl
+from logic.weken import weeknummer
 from utils.format import LEEG, fmt_getal, fmt_verschil
+
+DAGEN = ("ma", "di", "wo", "do", "vr", "za", "zo")
+
+
+def week_dag(datum, plantweek=False):
+    """Een datum als weeknummer en dag ("wk 34 ma"): een plantdatum in de ISO-plantweek (zoals de teeltcode),
+    een andere datum in de week van zondag t/m zaterdag (zoals overal in de app)."""
+    if not datum:
+        return LEEG
+    week = datum.isocalendar()[1] if plantweek else weeknummer(datum)
+    return f"wk {week} {DAGEN[datum.weekday()]}"
 
 # (sleutel, kop, decimalen, eenheid) per vak en in de samenvatting.
 KENGETALLEN = [
@@ -22,6 +34,8 @@ KENGETALLEN = [
     ("warmte", "Energie (warmte + gas)", 0, "MJ/m²"), ("stek", "Stekcijfer", 1, ""),
 ]
 TEKEN = {"afwijking"}
+# In de tabel per vak niet (wel in de samenvatting): de aantallen en de twee fasen.
+NIET_PER_VAK = {"geplant", "geoogst", "fase1", "fase2"}
 # Korte koppen voor de tabel per vak.
 KORT = {"geplant": "Planten", "geoogst": "Stelen", "uitval": "Uitval %", "teeltduur": "Duur d", "fase1": "Fase 1 d",
         "fase2": "Fase 2 d", "lengte_fg": "Lengte FG cm", "lengte": "Lengte cm", "gewicht": "Gewicht g",
@@ -74,12 +88,12 @@ def per_vak(vakken, tuinnaam, afdeling_volgorde=None):
     uit = []
     for t in sorted(vakken, key=lambda t: (tuinnaam.get(t["tuin_id"], ""), volgorde(t["tuin_id"], t["afdeling"]),
                                            t["vak"])):
-        rij = {"Tuin": tuinnaam.get(t["tuin_id"], "?"), "Afd.": str(t["afdeling"] or LEEG), "Vak": str(t["vak"]),
-               "Code": t.get("code") or LEEG, "Geplant": f"{t['start']:%d-%m}",
-               "Florgib": f"{t['florgib']:%d-%m}" if t.get("florgib") else LEEG,
-               "Oogst": f"{t['oogst_echt']:%d-%m}" if t.get("oogst_echt") else LEEG}
+        rij = {"Tuin": tuinnaam.get(t["tuin_id"], "?"), "Vak": str(t["vak"]),
+               "Geplant": week_dag(t["start"], plantweek=True), "Florgib": week_dag(t.get("florgib")),
+               "Oogst": week_dag(t.get("oogst_echt"))}
         for sleutel, *_ in KENGETALLEN:
-            rij[KORT[sleutel]] = _waarde(sleutel, t.get(sleutel), met_eenheid=False)
+            if sleutel not in NIET_PER_VAK:
+                rij[KORT[sleutel]] = _waarde(sleutel, t.get(sleutel), met_eenheid=False)
         uit.append(rij)
     return uit
 
@@ -101,10 +115,12 @@ def bericht(plantweek, vakken, vorig_jaar, tuinen, laatste_oogst, app_url=None, 
     jaar, week = plantweek
     kolommen, samen = samenvatting(vakken, vorig_jaar, tuinen)
     vak_rijen = per_vak(vakken, tuinnaam, afdeling_volgorde)
-    vak_koppen = ["Tuin", "Afd.", "Vak", "Code", "Geplant", "Florgib", "Oogst"] + [KORT[s] for s, *_ in KENGETALLEN]
+    vak_koppen = ["Tuin", "Vak", "Geplant", "Florgib", "Oogst"] + [KORT[s] for s, *_ in KENGETALLEN
+                                                                 if s not in NIET_PER_VAK]
     per_tuin = ", ".join(f"{n}: {sum(1 for t in vakken if t['tuin_id'] == i)}" for n, i in tuinen
                          if any(t["tuin_id"] == i for t in vakken))
-    inleiding = (f"Plantweek {week} ({jaar}) is afgerond: het laatste vak is op {laatste_oogst:%d-%m-%Y} geoogst. "
+    inleiding = (f"Plantweek {week} ({jaar}) is afgerond: het laatste vak is geoogst in {week_dag(laatste_oogst)} "
+                 f"({laatste_oogst:%d-%m-%Y}). "
                  f"{len(vakken)} vakken ({per_tuin}).")
     voet = ("Gemiddelden gewogen naar de m² van het vak; uitval, lengte en gewicht van de afgeronde vakken. Vorig jaar "
             f"= plantweek {week} van {jaar - 1}" + ("." if vorig_jaar else " (geen vakken).")
@@ -121,7 +137,7 @@ def bericht(plantweek, vakken, vorig_jaar, tuinen, laatste_oogst, app_url=None, 
         '<div style="font-family:Arial,sans-serif;font-size:13px;color:#1f1f1f">'
         f'<h2 style="color:#2E6A4C;margin:0 0 6px">Teelt afgerond: plantweek {week} ({jaar})</h2>'
         f"<p>{html.escape(inleiding)}</p><h3 style=\"margin:14px 0 4px\">Samenvatting</h3>{samen_html}"
-        f'<h3 style="margin:14px 0 4px">Per vak</h3>{_tabel_html(vak_koppen, vak_rijen, eerste_links=4)}'
+        f'<h3 style="margin:14px 0 4px">Per vak</h3>{_tabel_html(vak_koppen, vak_rijen, eerste_links=5)}'
         f'<p style="color:#6f6f6a;font-size:11px">{html.escape(voet)}</p>'
         + (f'<p><a href="{html.escape(app_url)}">Open de teeltregistratie</a></p>' if app_url else "")
         + "</div>")
