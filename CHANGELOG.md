@@ -3,6 +3,12 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.16.1] - 2026-10-20
+
+### Gewijzigd
+- `teelt_rapport.py`: mailen via dezelfde SMTP-server als de e-mailmeldingen van DSM, ook met SSL op poort
+  465 (naast STARTTLS op 587); `--test ADRES` stuurt een proefmail zonder hem als verstuurd te onthouden.
+
 ## [2.16.0] - 2026-10-20
 
 ### Toegevoegd

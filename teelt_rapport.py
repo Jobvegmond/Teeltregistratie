@@ -5,8 +5,8 @@ priva_bestanden.py; een verstuurd rapport staat in de tabel teelt_rapport en gaa
 
 Alleen teelten die op of na RAPPORT_VANAF (config) zijn afgerond: oudere teelten worden niet alsnog gemaild.
 
-Mail via SMTP, instellingen in de omgeving (.env.taak):
-    SMTP_SERVER, SMTP_POORT (587, STARTTLS), SMTP_GEBRUIKER, SMTP_WACHTWOORD,
+Mail via SMTP, dezelfde instellingen als de e-mailmeldingen van DSM, in de omgeving (.env.taak):
+    SMTP_SERVER, SMTP_POORT (587 = STARTTLS, 465 = SSL), SMTP_GEBRUIKER, SMTP_WACHTWOORD,
     RAPPORT_VAN (standaard SMTP_GEBRUIKER), RAPPORT_AAN (standaard config.RAPPORT_AAN; meer adressen met komma's)
 Zonder SMTP-instellingen: een melding, niets verstuurd en niets als verstuurd gemarkeerd.
 
@@ -15,6 +15,7 @@ Gebruik:
     python teelt_rapport.py --droog                      # alleen tonen welke teelten gemaild zouden worden
     python teelt_rapport.py --plantweek 2026-34 --voorbeeld rapport.html   # één rapport als HTML-bestand
     python teelt_rapport.py --plantweek 2026-34 --opnieuw                  # één rapport (opnieuw) mailen
+    python teelt_rapport.py --plantweek 2026-34 --test job@tanacetum.nl    # proefmail, niets onthouden
 """
 import argparse
 import os
@@ -30,6 +31,7 @@ def lees_argumenten():
     parser.add_argument("--plantweek", help="alleen deze plantweek, bijv. 2026-34")
     parser.add_argument("--voorbeeld", help="het rapport als HTML-bestand schrijven in plaats van mailen")
     parser.add_argument("--opnieuw", action="store_true", help="ook als het al verstuurd is (met --plantweek)")
+    parser.add_argument("--test", metavar="ADRES", help="proefmail naar dit adres; niets als verstuurd onthouden")
     parser.add_argument("--doel", choices=("app", "productie"), default="app",
                         help="app = DATABASE_URL (standaard), productie = DATABASE_URL_PRODUCTIE")
     parser.add_argument("--droog", action="store_true", help="alleen tonen, niets versturen")
@@ -55,16 +57,25 @@ def vakken_en_tuinen(database):
     return vakken, [(t["naam"], t["id"]) for t in tuinen], {t["id"]: t["nummer"] for t in tuinen}
 
 
+def instelling(naam, standaard=None):
+    """Een instelling uit de omgeving, zonder spaties of een Windows-regeleinde (\r) eromheen."""
+    waarde = os.environ.get(naam)
+    return waarde.strip() if waarde and waarde.strip() else standaard
+
+
 def mailen(onderwerp, tekst, html_tekst, aan):
     bericht = EmailMessage()
     bericht["Subject"] = onderwerp
-    bericht["From"] = os.environ.get("RAPPORT_VAN") or os.environ["SMTP_GEBRUIKER"]
+    bericht["From"] = instelling("RAPPORT_VAN") or instelling("SMTP_GEBRUIKER")
     bericht["To"] = ", ".join(aan)
     bericht.set_content(tekst)
     bericht.add_alternative(html_tekst, subtype="html")
-    with smtplib.SMTP(os.environ["SMTP_SERVER"], int(os.environ.get("SMTP_POORT", "587")), timeout=60) as smtp:
-        smtp.starttls()
-        smtp.login(os.environ["SMTP_GEBRUIKER"], os.environ["SMTP_WACHTWOORD"])
+    poort = int(instelling("SMTP_POORT", "587"))
+    verbinding = smtplib.SMTP_SSL if poort == 465 else smtplib.SMTP
+    with verbinding(instelling("SMTP_SERVER"), poort, timeout=60) as smtp:
+        if poort != 465:
+            smtp.starttls()
+        smtp.login(instelling("SMTP_GEBRUIKER"), instelling("SMTP_WACHTWOORD"))
         smtp.send_message(bericht)
 
 
@@ -98,7 +109,7 @@ def main():
     if not args.droog and not args.voorbeeld:
         database.init_db()          # tabel teelt_rapport (nieuw in 2.16.0)
     verstuurd = set() if args.droog or args.voorbeeld else database.get_teelt_rapporten()
-    nieuw = [w for w in kandidaten if args.opnieuw or f"{w[0]}-{w[1]:02d}" not in verstuurd]
+    nieuw = [w for w in kandidaten if args.opnieuw or args.test or f"{w[0]}-{w[1]:02d}" not in verstuurd]
     if not nieuw:
         print(f"[{stempel}] Geen nieuwe afgeronde teelten.")
         return
@@ -108,8 +119,8 @@ def main():
         lijst = list(sorteer_afdelingen({afdeling}, nummer)) if afdeling is not None else []
         return lijst.index(afdeling) if afdeling in lijst else 99
 
-    aan = [a.strip() for a in os.environ.get("RAPPORT_AAN", RAPPORT_AAN).split(",") if a.strip()]
-    smtp_klaar = all(os.environ.get(k) for k in ("SMTP_SERVER", "SMTP_GEBRUIKER", "SMTP_WACHTWOORD"))
+    aan = [a.strip() for a in (args.test or instelling("RAPPORT_AAN", RAPPORT_AAN)).split(",") if a.strip()]
+    smtp_klaar = all(instelling(k) for k in ("SMTP_SERVER", "SMTP_GEBRUIKER", "SMTP_WACHTWOORD"))
     fout = False
     for week in nieuw:
         laatste, groep = afgerond[week]
@@ -135,8 +146,10 @@ def main():
             print(f"[{stempel}] FOUT bij mailen '{onderwerp}': {e}", file=sys.stderr)
             fout = True
             continue
-        database.markeer_teelt_rapport(sleutel, laatste, ", ".join(aan))
-        print(f"[{stempel}] Gemaild: '{onderwerp}' ({len(groep)} vakken) aan {', '.join(aan)}")
+        if not args.test:
+            database.markeer_teelt_rapport(sleutel, laatste, ", ".join(aan))
+        print(f"[{stempel}] {'Proefmail' if args.test else 'Gemaild'}: '{onderwerp}' ({len(groep)} vakken) "
+              f"aan {', '.join(aan)}")
     if fout:
         sys.exit(1)
 
