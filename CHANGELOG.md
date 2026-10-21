@@ -3,6 +3,18 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.18.1] - 2026-10-21
+
+### Gewijzigd
+- Registreren: de tabel met vakken is compact (smalle kolommen met een vaste breedte, ± een derde van de
+  breedte), met kortere koppen.
+- Overzicht: de standaardperiode kijkt verder terug dan vooruit (± 60 % terug, bijv. bij 3 mnd 8 weken terug
+  en 4 vooruit); op een telefoon staat de periode standaard op 4 wk.
+- Overzicht: dunne lichte lijnen per dag over de tijdlijn (weg als een dag smaller is dan 6 px, bij 6 mnd en
+  1 jaar), en onder de weeknummers een regel met de dagen ("21", of "wo 21" als er ruimte is; vandaag rood).
+- Overzicht: de watergift heeft één kleur (geen schaal meer naar het aantal liters), en de oogstprognose
+  staat niet meer op de tijdlijn: een lopende teelt loopt tot vandaag (de prognose staat in de tooltip).
+
 ## [2.18.0] - 2026-10-21
 
 ### Toegevoegd
