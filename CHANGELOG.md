@@ -3,6 +3,18 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.17.1] - 2026-10-21
+
+### Gewijzigd
+- Overzicht: de schakelaar Detail is vervangen door **Weergave: Standaard | Bespuitingen | Watergift**.
+  - *Standaard*: driehoekjes voor de bespuitingen en blauwe vakjes voor de watergift met **standaard het
+    aantal l/m² erin** (groter lettertype).
+  - *Bespuitingen*: grotere driehoekjes met de **middelen erachter**, ingekort tot de volgende behandeling.
+  - *Watergift*: per vak drie regels, **liters, EC en pH** van de gift, en bovenaan de **EC van de
+    voorregeling**.
+- Wat er in een dag past (getal met of zonder decimaal, middelnamen) bepaalt de grafiek zelf uit de breedte
+  van het scherm; past er niets, dan staat het in de tooltip.
+
 ## [2.17.0] - 2026-10-21
 
 ### Gewijzigd
