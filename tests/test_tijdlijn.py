@@ -53,12 +53,6 @@ class TestStukken(unittest.TestCase):
         self.assertEqual(tijdlijn.overlappend(uit, 1, date(2027, 1, 21), date(2027, 4, 1)), [])
         self.assertEqual(tijdlijn.overlappend(uit, 3, date(2026, 11, 1), date(2027, 1, 10)), [])
 
-    def test_oogst_per_week(self):
-        uit = tijdlijn.stukken(self.teelten, self.statussen, self.concepten, VANDAAG, plan_van)
-        per_week = tijdlijn.oogst_per_week(uit, self.statussen, date(2026, 10, 1), date(2026, 12, 31))
-        # 14-11 (prognose vak 1) valt in de week van zo 08-11; 29-12 (gepland vak 2) in die van zo 27-12.
-        self.assertEqual(per_week, {date(2026, 11, 8): 1, date(2026, 12, 27): 1})
-
 
 if __name__ == "__main__":
     unittest.main()

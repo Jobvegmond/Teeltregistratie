@@ -4,12 +4,9 @@ Tijdlijn per vak (proef): de vakkenmatrix en de strokenplanning in één beeld.
 Per vak de stukken op de tijdlijn: afgeronde teelten, de lopende teelt (tot
 vandaag in de statuskleur van de vakkenmatrix, daarna licht tot de prognose),
 bevestigde teelten die nog moeten beginnen en concepten. Daarnaast de
-overlap met de vorige ronde in een vak en het aantal vakken dat per week
-geoogst wordt. Alleen rekenwerk; tekenen gebeurt in app.py.
+overlap met de vorige ronde in een vak. Alleen rekenwerk; tekenen gebeurt in app.py.
 """
 from datetime import date, timedelta
-
-from logic import weken as wg
 
 
 def _datum(waarde):
@@ -103,19 +100,3 @@ def overlappend(stukken_lijst, vak, start, eind, behalve_concept=None):
                   if begin < eind and einde > start
                   and (behalve_concept is None or concept_id != behalve_concept))
 
-
-def oogst_per_week(stukken_lijst, statussen, van, tot):
-    """
-    {zondag van de week: aantal vakken} met een (verwachte) oogst in [van, tot]:
-    afgeronde teelten op hun oogstdag, lopende op de prognose (anders plan),
-    geplande en concepten op hun plan-oogst.
-    """
-    dagen = [s["eind"] for s in stukken_lijst if s["soort"] in ("afgerond", "gepland", "concept") and not s.get("open")]
-    for s in statussen.values():
-        dagen.append(s.get("prognose") or s.get("plan"))
-    uit = {}
-    for d in dagen:
-        if d and van <= d <= tot:
-            zo = wg.week_begin(d)
-            uit[zo] = uit.get(zo, 0) + 1
-    return uit
