@@ -1860,6 +1860,7 @@ TL_AFGEROND, TL_CONCEPT, TL_FLORGIB, TL_ROOD = "#b8b8b3", "#2a78d6", "#8e44ad", 
 TL_VENSTERS = {"4 wk": 4, "3 mnd": 13, "6 mnd": 26, "1 jaar": 52}
 TL_WEERGAVEN = ["Standaard", "Bespuitingen", "Watergift"]
 TL_WATER = "#2a6fb5"           # watergift: blauw, dekking naar de liters
+TL_WATER_LICHT = "#9cc4ec"     # watergift in de weergave Bespuitingen: licht blauw, zodat de middelen opvallen
 TL_RIJ = 22   # hoogte van een regel (px)
 
 
@@ -2110,7 +2111,8 @@ def _tl_grafiek(volgorde, frames, van, tot, vandaag, weken, weergave):
         groot = weergave != "Bespuitingen"
         hoogte = TL_RIJ - 8 if groot else 4
         tip = [alt.Tooltip("y:N", title="Vak"), "Watergift:N"]
-        lagen.append(alt.Chart(water).mark_bar(height=hoogte, color=TL_WATER, cursor="pointer",
+        lagen.append(alt.Chart(water).mark_bar(height=hoogte, color=TL_WATER if groot else TL_WATER_LICHT,
+                                               cursor="pointer",
                                                yOffset=0 if groot else (TL_RIJ - 8) / 2 - hoogte / 2)
                      .encode(x="start:T", x2="eind:T", y=y, opacity=alt.Opacity("dekking:Q", scale=None),
                              tooltip=tip)
@@ -2395,7 +2397,8 @@ def _tl_legenda(weergave):
     legend.legenda([{"kleur": kleur, "label": soort, "stijl": "clip-path:polygon(0 0,100% 0,50% 100%);"}
                     for soort, kleur in wg.BEHANDELING_KLEUR.items()]
                    + [{"kleur": TL_WATER, "label": "watergift in l/m² (donkerder = meer; klik voor de gietbeurten)",
-                       "stijl": "height:0.3rem;" if weergave == "Bespuitingen" else ""}],
+                       "stijl": f"height:0.3rem;background:{TL_WATER_LICHT};" if weergave == "Bespuitingen"
+                       else ""}],
                    titel="Bespuitingen (▼) en watergift:")
 
 

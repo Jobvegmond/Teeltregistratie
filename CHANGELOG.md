@@ -3,6 +3,11 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.17.2] - 2026-10-21
+
+### Gewijzigd
+- Overzicht, weergave Bespuitingen: het watergiftstreepje is licht blauw, zodat de middelen beter opvallen.
+
 ## [2.17.1] - 2026-10-21
 
 ### Gewijzigd
