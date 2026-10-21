@@ -8,6 +8,8 @@ inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 ### Gewijzigd
 - Overzicht: de oogstprognose staat weer op de tijdlijn (een lopende teelt loopt doorzichtig door tot de
   prognose-oogst), en de regel **Oogst** bovenaan (aantal vakken per week) is weg.
+- Overzicht: onder de weeknummers twee regels, de weekdag (zo, ma, di …) en het dagnummer, ook bij 3 mnd
+  (vanaf 10 px per dag; vandaag in rood).
 
 ## [2.18.1] - 2026-10-21
 

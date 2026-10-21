@@ -1831,7 +1831,7 @@ def _pagina_overzicht():
             "afgerond.",
         lezen=[
             "**Tijdlijn**: per vak één regel. Weken lopen van zondag t/m zaterdag; bovenaan het weeknummer en "
-            "daaronder de dagen. De lopende teelt is groen tot vandaag en loopt daarna doorzichtig door tot de "
+            "daaronder de weekdag en de datum. De lopende teelt is groen tot vandaag en loopt daarna doorzichtig door tot de "
             "prognose-oogst; per teelt (plantweek) wisselen donker en licht; het zwarte streepje is de plan-oogst. "
             "Hoeveel de prognose voor of achter loopt op plan staat in de tooltip en in het vak.",
             "**Weergave** *Standaard*: een driehoekje bovenin de balk op elke dag met een behandeling (kleur = "
@@ -1953,14 +1953,14 @@ def _tl_frames(info, afdelingen, van, tot, vandaag, weken, weergave):
     vak_afd = {int(v): int(a) for v, a in zip(info["vakken"]["vaknummer"], info["vakken"]["afdeling"]) if a == a}
 
     stap = _tl_stap(weken)
-    volgorde, kopteksten = ["Week", "Dag"], []
+    volgorde, kopteksten = ["Week", "Dag", "Datum"], []
     for afdeling in sorteer_afdelingen(set(vak_afd.values()), tuin["nummer"]):
         if afdelingen is not None and afdeling not in afdelingen:
             continue
         for vak in sorted(v for v, a in vak_afd.items() if a == afdeling):
             volgorde += [f"Vak {vak}"] + ([f"§ec{vak}", f"§ph{vak}"] if weergave == "Watergift" else [])
     if weergave == "Watergift":
-        volgorde.insert(2, "EC voorr.")
+        volgorde.insert(3, "EC voorr.")
     zichtbaar = set(volgorde)
 
     def periode(s):
@@ -2039,10 +2039,10 @@ def _tl_frames(info, afdelingen, van, tot, vandaag, weken, weergave):
     def blok_start(i):
         return van + timedelta(weeks=i * stap)
 
-    # De dagen onder de weeknummers: "wo 21" als er ruimte is, anders "21" (de grafiek kiest; zie _tl_grafiek).
-    dagnamen = [{"y": "Dag", "x": pd.Timestamp(dag) + pd.Timedelta(hours=12), "kort": str(dag.day),
-                 "lang": f"{_DAGEN_KORT[dag.weekday()]} {dag.day}", "vandaag": dag == vandaag}
-                for dag in wg.dagen(van, tot)]
+    # Onder de weeknummers per dag de weekdag (regel "Dag") en het dagnummer (regel "Datum").
+    dagnamen = [{"y": regel, "x": pd.Timestamp(dag) + pd.Timedelta(hours=12), "vandaag": dag == vandaag,
+                 "tekst": _DAGEN_KORT[dag.weekday()] if regel == "Dag" else str(dag.day)}
+                for dag in wg.dagen(van, tot) for regel in ("Dag", "Datum")]
     weeknummers = [{"y": "Week", "x": blok_start(i) + plek, "tekst": str(kalender.weeknummer(blok_start(i)))}
                    for i in range((tot - van).days // (7 * stap) + 1)]
     balken = pd.DataFrame(balken)
@@ -2231,9 +2231,9 @@ def _tl_grafiek(volgorde, frames, van, tot, vandaag, weken, weergave):
     uitlijning = "center" if _tl_stap(weken) == 1 else "left"
     lagen.append(alt.Chart(weeknummers).mark_text(fontSize=11, opacity=0.6, align=uitlijning)
                  .encode(x="x:T", y=y, text="tekst:N"))
-    # De dagen: "wo 21" bij ≥ 34 px per dag, "21" bij ≥ 13 px, anders niets; vandaag in rood.
-    lagen.append(alt.Chart(dagnamen).mark_text(fontSize=10)
-                 .transform_calculate(lbl=f"{px} >= 34 ? datum.lang : {px} >= 13 ? datum.kort : ''")
+    # Weekdag en dagnummer: bij ≥ 10 px per dag (anders staan ze over elkaar); vandaag in rood.
+    lagen.append(alt.Chart(dagnamen).mark_text(fontSize=alt.expr(f"{px} >= 20 ? 10 : 9"))
+                 .transform_calculate(lbl=f"{px} >= 10 ? datum.tekst : ''")
                  .encode(x="x:T", y=y, text="lbl:N",
                          color=alt.condition("datum.vandaag", alt.value(TL_ROOD), alt.value("#8a8a85"))))
     lagen.append(alt.Chart(pd.DataFrame({"d": [pd.Timestamp(vandaag)]}))
