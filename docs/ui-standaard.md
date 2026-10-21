@@ -18,7 +18,7 @@ Elke pagina, van boven naar beneden:
 
 Een onderdeel dat een pagina niet heeft, valt weg. De volgorde blijft.
 
-**Schermnummers.** De tabbladen zijn genummerd (1. Overzicht … 6. Meer) en elke sectie en elk
+**Schermnummers.** De tabbladen zijn genummerd (1. Registreren … 7. Meer) en elke sectie en elk
 openklapmenu op een pagina krijgt automatisch een volgnummer ("2.3"), zodat feedback naar een scherm kan
 verwijzen. Geef daarom elke hoofdweergave een `layout.sectie()`-kop en gebruik voor openklapmenu's
 `layout.uitklap()` (niet `st.expander`).
@@ -57,7 +57,7 @@ layout.export(excel, "watergift_tuin_3.xlsx")
 | Zoeken | Eén tekstveld, alleen op registerpagina's, altijd als laatste in de filterbalk | `filters.zoekveld()` |
 | Weergave-optie (eenheid, vergelijk met) | Knoppengroep, altijd één gekozen; nooit radio | `filters.weergave()` |
 | Aan/uit (Vooruitkijken, Alle concepten tonen) | Schakelaar | `filters.schakelaar()` |
-| Datum | Alleen in invoerformulieren (zijbalk, vensters van de tijdlijn, concepttabel), nooit om te filteren | `st.date_input` |
+| Datum | Alleen in invoerformulieren (Registreren, vensters van de tijdlijn, concepttabel), nooit om te filteren | `st.date_input` |
 
 Niet voor filters: `st.slider`, `st.select_slider`, `st.radio`, `st.date_input`, `st.number_input`.
 Een schuif mag alleen voor een doorlopende instelwaarde in een formulier of popup (rijpheid bij de
@@ -76,9 +76,8 @@ oogst), nooit om weken of perioden te kiezen.
   dag of week in die tuin per afdeling (wat er gebeurde, kengetallen, temperatuur en RV per uur).
 - **beide**: de pagina gaat altijd over beide tuinen; keuze uitgeschakeld met reden (nu geen pagina).
 
-Registreren kan maar in één tuin: bij Beide vraagt de zijbalk "Registreren in". Hetzelfde geldt voor het plannen op
-Overzicht (concepttabel, jaarplanning): bij Beide de tuin uit "Registreren in", met de tuinnaam in de titel
-van het openklapmenu.
+Registreren kan maar in één tuin (modus "een"): bij Beide registreer je in de laatst gekozen tuin. Hetzelfde geldt
+voor het plannen op Overzicht (concepttabel, jaarplanning), met de tuinnaam in de titel van het openklapmenu.
 
 ### Keuzes bewaren
 
@@ -131,6 +130,7 @@ alles = filters.schakelaar("Alle concepten tonen", "planning_alles", False, plek
 | Teelt vergelijken tussen de tuinen | Pagina Teelt bij Beide | – |
 | Watergift per vak | Tijdlijn op Overzicht, detail Watergift (klik = de gietbeurten van die dag) | Vakpopup (staafjes op de tijdlijn + tabel Watergift per dag) |
 | Lijst van vakken | Vakkenregister (Overzicht) | Doorklik-link met het juiste filter |
+| Registraties invoeren (Florgib, emmers, lengte/gewicht, opmerking, wijzigen) | Tabblad Registreren | Een concept starten als teelt: venster op de tijdlijn (Overzicht) |
 | Opmerkingen | Pagina Opmerkingen | Vakpopup; elders één regel "n opmerkingen →" |
 | Planning (concepten) | Tijdlijn op Overzicht (klik op een concept of een lege plek) | Concepttabel en jaarplanning in openklapmenu's op dezelfde pagina |
 | Vooruitblik | Openklapmenu op Overzicht | – |

@@ -3,6 +3,38 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.18.0] - 2026-10-21
+
+### Toegevoegd
+- **Tabblad 1. Registreren** in plaats van de zijbalk: Florgib, Emmers, Lengte en gewicht, Opmerking en
+  Wijzigen op de volle breedte, in de tuin die bovenaan gekozen is (Beide kan hier niet).
+  - Bij Florgib, Emmers en Lengte en gewicht een tabel met één regel per lopend vak: een **eigen waarde per
+    vak**, of **één waarde voor alle aangevinkte vakken** (boven de tabel). De invulkolommen staan direct
+    naast het vaknummer, ook handig op een telefoon.
+  - Emmers voor meerdere vakken tegelijk, met per vak *Afronden*; daaronder de oogstmomenten per vak
+    aanpassen of verwijderen.
+  - Rechts **Nog te doen** (Florgib verwacht of over tijd, vakken in de oogst of bijna oogstrijp, vakken in
+    de oogst zonder lengte) en **Laatst geregistreerd** (uit het logboek).
+  - Wijzigen: de onderdelen als tabbladen naast elkaar.
+  - Rekenwerk in `logic/registreren.py` (tests in `tests/test_registreren.py`).
+- De app opent op Overzicht; op een telefoon op Registreren.
+
+### Gewijzigd
+- De zijbalk is weg; *Ingelogd als* en *Uitloggen* staan op Meer.
+- Overzicht: de achtergrondkleuren van de prognose zijn eruit; een lopende teelt is groen tot vandaag en
+  doorzichtig groen tot de prognose-oogst, een afgeronde grijs. Per teelt (plantweek) wisselen een donkere
+  en een lichte tint, zodat je de teelten uit elkaar houdt. Hoeveel de prognose voor of achter loopt staat
+  in de tooltip.
+- Het actieve tabblad blijft groen als je er met de muis over gaat.
+
+## [2.17.2] - 2026-10-21
+
+### Gewijzigd
+- Overzicht, weergave Bespuitingen: het watergiftstreepje is licht blauw, zodat de middelen beter opvallen.
+- Overzicht, weergave Watergift leek leeg bij 3 mnd: de getallen pasten niet in een dag en bleven weg. Nu
+  staan de liters er ook bij smalle dagen in (hele liters, kleiner), en EC/pH als grijs blokje met de waarde
+  in de tooltip; bij 4 wk alle getallen.
+
 ## [2.17.1] - 2026-10-21
 
 ### Gewijzigd
