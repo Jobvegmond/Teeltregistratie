@@ -3,6 +3,14 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.18.1] - 2026-10-21
+
+### Gewijzigd
+- Registreren: de tabel met vakken is compact (smalle kolommen met een vaste breedte, ± een derde van de
+  breedte), met kortere koppen.
+- Overzicht: de standaardperiode kijkt verder terug dan vooruit (± 60 % terug, bijv. bij 3 mnd 8 weken terug
+  en 4 vooruit); op een telefoon staat de periode standaard op 4 wk.
+
 ## [2.18.0] - 2026-10-21
 
 ### Toegevoegd

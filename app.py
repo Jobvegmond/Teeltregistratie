@@ -592,13 +592,18 @@ PAGINA_DEFINITIES = [
 ]
 
 
-def _startpagina():
-    """Het adres waarop de app opent: Overzicht, op een telefoon Registreren (daar wordt in de kas ingevuld)."""
+def _mobiel():
+    """True op een telefoon (aan de browser te zien)."""
     try:
         agent = st.context.headers.get("User-Agent") or ""
-    except Exception:          # geen headers (bijv. in een test): gewoon Overzicht
+    except Exception:          # geen headers (bijv. in een test)
         agent = ""
-    return "registreren" if re.search(r"Mobi|Android|iPhone", agent) else "overzicht"
+    return bool(re.search(r"Mobi|Android|iPhone", agent))
+
+
+def _startpagina():
+    """Het adres waarop de app opent: Overzicht, op een telefoon Registreren (daar wordt in de kas ingevuld)."""
+    return "registreren" if _mobiel() else "overzicht"
 
 
 def _paginas():
@@ -912,24 +917,29 @@ def _inv_tabel(rijen, kolommen, sleutel):
     """
     De invultabel: vaste kolommen (alleen lezen) en invulkolommen. kolommen = [(sleutel, kop, soort, invul)]
     met soort "tekst", "getal", "geheel", "ja/nee" of een lijst opties. Volgorde: vinkje, vak, de invulkolommen
-    en daarna de rest, zodat je op een telefoon niet opzij hoeft te schuiven om in te vullen. Geeft de regels
-    als dicts terug.
+    en daarna de rest, zodat je op een telefoon niet opzij hoeft te schuiven om in te vullen. Smalle kolommen
+    met een vaste breedte (niet de hele pagina). Geeft de regels als dicts terug.
     """
-    config = {"Kies": st.column_config.CheckboxColumn("✓", width="small", help="Meedoen met de waarde hierboven"),
+    config = {"Kies": st.column_config.CheckboxColumn("✓", width=48, help="Meedoen met de waarde hierboven"),
               "id": None}
-    for kolom, kop, soort, _invul in kolommen:
+    breedte = 48
+    for kolom, kop, soort, invul in kolommen:
+        # Zo smal als de kop of de inhoud toelaat (± 7 px per letter in de kop; een invulkolom heeft er een
+        # potloodje bij).
+        px = max({"getal": 70, "geheel": 52, "ja/nee": 64}.get(soort, 72), int(len(kop) * 7 + 26)) + 18 * invul
+        breedte += px
         if soort == "getal":
-            config[kolom] = st.column_config.NumberColumn(kop, min_value=0.0, step=0.1, format="%.1f")
+            config[kolom] = st.column_config.NumberColumn(kop, min_value=0.0, step=0.1, format="%.1f", width=px)
         elif soort == "geheel":
-            config[kolom] = st.column_config.NumberColumn(kop, min_value=0, step=1, format="%d")
+            config[kolom] = st.column_config.NumberColumn(kop, min_value=0, step=1, format="%d", width=px)
         elif soort == "ja/nee":
-            config[kolom] = st.column_config.CheckboxColumn(kop)
+            config[kolom] = st.column_config.CheckboxColumn(kop, width=px)
         elif isinstance(soort, list):
-            config[kolom] = st.column_config.SelectboxColumn(kop, options=soort)
+            config[kolom] = st.column_config.SelectboxColumn(kop, options=soort, width=px)
         else:
-            config[kolom] = st.column_config.TextColumn(kop)
+            config[kolom] = st.column_config.TextColumn(kop, width=px)
     df = pd.DataFrame(rijen)
-    bewerkt = st.data_editor(df, key=sleutel, hide_index=True, use_container_width=True, column_config=config,
+    bewerkt = st.data_editor(df, key=sleutel, hide_index=True, width=breedte + 4, column_config=config,
                              column_order=["Kies", "vak"] + [k for k, _kop, _soort, invul in kolommen if invul]
                              + [k for k, _kop, _soort, invul in kolommen if not invul and k != "vak"],
                              disabled=[k for k, _kop, _soort, invul in kolommen if not invul],
@@ -953,8 +963,8 @@ def _inv_florgib(vakken, datum):
               "verwacht": format_datum(r["florgib_verwacht"]) if r["florgib_verwacht"] else "",
               "lengte": float("nan"), "gram": float("nan")} for r in open_],
             [("vak", "Vak", "geheel", False), ("pw", "Pw", "geheel", False), ("geplant", "Geplant", "tekst", False),
-             ("verwacht", "Florgib verwacht", "tekst", False), ("lengte", "Lengte (cm)", "getal", True),
-             ("gram", "Florgib (g)", "getal", True)], f"inv_florgib_tabel_{versie}")
+             ("verwacht", "Verwacht", "tekst", False), ("lengte", "Lengte", "getal", True),
+             ("gram", "Gram", "getal", True)], f"inv_florgib_tabel_{versie}")
         if st.form_submit_button("Opslaan", type="primary"):
             registraties = reg.te_registreren(regels, ["lengte", "gram"], {"lengte": lengte, "gram": gram})
             if not registraties:
@@ -982,7 +992,7 @@ def _inv_emmers(vakken, datum):
               "tot_nu": int(r["emmers"]), "uitval": fmt_pct(r["uitval"]) if r["uitval"] is not None else "",
               "emmers": float("nan"), "afronden": False} for r in volgorde],
             [("vak", "Vak", "geheel", False), ("pw", "Pw", "geheel", False),
-             ("prognose", "Prognose oogst", "tekst", False), ("tot_nu", "Emmers tot nu", "geheel", False),
+             ("prognose", "Prognose", "tekst", False), ("tot_nu", "Tot nu", "geheel", False),
              ("uitval", "Uitval", "tekst", False), ("emmers", "Emmers", "geheel", True),
              ("afronden", "Afronden", "ja/nee", True)], f"inv_emmers_tabel_{versie}")
         if st.form_submit_button("Opslaan", type="primary"):
@@ -1029,8 +1039,8 @@ def _inv_lengte(vakken):
               "nu": fmt_getal(r["lengte_eind"], 1) if r["lengte_eind"] else "",
               "lengte": float("nan"), "gewicht": float("nan"), "rijpheid": None} for r in volgorde],
             [("vak", "Vak", "geheel", False), ("pw", "Pw", "geheel", False),
-             ("tot_nu", "Emmers tot nu", "geheel", False), ("nu", "Lengte nu (cm)", "tekst", False),
-             ("lengte", "Lengte (cm)", "getal", True), ("gewicht", "Gewicht (g)", "geheel", True),
+             ("tot_nu", "Emmers", "geheel", False), ("nu", "Lengte nu", "tekst", False),
+             ("lengte", "Lengte", "getal", True), ("gewicht", "Gewicht", "geheel", True),
              ("rijpheid", "Rijpheid", RIJPHEID_TEKSTEN, True)], f"inv_lengte_tabel_{versie}")
         if st.form_submit_button("Opslaan", type="primary"):
             registraties = reg.te_registreren(regels, ["lengte", "gewicht", "rijpheid"],
@@ -2344,15 +2354,18 @@ def _tl_nieuw_venster(vak, zondag, info, stukken, vandaag):
 
 
 def _tl_periode(balk, vandaag):
-    """Periode van de tijdlijn in de filterbalk: 3 mnd / 6 mnd / 1 jaar + ◀ [wk – wk] ▶. Geeft (van, tot, weken)."""
+    """
+    Periode van de tijdlijn in de filterbalk: 4 wk / 3 mnd / 6 mnd / 1 jaar + ◀ [wk – wk] ▶. Standaard 3 mnd, op
+    een telefoon 4 wk; de periode kijkt verder terug dan vooruit (± 60 % terug). Geeft (van, tot, weken).
+    """
     deze_zondag = kalender.week_begin(vandaag)
     zondagen = [deze_zondag + timedelta(weeks=i) for i in range(-52, 40)]
 
     def standaard(n):
-        return deze_zondag - timedelta(weeks=round(TL_VENSTERS[n] * 0.3))
+        return deze_zondag - timedelta(weeks=round(TL_VENSTERS[n] * 0.6))
 
     lengte, van = filters.periode(
-        "tl_venster", list(TL_VENSTERS), "3 mnd", opties_van=lambda n: zondagen, standaard_van=standaard,
+        "tl_venster", list(TL_VENSTERS), "4 wk" if _mobiel() else "3 mnd", opties_van=lambda n: zondagen, standaard_van=standaard,
         format_van=lambda n: lambda zo: _tl_venster_label(zo, TL_VENSTERS[n]), huidig_van=standaard,
         plek=balk, breedte=260)
     weken = TL_VENSTERS[lengte]
