@@ -1820,7 +1820,7 @@ def _pagina_overzicht():
         lezen=[
             "**Tijdlijn**: per vak één regel. Weken lopen van zondag t/m zaterdag; bovenaan het weeknummer en het "
             "aantal vakken dat die week geoogst wordt. De lopende teelt is groen tot vandaag en loopt daarna "
-            "licht door tot de prognose-oogst; het zwarte streepje is de plan-oogst. Hoeveel de prognose voor of "
+            "doorzichtig door tot de prognose-oogst; per teelt (plantweek) wisselen donker en licht; het zwarte streepje is de plan-oogst. Hoeveel de prognose voor of "
             "achter loopt op plan staat in de tooltip en in het vak.",
             "**Weergave** *Standaard*: een driehoekje bovenin de balk op elke dag met een behandeling (kleur = "
             "soort) en een blauw vakje op elke dag met water, donkerder bij meer l/m², met het aantal l/m² erin "
@@ -1848,8 +1848,8 @@ def _pagina_overzicht():
              "vanaf waar de huidige teelt van elk vak en de bestaande concepten gebleven zijn, met het aantal vakken "
              f"per week uit de jaarplanning (nooit meer dan {MAX_VAKKEN_PER_WEEK} per week); tuin 3: vak 19+20 als "
              "één eenheid, vak 1 op een eigen ritme. Oogst van concepten = de teeltduur-tabel.",
-        kleuren="Groen = lopend, licht groen = verwacht tot de prognose-oogst (de prognose t.o.v. plan staat in de "
-                "tooltip), grijs = afgerond, grijze rand = bevestigd maar nog niet geplant, blauwe stippelrand = concept, "
+        kleuren="Groen = lopend, doorzichtig groen = verwacht tot de prognose-oogst (de prognose t.o.v. plan staat in "
+                "de tooltip), grijs = afgerond; per teelt (plantweek) om en om donker en licht, grijze rand = bevestigd maar nog niet geplant, blauwe stippelrand = concept, "
                 "rode stippelrand = overlapt met een andere ronde, zwarte stippelrand = Florgib meer dan "
                 f"{FLORGIB_ACHTERSTAND_DAGEN} dagen over tijd, paarse stip/ring = (verwachte) Florgib, rode "
                 "stippellijn = vandaag. Driehoekje: rood = gewasbescherming, groen = biologie, bruin = voeding. "
@@ -1897,8 +1897,16 @@ def _pagina_overzicht():
 # (driehoekjes) en de watergift (blauwe vakjes); de weergave Bespuitingen of Watergift
 # toont daar meer van (middelen; EC/pH per vak en de voorregeling).
 # Rekenwerk in logic/tijdlijn.py en logic/watergift.py.
-TL_LOPEND = "#bcd6ad"           # lopende teelt: één kleur (de prognose t.o.v. plan staat in de tooltip)
-TL_AFGEROND, TL_CONCEPT, TL_FLORGIB, TL_ROOD = "#b8b8b3", "#2a78d6", "#8e44ad", "#e34948"
+# Lopend groen, afgerond grijs; per teelt (plantweek) om en om donker en licht, zodat je ziet waar de ene teelt
+# ophoudt en de volgende begint. De prognose t.o.v. plan staat in de tooltip.
+TL_LOPEND = ("#9fc58c", "#cbe1bf")
+TL_AFGEROND_TINT = ("#a8a8a3", "#cacac5")
+TL_CONCEPT, TL_FLORGIB, TL_ROOD = "#2a78d6", "#8e44ad", "#e34948"
+
+
+def _tl_tint(start):
+    """0 of 1, om en om per plantweek (ISO-week van de plantdatum), ook over de jaargrens heen."""
+    return ((start - timedelta(days=start.weekday())).toordinal() // 7) % 2
 TL_VENSTERS = {"4 wk": 4, "3 mnd": 13, "6 mnd": 26, "1 jaar": 52}
 TL_WEERGAVEN = ["Standaard", "Bespuitingen", "Watergift"]
 TL_WATER = "#2a6fb5"           # watergift: blauw, dekking naar de liters
@@ -1959,10 +1967,13 @@ def _tl_frames(info, afdelingen, van, tot, vandaag, weken, weergave):
                            "Periode": f"wk {kalender.weeknummer(zo)}", "Toelichting": "Klik om hier een concept te plannen"})
     namen = {"afgerond": "afgerond", "lopend": "lopend", "prognose": "lopend, tot de prognose",
              "gepland": "bevestigd, nog niet geplant", "concept": "concept"}
+    # De plantdatum per teelt (het stuk "prognose" begint vandaag, niet bij het planten).
+    plantdag = {s["teelt_id"]: s["start"] for s in stukken if s.get("teelt_id") and s["soort"] != "prognose"}
     for s in stukken:
         y = f"Vak {s['vak']}"
         if y not in zichtbaar or s["eind"] < van or s["start"] > tot:
             continue
+        tint = _tl_tint(plantdag.get(s.get("teelt_id"), s["start"]))
         status = info["statussen"].get(s["vak"])
         toelichting = s.get("code") or ""
         if s["soort"] in ("lopend", "prognose") and status:
@@ -1972,13 +1983,13 @@ def _tl_frames(info, afdelingen, van, tot, vandaag, weken, weergave):
                "Periode": periode(s), "Toelichting": toelichting,
                "sleutel": f"c:{s['concept_id']}" if s["soort"] == "concept" else f"t:{s['teelt_id']}"}
         if s["soort"] == "afgerond":
-            balken.append({**rij, "kleur": TL_AFGEROND, "dekking": 1.0})
+            balken.append({**rij, "kleur": TL_AFGEROND_TINT[tint], "dekking": 1.0})
         elif s["soort"] == "lopend":
-            balken.append({**rij, "kleur": TL_LOPEND, "dekking": 1.0})
+            balken.append({**rij, "kleur": TL_LOPEND[tint], "dekking": 1.0})
             if status and status.get("florgib_achter"):
                 randen.append({**rij, "rand": "#1f1f1f", "streep": "florgib"})
         elif s["soort"] == "prognose":
-            balken.append({**rij, "kleur": TL_LOPEND, "dekking": 0.45})
+            balken.append({**rij, "kleur": TL_LOPEND[tint], "dekking": 0.45})
         elif s["soort"] == "gepland":
             balken.append({**rij, "kleur": "#808080", "dekking": 0.12})
             randen.append({**rij, "rand": "#6f6f6a", "streep": "vol"})
@@ -2430,9 +2441,11 @@ def _tl_behandeling_venster(info, vak, dag):
 
 def _tl_legenda(weergave):
     legend.legenda([
-        {"kleur": TL_LOPEND, "label": "lopend"},
-        {"kleur": TL_LOPEND, "label": "verwacht, tot de prognose-oogst", "stijl": "opacity:0.45;"},
-        {"kleur": TL_AFGEROND, "label": "afgerond"},
+        {"label": "lopend (per teelt donker/licht)",
+         "stijl": f"width:1.6rem;background:linear-gradient(90deg,{TL_LOPEND[0]} 50%,{TL_LOPEND[1]} 50%);"},
+        {"kleur": TL_LOPEND[0], "label": "verwacht, tot de prognose-oogst", "stijl": "opacity:0.45;"},
+        {"label": "afgerond (per teelt donker/licht)",
+         "stijl": f"width:1.6rem;background:linear-gradient(90deg,{TL_AFGEROND_TINT[0]} 50%,{TL_AFGEROND_TINT[1]} 50%);"},
         {"kleur": "#6f6f6a", "vorm": "rand", "label": "bevestigd, nog niet geplant"},
         {"kleur": TL_CONCEPT, "vorm": "stippelrand", "label": "concept"},
         {"kleur": TL_ROOD, "vorm": "stippelrand", "label": "overlapt met een andere ronde"},

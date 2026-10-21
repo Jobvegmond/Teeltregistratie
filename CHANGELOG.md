@@ -22,7 +22,9 @@ inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 ### Gewijzigd
 - De zijbalk is weg; *Ingelogd als* en *Uitloggen* staan op Meer.
 - Overzicht: de achtergrondkleuren van de prognose zijn eruit; een lopende teelt is groen tot vandaag en
-  licht groen tot de prognose-oogst. Hoeveel de prognose voor of achter loopt staat in de tooltip.
+  doorzichtig groen tot de prognose-oogst, een afgeronde grijs. Per teelt (plantweek) wisselen een donkere
+  en een lichte tint, zodat je de teelten uit elkaar houdt. Hoeveel de prognose voor of achter loopt staat
+  in de tooltip.
 - Het actieve tabblad blijft groen als je er met de muis over gaat.
 
 ## [2.17.2] - 2026-10-21
