@@ -3,6 +3,24 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.17.0] - 2026-10-21
+
+### Gewijzigd
+- **Teeltoverzicht en Watergift zijn samengevoegd tot het tabblad Overzicht** (nu 6 tabbladen). Basis is de
+  tijdlijn van Teeltoverzicht. Per dag staan er altijd de **bespuitingen** (driehoekje bovenin de balk, klik =
+  de middelen) en de **watergift** (blauw streepje onderin, donkerder bij meer l/m²; klik = alle gietbeurten
+  met EC/pH van die dag). Met de keuze **Detail** zie je één van de twee uitgebreider: *Bespuitingen* =
+  grotere driehoekjes, bij de nieuwe periode **4 wk** met de middelen erbij; *Watergift* = de hele balkhoogte
+  blauw met het aantal l/m² erin (4 wk met een decimaal, 3 mnd in hele liters). Onderaan een Excel-download
+  van de watergift per tuin (vak × dag).
+- De tijdlijn heeft geen kopregels per afdeling meer; de vakken staan in teeltvolgorde.
+- Doorklikken vanaf Tuin ("Watergift in deze periode") gaat naar Overzicht met detail Watergift.
+
+### Verwijderd
+- Het **stookadvies per afdeling** (kopregel en venster) en de pagina **Watergift** met de matrix vak × dag
+  en de EC/pH-regels (`ui/watergift_matrix.py`, `EC_BAND`, `PH_BAND`, `RONDE_STARTVAK`). De EC/pH per dag
+  staat nog in het venster van een gietdag.
+
 ## [2.16.2] - 2026-10-20
 
 ### Gewijzigd

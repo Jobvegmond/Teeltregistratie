@@ -8,7 +8,7 @@ Gebruik:
 
 Veilig om vaker te draaien: een vak dat vandaag al gelogd is, blijft zoals het
 was. Lukt deze taak een dag niet, dan logt de app zelf bij de eerste keer dat
-iemand het Teeltoverzicht opent.
+iemand het Overzicht opent.
 
 Synology Taakplanner — nieuwe taak, Door gebruiker gedefinieerd script (root),
 dagelijks na de ochtendronde van priva_ophalen.py (dan is het klimaat van

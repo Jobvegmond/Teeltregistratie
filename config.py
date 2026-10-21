@@ -13,8 +13,7 @@ LICHTLIJN_FACTOR = 0.0072
 # --- TEELTSTRATEGIE (streefwaarden; pagina Tuin, uitleg bij de kengetallen) ---
 # Uit de bedrijfsomschrijving: altijd een positieve DIF van minstens 2 °C (dag warmer dan nacht), de
 # stooklijn nooit boven 15,5 °C, EC van de gift 1,0–2,0 en pH het liefst 5,0–5,5 (tuin 3 heeft geen
-# pH-regeling). Let op: dit is het streefbereik; de ruimere EC_BAND/PH_BAND verderop bepalen wanneer de
-# watergiftmatrix rood kleurt.
+# pH-regeling).
 DIF_MIN = 2.0
 STOOK_MAX = 15.5
 EC_BEREIK = (1.0, 2.0)
@@ -64,15 +63,8 @@ OPMERKING_CATEGORIEEN = ("Groei", "Ziekte/plagen", "Water", "Klimaat", "Overig")
 # {tuinnummer: {watersysteem: vaknummers}}; None = alle vakken van die tuin.
 # Tuin 1 heeft ook een watersysteem 2, maar dat wordt niet gebruikt.
 WATERSYSTEMEN = {1: {1: None}, 3: {1: None}}
-# Het vak waarmee een teeltronde begint, per tuin (de kleur in de watergiftmatrix
-# wisselt per ronde; daarbinnen licht/donker per teelt).
-RONDE_STARTVAK = {1: 1, 3: 2}
-# Band voor EC (mS/cm) en pH van de gift, per tuin: daarbuiten wordt een
-# daggemiddelde rood in de matrix (opgegeven door Job, 30-09-26).
-EC_BAND = {1: (1.0, 2.0), 3: (1.0, 2.0)}
-PH_BAND = {1: (4.8, 6.0), 3: (4.8, 6.0)}
 
 # --- VERSIE ---
 # Staat rechtsboven in de app. Ophogen bij elke wijziging op main (zie CHANGELOG.md):
 # derde getal bij een correctie, tweede bij iets nieuws, eerste bij een grote omzetting.
-APP_VERSIE = "2.16.2"
+APP_VERSIE = "2.17.0"
