@@ -18,7 +18,7 @@ Elke pagina, van boven naar beneden:
 
 Een onderdeel dat een pagina niet heeft, valt weg. De volgorde blijft.
 
-**Schermnummers.** De tabbladen zijn genummerd (1. Teeltoverzicht … 7. Meer) en elke sectie en elk
+**Schermnummers.** De tabbladen zijn genummerd (1. Overzicht … 6. Meer) en elke sectie en elk
 openklapmenu op een pagina krijgt automatisch een volgnummer ("2.3"), zodat feedback naar een scherm kan
 verwijzen. Geef daarom elke hoofdweergave een `layout.sectie()`-kop en gebruik voor openklapmenu's
 `layout.uitklap()` (niet `st.expander`).
@@ -28,17 +28,18 @@ from ui import filters, layout, legend
 from ui import help as uitleg_help
 
 layout.pagina_kop(
-    "Watergift",
-    wat="Per vak per dag de watergift (l/m²) ...",
-    lezen=["Weken lopen van zondag t/m zaterdag.", "Klik op een vak voor het vak ..."],
-    bron="Priva (API), elke ochtend opgehaald ...",
-    kleuren="Blauw = watergift ...",
+    "Overzicht",
+    wat="Per vak hoe de teelt ervoor staat ...",
+    lezen=["Weken lopen van zondag t/m zaterdag.", "Klik op een balk voor het vak ..."],
+    bron="Watergift: Priva (API), elke ochtend opgehaald ...",
+    kleuren="Prognose t.o.v. plan in dagen ...",
 )
-balk = layout.filterbalk("watergift")
-lengte, eind_zo = filters.periode("wg_periode", ["2 wk", "4 wk", "3 mnd"], "4 wk", ..., plek=balk)
-vooruit = filters.schakelaar("Vooruitkijken", "wg_vooruit", True, plek=balk)
+balk = layout.filterbalk("overzicht")
+lengte, van = filters.periode("tl_venster", ["4 wk", "3 mnd", "6 mnd", "1 jaar"], "3 mnd", ..., plek=balk)
+detail = filters.weergave("Detail", ["Bespuitingen", "Watergift"], "ov_detail", "Bespuitingen", plek=balk)
+layout.sectie("Tijdlijn")
 ...                                   # hoofdweergave
-legend.legenda(wg_matrix.LEGENDA)
+legend.legenda([...])
 layout.export(excel, "watergift_tuin_3.xlsx")
 ```
 
@@ -49,7 +50,7 @@ layout.export(excel, "watergift_tuin_3.xlsx")
 | Tuin | Alleen de globale keuze in de kop (Tuin 1 / Tuin 3 / Beide). Nooit een tuinfilter op een pagina. | `filters.tuin()` (in app.py, per pagina een modus in `TUIN_MODUS`) |
 | Periode (kalender) | Knoppengroep voor de lengte + ◀ [label ▾] ▶; klik op het label om te springen | `filters.periode()` |
 | Teelt (plantweek), pootweek | ◀ [Teelt wk 33 '26 · 8 vakken ▾] ▶ | `filters.bladeraar()` |
-| Afdeling | Pills, meervoudig, teeltvolgorde, standaard alles aan (nu op geen enkele pagina: Teeltoverzicht en Watergift tonen altijd alle afdelingen) | `filters.afdelingen()` |
+| Afdeling | Pills, meervoudig, teeltvolgorde, standaard alles aan (nu op geen enkele pagina: Overzicht toont altijd alle afdelingen) | `filters.afdelingen()` |
 | Overige filters (ras, categorie, type, gebruiker) | Pills bij ≤ 8 opties, anders keuzelijst met meervoudige keuze; niets gekozen = alles | `filters.keuzes()` |
 | Eén keuze uit een lange lijst (welke tabel) | Keuzelijst, altijd één gekozen | `filters.keuze()` |
 | Zoeken | Eén tekstveld, alleen op registerpagina's, altijd als laatste in de filterbalk | `filters.zoekveld()` |
@@ -59,7 +60,7 @@ layout.export(excel, "watergift_tuin_3.xlsx")
 
 Niet voor filters: `st.slider`, `st.select_slider`, `st.radio`, `st.date_input`, `st.number_input`.
 Een schuif mag alleen voor een doorlopende instelwaarde in een formulier of popup (rijpheid bij de
-oogst, de afdelingscorrectie in het stookadvies), nooit om weken of perioden te kiezen.
+oogst), nooit om weken of perioden te kiezen.
 
 ### Tuin per pagina
 
@@ -75,7 +76,7 @@ oogst, de afdelingscorrectie in het stookadvies), nooit om weken of perioden te 
 - **beide**: de pagina gaat altijd over beide tuinen; keuze uitgeschakeld met reden (nu geen pagina).
 
 Registreren kan maar in één tuin: bij Beide vraagt de zijbalk "Registreren in". Hetzelfde geldt voor het plannen op
-Teeltoverzicht (concepttabel, jaarplanning): bij Beide de tuin uit "Registreren in", met de tuinnaam in de titel
+Overzicht (concepttabel, jaarplanning): bij Beide de tuin uit "Registreren in", met de tuinnaam in de titel
 van het openklapmenu.
 
 ### Keuzes bewaren
@@ -124,14 +125,14 @@ alles = filters.schakelaar("Alle concepten tonen", "planning_alles", False, plek
 
 | Informatie | Thuis | Elders |
 |---|---|---|
-| Details van een vak | De vakpopup `vak_venster()` (inhoud: `vak_details()`) | Overal dezelfde popup (tijdlijn, matrix, register, Teelt, Opmerkingen, Watergift, missers); de knop *Alles over dit vak* gaat naar Teelt in de tuin van het vak |
+| Details van een vak | De vakpopup `vak_venster()` (inhoud: `vak_details()`) | Overal dezelfde popup (tijdlijn, register, Teelt, Opmerkingen, missers); de knop *Alles over dit vak* gaat naar Teelt in de tuin van het vak |
 | Alle gegevens van een teelt of vak | Pagina Teelt bij Tuin 1 / Tuin 3 (bovenaan `vak_details()`, daaronder elke bron als tabel) | – |
 | Teelt vergelijken tussen de tuinen | Pagina Teelt bij Beide | – |
-| Watergift per vak | Pagina Watergift | Vakpopup (staafjes op de tijdlijn + tabel Watergift per dag) |
-| Lijst van vakken | Vakkenregister (Teeltoverzicht) | Doorklik-link met het juiste filter |
+| Watergift per vak | Tijdlijn op Overzicht, detail Watergift (klik = de gietbeurten van die dag) | Vakpopup (staafjes op de tijdlijn + tabel Watergift per dag) |
+| Lijst van vakken | Vakkenregister (Overzicht) | Doorklik-link met het juiste filter |
 | Opmerkingen | Pagina Opmerkingen | Vakpopup; elders één regel "n opmerkingen →" |
-| Planning (concepten) | Tijdlijn op Teeltoverzicht (klik op een concept of een lege plek) | Concepttabel en jaarplanning in openklapmenu's op dezelfde pagina |
-| Vooruitblik | Openklapmenu op Teeltoverzicht | – |
+| Planning (concepten) | Tijdlijn op Overzicht (klik op een concept of een lege plek) | Concepttabel en jaarplanning in openklapmenu's op dezelfde pagina |
+| Vooruitblik | Openklapmenu op Overzicht | – |
 
 ## 5. Legenda's
 

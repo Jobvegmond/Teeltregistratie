@@ -10,7 +10,7 @@ boven naar beneden:
   e. uitklap(): aanvullende lijsten in openklapmenu's;
   f. export(): de downloadknop(pen).
 
-Elk tabblad heeft een nummer (1. Teeltoverzicht, 2. Teelt, …) en elke sectie en elk openklapmenu daarop een
+Elk tabblad heeft een nummer (1. Overzicht, 2. Teelt, …) en elke sectie en elk openklapmenu daarop een
 volgnummer ("2.3"), zodat je bij feedback precies kunt zeggen welk scherm je bedoelt. app.py zet het nummer
 van de pagina met begin_pagina(); sectie() en uitklap() tellen zelf door.
 """
