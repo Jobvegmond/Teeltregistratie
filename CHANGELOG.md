@@ -7,6 +7,9 @@ inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
 ### Gewijzigd
 - Overzicht, weergave Bespuitingen: het watergiftstreepje is licht blauw, zodat de middelen beter opvallen.
+- Overzicht, weergave Watergift leek leeg bij 3 mnd: de getallen pasten niet in een dag en bleven weg. Nu
+  staan de liters er ook bij smalle dagen in (hele liters, kleiner), en EC/pH als grijs blokje met de waarde
+  in de tooltip; bij 4 wk alle getallen.
 
 ## [2.17.1] - 2026-10-21
 

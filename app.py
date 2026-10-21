@@ -1835,6 +1835,9 @@ def _pagina_overzicht():
     layout.sectie("Tijdlijn")
     water = _tl_toon(infos, afdelingen, van, tot, weken, vandaag, weergave)
     _tl_legenda(weergave)
+    if weergave == "Watergift" and weken > 4:
+        uitleg_help.voetnoot("Grijze blokjes bij EC en pH: het getal past niet in een dag; beweeg erover of kies 4 wk "
+                             "voor alle getallen.")
 
     _planning_uitklappen(vandaag)
     toon_vakkenregister(vandaag, TUIN_WEERGAVE, afdelingen)
@@ -2118,15 +2121,21 @@ def _tl_grafiek(volgorde, frames, van, tot, vandaag, weken, weergave):
                              tooltip=tip)
                      .add_params(alt.selection_point(name="tl_water", fields=["sleutel"], on="click")))
         if groot:
-            # Bij ≥ 30 px per dag met een decimaal, bij ≥ 12 px in hele liters, anders alleen in de tooltip.
-            lagen.append(alt.Chart(water).mark_text(fontSize=alt.expr(f"{px} >= 30 ? 12 : 10"), fontWeight="bold",
-                                                    color="white", cursor="pointer")
-                         .transform_calculate(lbl=f"{px} >= 30 ? datum.tekst : {px} >= 12 ? datum.heel : ''")
+            # Bij ≥ 30 px per dag met een decimaal, daaronder in hele liters (kleiner naarmate de dag smaller
+            # is); pas onder 8 px alleen in de tooltip.
+            lagen.append(alt.Chart(water).mark_text(fontSize=alt.expr(f"{px} >= 30 ? 12 : {px} >= 17 ? 11 : 9"),
+                                                    fontWeight="bold", color="white", cursor="pointer")
+                         .transform_calculate(lbl=f"{px} >= 30 ? datum.tekst : {px} >= 8 ? datum.heel : ''")
                          .encode(x="x:T", y=y, text="lbl:N", tooltip=tip)
                          .add_params(alt.selection_point(name="tl_wtekst", fields=["sleutel"], on="click")))
     if not waarden.empty:
         # Weergave Watergift: de EC en pH van de gift per vak en de EC van de voorregeling, als getal (EC met
-        # 2 decimalen bij ≥ 26 px per dag, met 1 bij ≥ 16 px, anders alleen in de tooltip).
+        # 2 decimalen bij ≥ 26 px per dag, met 1 bij ≥ 16 px). Past er geen getal, dan een grijs blokje met de
+        # waarde in de tooltip, zodat je ziet dat er een meting is.
+        lagen.append(alt.Chart(waarden).mark_square(size=30, color="#8a8a85", cursor="pointer",
+                                                    opacity=alt.expr(f"{px} >= 16 ? 0 : 1"))
+                     .encode(x="x:T", y=y, tooltip=[alt.Tooltip("Watergift:N", title="Watergift")])
+                     .add_params(alt.selection_point(name="tl_ecph_blok", fields=["sleutel"], on="click")))
         lagen.append(alt.Chart(waarden).mark_text(fontSize=alt.expr(f"{px} >= 26 ? 11 : 9"), color="#3d3d3a",
                                                   cursor="pointer")
                      .transform_calculate(lbl=f"{px} >= 26 ? datum.tekst : {px} >= 16 ? datum.kort : ''")
@@ -2172,7 +2181,8 @@ def _tl_grafiek(volgorde, frames, van, tot, vandaag, weken, weergave):
 def _tl_geklikt(widget, versie):
     """Callback van de tijdlijn: onthoud wat er geklikt is en begin de grafiek opnieuw (lege keuze)."""
     selectie = (st.session_state.get(widget) or {}).get("selection", {})
-    items = next((selectie[n] for n in ("tl_beh", "tl_btekst", "tl_water", "tl_wtekst", "tl_ecph", "tl_klik")
+    items = next((selectie[n] for n in ("tl_beh", "tl_btekst", "tl_water", "tl_wtekst", "tl_ecph", "tl_ecph_blok",
+                                        "tl_klik")
                   if selectie.get(n)), [])
     if items and items[0].get("sleutel"):
         st.session_state[f"{versie}_klik"] = items[0]["sleutel"]
@@ -2318,7 +2328,7 @@ def _tl_toon(infos, afdelingen, van, tot, weken, vandaag, weergave):
                      + (["tl_btekst"] if beh and weergave == "Bespuitingen" else [])
                      + (["tl_water"] if gift else [])
                      + (["tl_wtekst"] if gift and weergave != "Bespuitingen" else [])
-                     + (["tl_ecph"] if ecph else []))
+                     + (["tl_ecph", "tl_ecph_blok"] if ecph else []))
         # Een klik wordt in de callback opgepakt (vóór de nieuwe run): die onthoudt wat er geklikt is en geeft
         # de grafiek een nieuwe sleutel, zodat de keuze leeg begint en je hetzelfde vak na het sluiten van het
         # venster opnieuw kunt aanklikken.
