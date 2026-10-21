@@ -7,10 +7,12 @@ inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
 ### Gewijzigd
 - **Teeltoverzicht en Watergift zijn samengevoegd tot het tabblad Overzicht** (nu 6 tabbladen). Basis is de
-  tijdlijn van Teeltoverzicht; met de nieuwe keuze **Detail** zie je per dag de **bespuitingen** (driehoekjes,
-  klik = de middelen) of de **watergift** (blauw streepje onderin de balk, donkerder bij meer l/m²; bij de
-  nieuwe periode **4 wk** met het aantal l/m² erin; klik = alle gietbeurten met EC/pH van die dag). Bij
-  Watergift staat onderaan een Excel-download per tuin (vak × dag).
+  tijdlijn van Teeltoverzicht. Per dag staan er altijd de **bespuitingen** (driehoekje bovenin de balk, klik =
+  de middelen) en de **watergift** (blauw streepje onderin, donkerder bij meer l/m²; klik = alle gietbeurten
+  met EC/pH van die dag). Met de keuze **Detail** zie je één van de twee uitgebreider: *Bespuitingen* =
+  grotere driehoekjes, bij de nieuwe periode **4 wk** met de middelen erbij; *Watergift* = de hele balkhoogte
+  blauw met het aantal l/m² erin (4 wk met een decimaal, 3 mnd in hele liters). Onderaan een Excel-download
+  van de watergift per tuin (vak × dag).
 - De tijdlijn heeft geen kopregels per afdeling meer; de vakken staan in teeltvolgorde.
 - Doorklikken vanaf Tuin ("Watergift in deze periode") gaat naar Overzicht met detail Watergift.
 

@@ -47,6 +47,10 @@ class TestBehandelingen(unittest.TestCase):
         self.assertEqual(wg.hoofdsoort(per_dag[(3, date(2026, 9, 29))]), "gewasbescherming")   # gaat voor biologie
         self.assertEqual(wg.hoofdsoort([]), None)
 
+    def test_middelen_kort(self):
+        regels = [{"naam": "Rizolex vloeibaar"}, {"naam": "Batavia"}, {"naam": "Rizolex vloeibaar"}, {"middel": "Hi"}]
+        self.assertEqual(wg.middelen_kort(regels), "Rizolex/Batavia/Hi")
+
     def test_tekst(self):
         self.assertEqual(wg.behandeling_tekst({"naam": "Rizolex vloeibaar", "dosering": 900.0, "eenheid": "ml",
                                                "mix": "100 l", "doel": "Rhizoctonia soorten"}),

@@ -88,6 +88,17 @@ def hoofdsoort(regels):
     return next((s for s in BEHANDELING_VOLGORDE if s in soorten), None)
 
 
+def middelen_kort(regels):
+    """De middelen van één vak op één dag, kort voor op de tijdlijn: het eerste woord van elke naam, zonder
+    dubbele ("Rizolex/Batavia")."""
+    namen = []
+    for b in regels:
+        naam = (b.get("naam") or b.get("middel") or "?").split()[0]
+        if naam not in namen:
+            namen.append(naam)
+    return "/".join(namen)
+
+
 def behandeling_tekst(b):
     """Eén regel: "Rizolex vloeibaar 900 ml in 100 l (tegen Rhizoctonia soorten)"."""
     hoeveel = ""
