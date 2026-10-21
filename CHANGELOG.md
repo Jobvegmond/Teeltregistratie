@@ -10,6 +10,8 @@ inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
   breedte), met kortere koppen.
 - Overzicht: de standaardperiode kijkt verder terug dan vooruit (± 60 % terug, bijv. bij 3 mnd 8 weken terug
   en 4 vooruit); op een telefoon staat de periode standaard op 4 wk.
+- Overzicht: dunne lichte lijnen per dag over de tijdlijn (weg als een dag smaller is dan 6 px, bij 6 mnd en
+  1 jaar).
 
 ## [2.18.0] - 2026-10-21
 

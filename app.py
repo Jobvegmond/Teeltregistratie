@@ -2160,6 +2160,12 @@ def _tl_grafiek(volgorde, frames, van, tot, vandaag, weken, weergave):
             lagen.append(alt.Chart(deel).mark_bar(height=TL_RIJ - 8, cornerRadius=2, filled=False, clip=True,
                                                   strokeDash=dash, strokeWidth=breedte)
                          .encode(x="start:T", x2="eind:T", y=y, stroke=alt.Stroke("rand:N", scale=None)))
+    # Dunne lijnen op dagniveau over de balken heen (de weeklijnen zijn de rasterlijnen van de as). Bij een dag
+    # smaller dan 6 px staan ze te dicht op elkaar: dan niet.
+    dagen = pd.DataFrame({"d": pd.date_range(pd.Timestamp(van), pd.Timestamp(tot) + pd.Timedelta(days=1))})
+    lagen.append(alt.Chart(dagen).mark_rule(color="#808080", strokeWidth=0.5,
+                                            opacity=alt.expr(f"{px} >= 6 ? 0.25 : 0"))
+                 .encode(x="d:T"))
     if not plan.empty:
         lagen.append(alt.Chart(plan).mark_tick(orient="vertical", thickness=2, size=TL_RIJ - 4, color="#1f1f1f")
                      .encode(x="x:T", y=y, tooltip=[alt.Tooltip("y:N", title="Vak"), "Plan-oogst:N"]))
