@@ -3,6 +3,12 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.18.2] - 2026-10-21
+
+### Gewijzigd
+- Overzicht: de oogstprognose staat weer op de tijdlijn (een lopende teelt loopt doorzichtig door tot de
+  prognose-oogst), en de regel **Oogst** bovenaan (aantal vakken per week) is weg.
+
 ## [2.18.1] - 2026-10-21
 
 ### Gewijzigd

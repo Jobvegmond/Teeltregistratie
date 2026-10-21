@@ -1830,9 +1830,9 @@ def _pagina_overzicht():
             "overzicht per plantweek, vooruitblik) en het vakkenregister: alle vakken als lopend, te starten of "
             "afgerond.",
         lezen=[
-            "**Tijdlijn**: per vak één regel. Weken lopen van zondag t/m zaterdag; bovenaan het weeknummer en het "
-            "aantal vakken dat die week (verwacht) geoogst wordt, daaronder de dagen. De lopende teelt is groen tot "
-            "vandaag; per teelt (plantweek) wisselen donker en licht; het zwarte streepje is de plan-oogst. "
+            "**Tijdlijn**: per vak één regel. Weken lopen van zondag t/m zaterdag; bovenaan het weeknummer en "
+            "daaronder de dagen. De lopende teelt is groen tot vandaag en loopt daarna doorzichtig door tot de "
+            "prognose-oogst; per teelt (plantweek) wisselen donker en licht; het zwarte streepje is de plan-oogst. "
             "Hoeveel de prognose voor of achter loopt op plan staat in de tooltip en in het vak.",
             "**Weergave** *Standaard*: een driehoekje bovenin de balk op elke dag met een behandeling (kleur = "
             "soort) en een blauw vakje op elke dag met water, met het aantal l/m² erin "
@@ -1861,7 +1861,8 @@ def _pagina_overzicht():
              "vanaf waar de huidige teelt van elk vak en de bestaande concepten gebleven zijn, met het aantal vakken "
              f"per week uit de jaarplanning (nooit meer dan {MAX_VAKKEN_PER_WEEK} per week); tuin 3: vak 19+20 als "
              "één eenheid, vak 1 op een eigen ritme. Oogst van concepten = de teeltduur-tabel.",
-        kleuren="Groen = lopend (tot vandaag), grijs = afgerond; per teelt (plantweek) om en om donker en licht. "
+        kleuren="Groen = lopend, doorzichtig groen = verwacht tot de prognose-oogst, grijs = afgerond; per teelt "
+                "(plantweek) om en om donker en licht. "
                 "Grijze rand = bevestigd maar nog niet geplant, blauwe stippelrand = concept, "
                 "rode stippelrand = overlapt met een andere ronde, zwarte stippelrand = Florgib meer dan "
                 f"{FLORGIB_ACHTERSTAND_DAGEN} dagen over tijd, paarse stip/ring = (verwachte) Florgib, rode "
@@ -1940,7 +1941,7 @@ def _tl_venster_label(zondag, weken):
 
 def _tl_frames(info, afdelingen, van, tot, vandaag, weken, weergave):
     """
-    De DataFrames voor de grafiek van één tuin: (balken, randen, florgib, plan, kopteksten, oogst, weeknummers, dagen,
+    De DataFrames voor de grafiek van één tuin: (balken, randen, florgib, plan, kopteksten, weeknummers, dagen,
     behandelingen, watergift, waarden), de volgorde van de regels (y): de vakken in teeltvolgorde, bij de
     weergave Watergift met onder elk vak een regel EC ("§ec<vak>") en pH ("§ph<vak>") en bovenaan "EC voorr.";
     de stukken en (Excel-tabel watergift, watergiftdata voor het dagvenster).
@@ -1952,16 +1953,14 @@ def _tl_frames(info, afdelingen, van, tot, vandaag, weken, weergave):
     vak_afd = {int(v): int(a) for v, a in zip(info["vakken"]["vaknummer"], info["vakken"]["afdeling"]) if a == a}
 
     stap = _tl_stap(weken)
-    # Korte labels: het langste label bepaalt hoe breed de kolom links is (op een telefoon kostbaar).
-    oogst_rij = "Oogst" if stap == 1 else f"Oogst/{stap} wk"
-    volgorde, kopteksten = ["Week", "Dag", oogst_rij], []
+    volgorde, kopteksten = ["Week", "Dag"], []
     for afdeling in sorteer_afdelingen(set(vak_afd.values()), tuin["nummer"]):
         if afdelingen is not None and afdeling not in afdelingen:
             continue
         for vak in sorted(v for v, a in vak_afd.items() if a == afdeling):
             volgorde += [f"Vak {vak}"] + ([f"§ec{vak}", f"§ph{vak}"] if weergave == "Watergift" else [])
     if weergave == "Watergift":
-        volgorde.insert(3, "EC voorr.")
+        volgorde.insert(2, "EC voorr.")
     zichtbaar = set(volgorde)
 
     def periode(s):
@@ -2003,7 +2002,7 @@ def _tl_frames(info, afdelingen, van, tot, vandaag, weken, weergave):
             if status and status.get("florgib_achter"):
                 randen.append({**rij, "rand": "#1f1f1f", "streep": "florgib"})
         elif s["soort"] == "prognose":
-            continue                   # de oogstprognose staat niet op de tijdlijn, alleen in de tooltip
+            balken.append({**rij, "kleur": TL_LOPEND[tint], "dekking": 0.45})
         elif s["soort"] == "gepland":
             balken.append({**rij, "kleur": "#808080", "dekking": 0.12})
             randen.append({**rij, "rand": "#6f6f6a", "streep": "vol"})
@@ -2033,23 +2032,13 @@ def _tl_frames(info, afdelingen, van, tot, vandaag, weken, weergave):
     florgib = [f for f in florgib if van <= f["x"] <= tot]
     plan = [p for p in plan if van <= p["x"] <= tot]
 
-    # Weeknummer en aantal oogsten per blok van `stap` weken (zondag t/m zaterdag): bij één week midden in
-    # de week, bij meer weken links in het blok, vanaf de weeklijn van de eerste week.
-    blokken = {}
-    for zo, n in tijdlijn.oogst_per_week(stukken, info["statussen"], van, tot).items():
-        blok = (zo - van).days // (7 * stap)
-        blokken[blok] = blokken.get(blok, 0) + n
+    # Het weeknummer per blok van `stap` weken (zondag t/m zaterdag): bij één week midden in de week, bij meer
+    # weken links in het blok, vanaf de weeklijn van de eerste week.
     plek = timedelta(days=3, hours=12) if stap == 1 else timedelta(hours=10)
 
     def blok_start(i):
         return van + timedelta(weeks=i * stap)
 
-    def blok_naam(i):
-        eerste = kalender.weeknummer(blok_start(i))
-        return f"wk {eerste}" if stap == 1 else             f"wk {eerste}–{kalender.weeknummer(blok_start(i) + timedelta(weeks=stap - 1))}"
-
-    oogst = [{"y": oogst_rij, "x": blok_start(i) + plek, "tekst": str(n), "Week": blok_naam(i), "Vakken": n}
-             for i, n in sorted(blokken.items())]
     # De dagen onder de weeknummers: "wo 21" als er ruimte is, anders "21" (de grafiek kiest; zie _tl_grafiek).
     dagnamen = [{"y": "Dag", "x": pd.Timestamp(dag) + pd.Timedelta(hours=12), "kort": str(dag.day),
                  "lang": f"{_DAGEN_KORT[dag.weekday()]} {dag.day}", "vandaag": dag == vandaag}
@@ -2058,7 +2047,7 @@ def _tl_frames(info, afdelingen, van, tot, vandaag, weken, weergave):
                    for i in range((tot - van).days // (7 * stap) + 1)]
     balken = pd.DataFrame(balken)
     balken["lijn"] = balken["lijn"].fillna(0.12)   # dunne rand om elke balk, niet om lege plekken
-    frames = [balken] + [pd.DataFrame(x) for x in (randen, florgib, plan, kopteksten, oogst, weeknummers, dagnamen)]
+    frames = [balken] + [pd.DataFrame(x) for x in (randen, florgib, plan, kopteksten, weeknummers, dagnamen)]
     water, waarden, tabel, wgdata = _tl_watergift(tuin, volgorde, van, min(tot, vandaag), weergave == "Watergift")
     return (volgorde, frames + [_tl_behandelingen(tuin["id"], volgorde, van, tot), water, waarden], stukken,
             (tabel, wgdata))
@@ -2141,7 +2130,7 @@ def _tl_grafiek(volgorde, frames, van, tot, vandaag, weken, weergave):
     ('tl_klik'), de behandelingen ('tl_beh', 'tl_btekst') en de watergift ('tl_water', 'tl_wtekst', 'tl_ecph');
     elke laag een eigen selectie (dezelfde selectie op twee lagen geeft een dubbel signaal in Vega).
     """
-    balken, randen, florgib, plan, kopteksten, oogst, weeknummers, dagnamen, behandelingen, water, waarden = frames
+    balken, randen, florgib, plan, kopteksten, weeknummers, dagnamen, behandelingen, water, waarden = frames
     # Hoe breed een dag op het scherm is, weet alleen de grafiek zelf ("width" = de breedte van het
     # tekenvlak). Getallen en middelen kiezen daarop wat er past: volledig, korter of niets (dan de tooltip).
     px = f"(width / {(tot - van).days + 1})"
@@ -2247,9 +2236,6 @@ def _tl_grafiek(volgorde, frames, van, tot, vandaag, weken, weergave):
                  .transform_calculate(lbl=f"{px} >= 34 ? datum.lang : {px} >= 13 ? datum.kort : ''")
                  .encode(x="x:T", y=y, text="lbl:N",
                          color=alt.condition("datum.vandaag", alt.value(TL_ROOD), alt.value("#8a8a85"))))
-    if not oogst.empty:
-        lagen.append(alt.Chart(oogst).mark_text(fontSize=11, fontWeight="bold", color="#2E6A4C", align=uitlijning)
-                     .encode(x="x:T", y=y, text="tekst:N", tooltip=["Week:N", "Vakken:Q"]))
     lagen.append(alt.Chart(pd.DataFrame({"d": [pd.Timestamp(vandaag)]}))
                  .mark_rule(color=TL_ROOD, strokeDash=[4, 3]).encode(x="d:T"))
     return (alt.layer(*lagen).properties(height=alt.Step(TL_RIJ))
@@ -2474,6 +2460,7 @@ def _tl_legenda(weergave):
     legend.legenda([
         {"label": "lopend (per teelt donker/licht)",
          "stijl": f"width:1.6rem;background:linear-gradient(90deg,{TL_LOPEND[0]} 50%,{TL_LOPEND[1]} 50%);"},
+        {"kleur": TL_LOPEND[0], "label": "verwacht, tot de prognose-oogst", "stijl": "opacity:0.45;"},
         {"label": "afgerond (per teelt donker/licht)",
          "stijl": f"width:1.6rem;background:linear-gradient(90deg,{TL_AFGEROND_TINT[0]} 50%,{TL_AFGEROND_TINT[1]} 50%);"},
         {"kleur": "#6f6f6a", "vorm": "rand", "label": "bevestigd, nog niet geplant"},
