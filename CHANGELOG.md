@@ -3,6 +3,13 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.19.1] - 2026-10-22
+
+### Gewijzigd
+- Overzicht, weergaven Standaard en Watergift: achter het vaknummer het totaal gegoten van de lopende teelt
+  sinds het planten (l/m², bijv. "Vak 2 · 107"), zoals de kolom Tot in de oude watergiftmatrix.
+- Registreren: de tabellen met vakken zijn een derde zo hoog (± 6 regels zichtbaar) en scrollen.
+
 ## [2.19.0] - 2026-10-22
 
 ### Toegevoegd
