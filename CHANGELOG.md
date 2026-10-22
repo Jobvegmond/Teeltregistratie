@@ -8,7 +8,7 @@ inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 ### Gewijzigd
 - Overzicht, weergave Bespuitingen: de middelen staan er als de afkortingen uit de klimaatregistratie (Ri, Se,
   B5, Co, IM …), met een spatie ertussen; ook de langere namen uit Agro4all ("ASPERELLO T34 Biocontrol" → As,
-  "Soiltech Root & Shoot" → Rs, "Innofer Fe++" → Ijz). Natrubac = Na. Zonder bekende afkorting: het eerste
+  "Soiltech Root & Shoot" → Rs, "Innofer Fe++" → Fe). Natrubac = Na. Zonder bekende afkorting: het eerste
   woord of de code (H, Oc). De volledige namen staan in de tooltip (`logic/klimaatregistratie.afkorting`).
 
 ## [2.18.2] - 2026-10-21

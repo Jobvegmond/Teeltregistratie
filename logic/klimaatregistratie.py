@@ -35,8 +35,9 @@ CODES = {
     "Im": ("IJzer en mangaan", "voeding"),
 }
 OVERSLAAN = {"Fg", "Fl", "La", "Ja"}       # Florgib staat al in de app; La en Ja zijn tikfouten
-# Namen in Agro4all die anders heten dan het middel in CODES, met hun afkorting.
-AFKORTING_ANDERS = {"innofer": "Ijz", "inno-mn": "Mn", "florgib": "Fg"}
+# Afkortingen op de tijdlijn die afwijken van de eerste code in CODES (ijzer: Fe, niet Ijz), en namen in
+# Agro4all die anders heten dan het middel in CODES.
+AFKORTING_ANDERS = {"ijzer (innofer)": "Fe", "innofer": "Fe", "inno-mn": "Mn", "florgib": "Fg"}
 
 
 def _afkortingen():
@@ -45,8 +46,8 @@ def _afkortingen():
     eerste = {}
     for code, (naam, *_rest) in CODES.items():
         eerste.setdefault(naam.lower(), code)
-    paren = list(eerste.items()) + list(AFKORTING_ANDERS.items())
-    return sorted(paren, key=lambda p: -len(p[0]))
+    eerste.update(AFKORTING_ANDERS)
+    return sorted(eerste.items(), key=lambda p: -len(p[0]))
 
 
 _AFKORTINGEN = _afkortingen()

@@ -63,8 +63,8 @@ class TestAfkorting(unittest.TestCase):
             "Sivanto Prime": "Si", "Serenade Max": "Se", "Ranman Top": "Ra", "Luna Privilege": "Lu",
             "MONcontrol Mix": "M", "Power Food 3.0": "P", "Soiltech Root & Shoot": "Rs", "Root & Shoot": "Rs",
             "Biota 500": "B5", "Biota 820": "B8", "D-6 Force": "D6", "SilicaPower": "Sc", "Hypoaspis": "Hy",
-            "X-Tend": "Xt", "ConSecta": "Co", "IJzer en mangaan": "IM", "IJzer (Innofer)": "Ijz",
-            "Innofer Fe++": "Ijz", "INNO-Mn++": "Mn", "Mangaan (INNO-Mn)": "Mn", "Florgib ST": "Fg",
+            "X-Tend": "Xt", "ConSecta": "Co", "IJzer en mangaan": "IM", "IJzer (Innofer)": "Fe",
+            "Innofer Fe++": "Fe", "INNO-Mn++": "Mn", "Mangaan (INNO-Mn)": "Mn", "Florgib ST": "Fg",
             "code H": "H", "code Oc": "Oc", "Natrubac 08": "Na", None: "?",
         }
         for naam, code in verwacht.items():
