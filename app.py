@@ -1838,7 +1838,8 @@ def _pagina_overzicht():
             "soort) en een blauw vakje op elke dag met water, met het aantal l/m² erin "
             "(met een decimaal als de dag breed genoeg is, anders in hele liters; past er niets, dan in de "
             "tooltip; dat hangt af van de periode en de breedte van het scherm).",
-            "*Bespuitingen*: grotere driehoekjes met de middelen erachter (ingekort tot wat er past tot de "
+            "*Bespuitingen*: grotere driehoekjes met de afkortingen van de middelen erachter, zoals in de "
+            "klimaatregistratie (bijv. Ri = Rizolex, B5 = Biota 500; ingekort tot wat er past tot de "
             "volgende behandeling; de volledige namen en doseringen in de tooltip); de watergift als dun streepje "
             "onderin.",
             "*Watergift*: per vak drie regels: de liters (l/m²) en daaronder de EC en pH van de gift van dat vak; "
@@ -2205,7 +2206,7 @@ def _tl_grafiek(volgorde, frames, van, tot, vandaag, weken, weergave):
                      .add_params(alt.selection_point(name="tl_ecph", fields=["sleutel"], on="click")))
     if not behandelingen.empty:
         # Bespuitingen: een driehoekje bovenin de regel, zodat de balk zichtbaar blijft. In de weergave
-        # Bespuitingen groter, met de middelen erachter.
+        # Bespuitingen groter, met de afkortingen van de middelen erachter (logic/klimaatregistratie.afkorting).
         groot = weergave == "Bespuitingen"
         tip = [alt.Tooltip("y:N", title="Vak"), "Behandeling:N"]
         lagen.append(alt.Chart(behandelingen).mark_point(shape="triangle-down", size=130 if groot else 55,

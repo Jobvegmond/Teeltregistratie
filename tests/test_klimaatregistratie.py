@@ -52,5 +52,24 @@ class TestRegels(unittest.TestCase):
         self.assertEqual(regels[0]["registratie"], "klimaatregistratie-tuin3:2026-09-28:GBM:Ri Fg La Ve Vec")
 
 
+
+
+class TestAfkorting(unittest.TestCase):
+    """De afkortingen op de tijdlijn (Overzicht, weergave Bespuitingen) voor de namen uit Agro4all."""
+
+    def test_namen_uit_agro4all_en_klimaatregistratie(self):
+        verwacht = {
+            "Rizolex vloeibaar": "Ri", "ASPERELLO T34 Biocontrol": "As", "CLOSER": "Cl", "Vectine PLUS": "Ve",
+            "Sivanto Prime": "Si", "Serenade Max": "Se", "Ranman Top": "Ra", "Luna Privilege": "Lu",
+            "MONcontrol Mix": "M", "Power Food 3.0": "P", "Soiltech Root & Shoot": "Rs", "Root & Shoot": "Rs",
+            "Biota 500": "B5", "Biota 820": "B8", "D-6 Force": "D6", "SilicaPower": "Sc", "Hypoaspis": "Hy",
+            "X-Tend": "Xt", "ConSecta": "Co", "IJzer en mangaan": "IM", "IJzer (Innofer)": "Ijz",
+            "Innofer Fe++": "Ijz", "INNO-Mn++": "Mn", "Mangaan (INNO-Mn)": "Mn", "Florgib ST": "Fg",
+            "code H": "H", "code Oc": "Oc", "Natrubac 08": "Natrubac", None: "?",
+        }
+        for naam, code in verwacht.items():
+            self.assertEqual(kr.afkorting(naam), code, naam)
+
+
 if __name__ == "__main__":
     unittest.main()

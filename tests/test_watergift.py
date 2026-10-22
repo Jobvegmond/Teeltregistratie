@@ -49,7 +49,7 @@ class TestBehandelingen(unittest.TestCase):
 
     def test_middelen_kort(self):
         regels = [{"naam": "Rizolex vloeibaar"}, {"naam": "Batavia"}, {"naam": "Rizolex vloeibaar"}, {"middel": "Hi"}]
-        self.assertEqual(wg.middelen_kort(regels), "Rizolex/Batavia/Hi")
+        self.assertEqual(wg.middelen_kort(regels), "Ri Ba Hi")
 
     def test_tekst(self):
         self.assertEqual(wg.behandeling_tekst({"naam": "Rizolex vloeibaar", "dosering": 900.0, "eenheid": "ml",
