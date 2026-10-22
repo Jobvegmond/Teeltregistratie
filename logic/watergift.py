@@ -4,6 +4,7 @@ pagina Watergift. Alleen rekenwerk; tests in tests/test_watergift.py.
 """
 from datetime import date, datetime, timedelta
 
+from logic.klimaatregistratie import afkorting
 from logic.weken import week_begin, weeknummer  # noqa: F401 (week_begin/weeknummer via wg.* in app.py)
 
 
@@ -89,14 +90,14 @@ def hoofdsoort(regels):
 
 
 def middelen_kort(regels):
-    """De middelen van één vak op één dag, kort voor op de tijdlijn: het eerste woord van elke naam, zonder
-    dubbele ("Rizolex/Batavia")."""
-    namen = []
+    """De middelen van één vak op één dag, kort voor op de tijdlijn: de afkortingen uit de klimaatregistratie,
+    zonder dubbele, met een spatie ertussen ("Ri Ba")."""
+    codes = []
     for b in regels:
-        naam = (b.get("naam") or b.get("middel") or "?").split()[0]
-        if naam not in namen:
-            namen.append(naam)
-    return "/".join(namen)
+        code = afkorting(b.get("naam") or b.get("middel"))
+        if code not in codes:
+            codes.append(code)
+    return " ".join(codes)
 
 
 def behandeling_tekst(b):

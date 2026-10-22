@@ -28,12 +28,45 @@ CODES = {
     "Hi": ("Hicure", "biologie"), "Hy": ("Hypoaspis", "biologie", "gestrooid"),
     "Rs": ("Root & Shoot", "biologie"), "RS": ("Root & Shoot", "biologie"),
     "M": ("MONcontrol", "biologie"), "P": ("Power Food", "biologie"), "D6": ("D-6 Force", "biologie"),
+    "Na": ("Natrubac", "biologie"),
     "Xt": ("X-Tend", "voeding"), "Co": ("ConSecta", "voeding"),
     "Mn": ("Mangaan (INNO-Mn)", "voeding"), "Ijz": ("IJzer (Innofer)", "voeding"),
     "Yz": ("IJzer (Innofer)", "voeding"), "IM": ("IJzer en mangaan", "voeding"),
     "Im": ("IJzer en mangaan", "voeding"),
 }
 OVERSLAAN = {"Fg", "Fl", "La", "Ja"}       # Florgib staat al in de app; La en Ja zijn tikfouten
+# Afkortingen op de tijdlijn die afwijken van de eerste code in CODES (ijzer: Fe, niet Ijz), en namen in
+# Agro4all die anders heten dan het middel in CODES.
+AFKORTING_ANDERS = {"ijzer (innofer)": "Fe", "innofer": "Fe", "inno-mn": "Mn", "florgib": "Fg"}
+
+
+def _afkortingen():
+    """[(naam in kleine letters, code)]: per middel de eerste code uit CODES, langste naam eerst (zodat
+    "ijzer en mangaan" voor "ijzer" gaat)."""
+    eerste = {}
+    for code, (naam, *_rest) in CODES.items():
+        eerste.setdefault(naam.lower(), code)
+    eerste.update(AFKORTING_ANDERS)
+    return sorted(eerste.items(), key=lambda p: -len(p[0]))
+
+
+_AFKORTINGEN = _afkortingen()
+
+
+def afkorting(naam):
+    """
+    De afkorting van een middel zoals in de klimaatregistratie (CODES): "Rizolex vloeibaar" → "Ri",
+    "ASPERELLO T34 Biocontrol" → "As", "Soiltech Root & Shoot" → "Rs". Een middel uit de klimaatregistratie
+    zonder bekende code ("code H") → "H"; anders het eerste woord van de naam.
+    """
+    naam = (naam or "?").strip()
+    klein = naam.lower()
+    if klein.startswith("code "):
+        return naam[5:].strip()
+    for deel, code in _AFKORTINGEN:
+        if deel in klein:
+            return code
+    return naam.split()[0] if naam.split() else "?"
 REGELS = ("GBM", "Bio")
 
 
