@@ -19,6 +19,7 @@ import csv
 import json
 from datetime import datetime, timedelta
 
+# De pulsmeters die gelezen worden; welke wat meet staat per tuin in config.PRIVA_BESTANDEN.
 METERS = {1: "gas", 2: "warmte"}
 RESET_DREMPEL = -1.0
 # Een toename over een langer interval dan dit dat over middernacht loopt, is niet over de dagen te

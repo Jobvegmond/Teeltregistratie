@@ -1,10 +1,14 @@
 """
 Klimaat per uur per afdeling (temperatuur, RV, vochtdeficit, CO2, buistemperatuur) en de meteo per uur uit
-de Priva-bestanden op de NAS (map Priva), voor de tuin van die klimaatcomputer (standaard tuin 3, regelaar
-VP9508). Rekenwerk en inlezen in logic/klimaat_uur.py; de grafieken op de pagina Tuin gebruiken dit.
+de Priva-bestanden op de NAS (map Priva). Rekenwerk en inlezen in logic/klimaat_uur.py; de grafieken op de
+pagina Tuin gebruiken dit.
 
-- `bron historie/priva_*_per-uur.csv`: de momentwaarde op elk heel uur (het jaar terug).
-- `bron live/historie-<datum>.jsonl`: per minuut; een uur = het gemiddelde van zijn minuten. Gaat voor de CSV.
+- `<historie>/priva_*_per-uur.csv`: de momentwaarde op elk heel uur (het jaar terug; alleen tuin 3).
+- `<live>/historie-<datum>.jsonl`: per minuut; een uur = het gemiddelde van zijn minuten. Gaat voor de CSV.
+
+Per tuin (--tuin, standaard 3) staan de mappen en de regelaar in config.PRIVA_BESTANDEN: tuin 3 (VP9508) in
+`bron live` en `bron historie`, tuin 1 (Matricaria25) in `bron historie/Tuin 1/live` en `.../historie`. De
+regelaar in de bestanden wordt gecontroleerd, zodat de gegevens nooit bij de verkeerde tuin komen.
 
 Een uur dat er al staat wordt overschreven (de bestanden zijn de bron). Alleen voorbije uren.
 
@@ -13,7 +17,8 @@ een storing vult zich zo vanzelf, en een lege database (bijv. de eerste run tege
 wat er in de bestanden staat.
 
 Gebruik:
-    python priva_klimaat.py                      # vanaf de laatst opgeslagen dag, naar DATABASE_URL
+    python priva_klimaat.py                      # tuin 3, vanaf de laatst opgeslagen dag, naar DATABASE_URL
+    python priva_klimaat.py --tuin 1             # tuin 1
     python priva_klimaat.py --vanaf 2025-10-07   # het hele jaar uit de historie-CSV
     python priva_klimaat.py --droog              # alleen tonen, niets opslaan
     python priva_klimaat.py --doel productie     # naar DATABASE_URL_PRODUCTIE
@@ -26,7 +31,6 @@ import os
 import re
 import sys
 from datetime import date, datetime, timedelta, timezone
-from pathlib import Path
 
 GEBRUIKER = "priva-klimaat"
 
@@ -35,22 +39,23 @@ def lees_argumenten():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--map", default=os.environ.get("PRIVA_MAP", "/priva"), help="map Priva")
     parser.add_argument("--vanaf", type=date.fromisoformat, help="eerste dag (standaard: de laatst opgeslagen dag, hooguit 3 dagen terug)")
-    parser.add_argument("--pcu", default="VP9508", help="regelaar; bepaalt de tuin (tuinen.priva_device_id)")
+    parser.add_argument("--tuin", type=int, default=3,
+                        help="tuinnummer (standaard 3); de mappen en de regelaar staan in config.PRIVA_BESTANDEN")
     parser.add_argument("--doel", choices=("app", "productie"), default="app",
                         help="app = DATABASE_URL (standaard), productie = DATABASE_URL_PRODUCTIE")
     parser.add_argument("--droog", action="store_true", help="alleen tonen, niets opslaan")
     return parser.parse_args()
 
 
-def lees_bestanden(map_, vanaf):
+def lees_bestanden(live_map, historie_map, vanaf):
     """(historie, live) vanaf de dag `vanaf` (lijsten van (tijd, afd, meteo), zie logic/klimaat_uur.py)."""
     from logic import klimaat_uur as ku
     begin = datetime.combine(vanaf, datetime.min.time())
     historie, live = [], []
-    for pad in sorted((map_ / "bron historie").glob("priva_*_per-uur.csv")):
+    for pad in sorted(historie_map.glob("priva_*_per-uur.csv")):
         with open(pad, encoding="utf-8") as f:
             historie += [r for r in ku.lees_historie_csv(f) if r[0] >= begin]
-    for pad in sorted((map_ / "bron live").glob("historie-*.jsonl")):
+    for pad in sorted(live_map.glob("historie-*.jsonl")):
         gevonden = re.search(r"(\d{4}-\d{2}-\d{2})", pad.name)
         if gevonden and date.fromisoformat(gevonden.group(1)) < vanaf:
             continue
@@ -87,24 +92,27 @@ def main():
 
     import database
     from logic import klimaat_uur as ku
+    from logic import priva_bron
 
     stempel = f"{datetime.now(timezone.utc):%d-%m-%y %H:%M} UTC"
-    map_ = Path(args.map)
-    if not (map_ / "bron live").is_dir() and not (map_ / "bron historie").is_dir():
-        print(f"[{stempel}] FOUT: geen Priva-bestanden in {map_}", file=sys.stderr)
+    live, historie_map = priva_bron.mappen(args.map, args.tuin)
+    if not live.is_dir() and not historie_map.is_dir():
+        print(f"[{stempel}] FOUT: geen Priva-bestanden van tuin {args.tuin} in {live} of {historie_map}",
+              file=sys.stderr)
         sys.exit(1)
-    tuin = next((t for t in database.get_tuinen() if t.get("priva_device_id") == args.pcu), None)
-    if tuin is None:
-        print(f"[{stempel}] FOUT: geen tuin met regelaar {args.pcu}", file=sys.stderr)
+    tuin = next((t for t in database.get_tuinen() if t["nummer"] == args.tuin), None)
+    fout = priva_bron.controleer_regelaar(live, args.tuin) if tuin else f"geen tuin {args.tuin} in de database"
+    if fout:
+        print(f"[{stempel}] FOUT: {fout}", file=sys.stderr)
         sys.exit(1)
 
     if not args.droog:
         database.init_db()      # maakt klimaat_uur en meteo_uur aan als ze er nog niet zijn (nieuw in 2.11.0)
     vanaf = args.vanaf or begin_aanvulling(database, tuin["id"])
-    historie, live = lees_bestanden(map_, vanaf)
-    afd, meteo = ku.per_uur(historie, live)
+    historie, minuten = lees_bestanden(live, historie_map, vanaf)
+    afd, meteo = ku.per_uur(historie, minuten)
     if not afd and not meteo:
-        print(f"[{stempel}] FOUT: geen klimaatmetingen vanaf {vanaf:%d-%m-%y} in {map_}", file=sys.stderr)
+        print(f"[{stempel}] FOUT: geen klimaatmetingen vanaf {vanaf:%d-%m-%y} in {live}", file=sys.stderr)
         sys.exit(1)
     uren = sorted({uur for uur, _ in afd} | set(meteo))
     eerste, laatste = uren[0], uren[-1]

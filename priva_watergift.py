@@ -1,11 +1,15 @@
 """
-Watergift per vak per dag (l/m², EC, pH) uit de Priva-bestanden op de NAS (map Priva), voor de tuin van
-die klimaatcomputer (standaard tuin 3, regelaar VP9508). Rekenwerk en inlezen in logic/priva_watergift.py.
+Watergift per vak per dag (l/m², EC, pH) uit de Priva-bestanden op de NAS (map Priva). Rekenwerk en
+inlezen in logic/priva_watergift.py. Alleen kranen die een vak van de tuin zijn.
 
-- Afgeronde dagen uit `bron historie/water/kraan-per-dag.csv` (bron 'priva-dag'): alleen waar nog niets
+Per tuin (--tuin, standaard 3) staan de mappen en de regelaar in config.PRIVA_BESTANDEN: tuin 3 (VP9508) in
+`bron live` en `bron historie`, tuin 1 (Matricaria25) in `bron historie/Tuin 1/live` en `.../historie`. De
+regelaar in de bestanden wordt gecontroleerd, zodat de gegevens nooit bij de verkeerde tuin komen.
+
+- Afgeronde dagen uit `<historie>/water/kraan-per-dag.csv` (bron 'priva-dag'): alleen waar nog niets
   staat of waar Excel staat. Wat de Priva-API zette blijft staan (EC/pH daar nauwkeuriger); met
   --overschrijven gaan ook die over.
-- Vandaag tot nu toe uit `bron live/water-actueel.json` (bron 'priva-vandaag'): elke run bijgewerkt. De API
+- Vandaag tot nu toe uit `<live>/water-actueel.json` (bron 'priva-vandaag'): elke run bijgewerkt. De API
   slaat vandaag over; na middernacht vervangt het dagbestand of de API dit door de definitieve dag.
 
 Het aantal gietbeurten staat niet in deze bestanden (blijft leeg); de API vult het nog aan zolang die loopt.
@@ -27,7 +31,6 @@ import argparse
 import os
 import sys
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 GEBRUIKER = "priva-watergift"
 
@@ -36,7 +39,8 @@ def lees_argumenten():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--map", default=os.environ.get("PRIVA_MAP", "/priva"), help="map Priva")
     parser.add_argument("--dagen", type=int, default=14, help="hoeveel afgeronde dagen terug (standaard 14)")
-    parser.add_argument("--pcu", default="VP9508", help="regelaar; bepaalt de tuin (tuinen.priva_device_id)")
+    parser.add_argument("--tuin", type=int, default=3,
+                        help="tuinnummer (standaard 3); de mappen en de regelaar staan in config.PRIVA_BESTANDEN")
     parser.add_argument("--doel", choices=("app", "productie"), default="app",
                         help="app = DATABASE_URL (standaard), productie = DATABASE_URL_PRODUCTIE")
     parser.add_argument("--overschrijven", action="store_true", help="ook dagen die de Priva-API al zette")
@@ -54,21 +58,26 @@ def main():
         os.environ["DATABASE_URL"] = doel_url
 
     import database
+    from logic import priva_bron
     from logic import priva_watergift as pwg
 
     # De klok van de container loopt in UTC; de dag en het uur van "vandaag" komen uit het bestand zelf.
     nu = datetime.now(timezone.utc)
     stempel = f"{nu:%d-%m-%y %H:%M} UTC"
-    map_ = Path(args.map)
-    dagbestand = map_ / "bron historie" / "water" / "kraan-per-dag.csv"
-    actueel = map_ / "bron live" / "water-actueel.json"
+    live, historie = priva_bron.mappen(args.map, args.tuin)
+    dagbestand = historie / "water" / "kraan-per-dag.csv"
+    actueel = live / "water-actueel.json"
     if not dagbestand.exists() and not actueel.exists():
-        print(f"[{stempel}] FOUT: geen waterbestanden in {map_}", file=sys.stderr)
+        print(f"[{stempel}] FOUT: geen waterbestanden van tuin {args.tuin} in {live} of {historie}",
+              file=sys.stderr)
         sys.exit(1)
-    tuin = next((t for t in database.get_tuinen() if t.get("priva_device_id") == args.pcu), None)
-    if tuin is None:
-        print(f"[{stempel}] FOUT: geen tuin met regelaar {args.pcu}", file=sys.stderr)
+    tuin = next((t for t in database.get_tuinen() if t["nummer"] == args.tuin), None)
+    fout = priva_bron.controleer_regelaar(live, args.tuin) if tuin else f"geen tuin {args.tuin} in de database"
+    if fout:
+        print(f"[{stempel}] FOUT: {fout}", file=sys.stderr)
         sys.exit(1)
+    # Alleen kranen die een vak van deze tuin zijn (tuin 1 heeft kraan 1–30 maar vak 1–27).
+    vakken = set(database.get_vaknummers(tuin["id"]))
 
     dagen = []
     if dagbestand.exists():
@@ -83,6 +92,8 @@ def main():
     # Staat een dag al als afgeronde dag in het dagbestand, dan telt de lopende stand niet.
     if vandaag and any(r["datum"] == vandaag for r in dagen):
         vandaag_rijen = []
+    dagen = [r for r in dagen if r["vak"] in vakken]
+    vandaag_rijen = [r for r in vandaag_rijen if r["vak"] in vakken]
 
     opgeslagen = {"dag": 0, "vandaag": 0}
     for soort, rijen, bron in (("dag", dagen, database.WATERGIFT_BRON_BESTAND_DAG),

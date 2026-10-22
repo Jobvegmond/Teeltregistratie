@@ -1,22 +1,27 @@
 """
-Warmte en gas per dag uit de pulsmeters in de Priva-bestanden op de NAS (map Priva), voor de tuin
-van die klimaatcomputer (standaard tuin 3, regelaar VP9508): pulsmeter 2 = warmte (GJ, opgeslagen
-in MJ in energiedata_dag), pulsmeter 1 = gas (m³, gasdata_dag). Het rekenwerk staat in
-logic/pulsmeters.py.
+Warmte en gas per dag uit de pulsmeters in de Priva-bestanden op de NAS (map Priva). Welke pulsmeter
+wat meet staat per tuin in config.PRIVA_BESTANDEN: tuin 3 pulsmeter 2 = warmte (GJ, opgeslagen in MJ in
+energiedata_dag) en pulsmeter 1 = gas (m³, gasdata_dag); tuin 1 alleen pulsmeter 1 = gas (de warmte komt
+daar van de warmtewisselaar, uit de energie-export). Het rekenwerk staat in logic/pulsmeters.py.
 
 Standaard vult het alleen dagen aan die nog niet in de database staan: cijfers uit de
 energie-export van Priva (handmatig ingelezen) blijven staan. Met --overschrijven gaan ook
 bestaande dagen over. Een dag wordt alleen opgeslagen als hij voorbij en helemaal gedekt is.
 
 Gebruik:
-    python priva_pulsmeters.py                      # laatste 14 dagen, naar DATABASE_URL
+    python priva_pulsmeters.py                      # tuin 3, laatste 14 dagen, naar DATABASE_URL
+    python priva_pulsmeters.py --tuin 1             # tuin 1 (alleen gas)
     python priva_pulsmeters.py --vanaf 2026-09-28   # vanaf een datum
     python priva_pulsmeters.py --droog              # alleen tonen, niets opslaan
     python priva_pulsmeters.py --doel productie     # naar DATABASE_URL_PRODUCTIE
 
 De map met de bestanden: --map, of PRIVA_MAP in de omgeving (in de container /priva; lokaal
-bijv. \\\\192.168.0.197\\Priva). Daarin "bron historie" (pulsmeters_*.csv, per uur) en
-"bron live" (historie-<datum>.jsonl, per minuut).
+bijv. \\\\192.168.0.197\\Priva), met de historie (pulsmeters_*.csv, per uur; alleen tuin 3) en de
+live-bestanden (historie-<datum>.jsonl, per minuut).
+
+Per tuin (--tuin, standaard 3) staan de mappen en de regelaar in config.PRIVA_BESTANDEN: tuin 3 (VP9508) in
+`bron live` en `bron historie`, tuin 1 (Matricaria25) in `bron historie/Tuin 1/live` en `.../historie`. De
+regelaar in de bestanden wordt gecontroleerd, zodat de gegevens nooit bij de verkeerde tuin komen.
 
 Synology Taakplanner (root), elk uur; een losse container uit het app-image met de map Priva
 (/volume2/Priva) alleen-lezen erbij, net als de taak Priva-data ophalen. .env.taak levert
@@ -33,7 +38,6 @@ import os
 import re
 import sys
 from datetime import date, datetime, timedelta, timezone
-from pathlib import Path
 
 GEBRUIKER = "priva-pulsmeters"
 GJ_NAAR_MJ = 1000
@@ -44,7 +48,8 @@ def lees_argumenten():
     parser.add_argument("--map", default=os.environ.get("PRIVA_MAP", "/priva"), help="map Priva (met 'bron live')")
     parser.add_argument("--vanaf", type=date.fromisoformat, help="eerste dag (standaard 14 dagen terug)")
     parser.add_argument("--tot", type=date.fromisoformat, help="laatste dag (standaard: de laatste dag met metingen)")
-    parser.add_argument("--pcu", default="VP9508", help="regelaar; bepaalt de tuin (tuinen.priva_device_id)")
+    parser.add_argument("--tuin", type=int, default=3,
+                        help="tuinnummer (standaard 3); de mappen en de regelaar staan in config.PRIVA_BESTANDEN")
     parser.add_argument("--doel", choices=("app", "productie"), default="app",
                         help="app = DATABASE_URL (standaard), productie = DATABASE_URL_PRODUCTIE")
     parser.add_argument("--overschrijven", action="store_true", help="ook dagen die al in de database staan")
@@ -52,14 +57,14 @@ def lees_argumenten():
     return parser.parse_args()
 
 
-def lees_bestanden(map_, vanaf):
+def lees_bestanden(live, historie, vanaf):
     """Alle tellerstanden vanaf de dag vóór `vanaf` uit de historie-CSV's en de live-JSONL's."""
     from logic import pulsmeters as pm
     bronnen = []
-    for pad in sorted((map_ / "bron historie").glob("pulsmeters_*.csv")):
+    for pad in sorted(historie.glob("pulsmeters_*.csv")):
         with open(pad, encoding="utf-8") as f:
             bronnen.append(pm.lees_historie_csv(f))
-    for pad in sorted((map_ / "bron live").glob("historie-*.jsonl")):
+    for pad in sorted(live.glob("historie-*.jsonl")):
         gevonden = re.search(r"(\d{4}-\d{2}-\d{2})", pad.name)
         if gevonden and date.fromisoformat(gevonden.group(1)) < vanaf - timedelta(days=1):
             continue
@@ -81,21 +86,26 @@ def main():
         os.environ["DATABASE_URL"] = doel_url
 
     import database
+    from logic import priva_bron
     from logic import pulsmeters as pm
 
     stempel = f"{datetime.now(timezone.utc):%d-%m-%y %H:%M} UTC"
-    map_ = Path(args.map)
-    if not (map_ / "bron live").is_dir() and not (map_ / "bron historie").is_dir():
-        print(f"[{stempel}] FOUT: geen Priva-bestanden in {map_}", file=sys.stderr)
+    live, historie = priva_bron.mappen(args.map, args.tuin)
+    if not live.is_dir() and not historie.is_dir():
+        print(f"[{stempel}] FOUT: geen Priva-bestanden van tuin {args.tuin} in {live} of {historie}",
+              file=sys.stderr)
         sys.exit(1)
 
-    tuin = next((t for t in database.get_tuinen() if t.get("priva_device_id") == args.pcu), None)
-    if tuin is None:
-        print(f"[{stempel}] FOUT: geen tuin met regelaar {args.pcu}", file=sys.stderr)
+    tuin = next((t for t in database.get_tuinen() if t["nummer"] == args.tuin), None)
+    fout = priva_bron.controleer_regelaar(live, args.tuin) if tuin else f"geen tuin {args.tuin} in de database"
+    if fout:
+        print(f"[{stempel}] FOUT: {fout}", file=sys.stderr)
         sys.exit(1)
+    # Welke pulsmeter wat meet, per tuin (tuin 1 heeft alleen gas; de warmte komt daar van de warmtewisselaar).
+    meter_van = {soort: n for n, soort in priva_bron.instellingen(args.tuin)["meters"].items()}
 
-    standen = lees_bestanden(map_, vanaf)
-    per_meter = {n: pm.dagverbruik(standen.get(n, [])) for n in pm.METERS}
+    standen = lees_bestanden(live, historie, vanaf)
+    per_meter = {n: pm.dagverbruik(standen.get(n, [])) for n in meter_van.values()}
     # Tot en met de laatste dag met metingen (die zelf telt alleen als hij volledig is). Niet de klok van
     # de container: die loopt in UTC, en om 01:00 's nachts was het daar nog "gisteren".
     laatste = max((t for reeks in standen.values() for t, _ in reeks), default=datetime.combine(vanaf, datetime.min.time()))
@@ -111,12 +121,14 @@ def main():
     warmte_dagen, gas_dagen, overgeslagen = [], [], []
     dag = vanaf
     while dag <= tot:
-        warmte_gj = per_meter[2][0].get(dag)
-        gas_m3 = per_meter[1][0].get(dag)
+        warmte_gj = per_meter[meter_van["warmte"]][0].get(dag) if "warmte" in meter_van else None
+        gas_m3 = per_meter[meter_van["gas"]][0].get(dag) if "gas" in meter_van else None
         nieuw_w = warmte_gj is not None and (args.overschrijven or str(dag) not in al_warmte)
         nieuw_g = gas_m3 is not None and (args.overschrijven or str(dag) not in al_gas)
+        # Onvolledig = een meter van deze tuin heeft die dag geen volledige reeks.
+        onvolledig = ("warmte" in meter_van and warmte_gj is None) or ("gas" in meter_van and gas_m3 is None)
         status = []
-        if warmte_gj is None or gas_m3 is None:
+        if onvolledig:
             status.append("onvolledig")
         if not nieuw_w and warmte_gj is not None:
             status.append("warmte stond er al")
@@ -132,7 +144,7 @@ def main():
             gas_dagen.append(dag)
             if not args.droog:
                 database.upsert_gasdata_dag(dag, round(gas_m3, 1), tuin_id=tuin["id"])
-        if warmte_gj is None or gas_m3 is None:
+        if onvolledig:
             overgeslagen.append(dag)
         dag += timedelta(days=1)
 
