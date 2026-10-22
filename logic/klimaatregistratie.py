@@ -28,6 +28,7 @@ CODES = {
     "Hi": ("Hicure", "biologie"), "Hy": ("Hypoaspis", "biologie", "gestrooid"),
     "Rs": ("Root & Shoot", "biologie"), "RS": ("Root & Shoot", "biologie"),
     "M": ("MONcontrol", "biologie"), "P": ("Power Food", "biologie"), "D6": ("D-6 Force", "biologie"),
+    "Na": ("Natrubac", "biologie"),
     "Xt": ("X-Tend", "voeding"), "Co": ("ConSecta", "voeding"),
     "Mn": ("Mangaan (INNO-Mn)", "voeding"), "Ijz": ("IJzer (Innofer)", "voeding"),
     "Yz": ("IJzer (Innofer)", "voeding"), "IM": ("IJzer en mangaan", "voeding"),

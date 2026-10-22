@@ -65,7 +65,7 @@ class TestAfkorting(unittest.TestCase):
             "Biota 500": "B5", "Biota 820": "B8", "D-6 Force": "D6", "SilicaPower": "Sc", "Hypoaspis": "Hy",
             "X-Tend": "Xt", "ConSecta": "Co", "IJzer en mangaan": "IM", "IJzer (Innofer)": "Ijz",
             "Innofer Fe++": "Ijz", "INNO-Mn++": "Mn", "Mangaan (INNO-Mn)": "Mn", "Florgib ST": "Fg",
-            "code H": "H", "code Oc": "Oc", "Natrubac 08": "Natrubac", None: "?",
+            "code H": "H", "code Oc": "Oc", "Natrubac 08": "Na", None: "?",
         }
         for naam, code in verwacht.items():
             self.assertEqual(kr.afkorting(naam), code, naam)
