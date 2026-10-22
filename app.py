@@ -2732,8 +2732,9 @@ def _pagina_tuin():
                "geplante vakken, de watergift en de opmerkingen van de periode.",
                "**Tuin 1 / Tuin 3**: een klik op een regel bij *Wat er gebeurde* opent het vak. In de grafieken: beweeg over een tijdstip voor "
                "alle afdelingen tegelijk."],
-        bron="Klimaat per dag, watergift en energie uit Priva. Klimaat per uur (tuin 3) uit de Priva-bestanden op de "
-             "NAS, elk uur bijgewerkt: het gemiddelde van de minuten, vóór 7 oktober 2026 de waarde op het hele uur. "
+        bron="Klimaat per dag, watergift en energie uit Priva. Klimaat per uur uit de Priva-bestanden op de NAS, elk "
+             "uur bijgewerkt: het gemiddelde van de minuten (tuin 3 vóór 7 oktober 2026 de waarde op het hele uur; "
+             "tuin 1 sinds 21 oktober 2026). "
              "Geplant, Florgib, geoogst en opmerkingen uit de registratie; geoogste stelen = emmers × 100.",
         kleuren="Groen/rood pijltje = beter/slechter dan de vergelijking; lichtgroen vak = de beste tuin (Beide); "
                 "⚠ = niet alle dagen, uren of vakken met data. Grafieken: vaste kleur per afdeling, grijs gestippeld "

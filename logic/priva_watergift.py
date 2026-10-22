@@ -1,13 +1,14 @@
 """
-Watergift per vak per dag (l/m², EC, pH) uit de Priva-bestanden op de NAS (map Priva), tuin 3
-(regelaar VP9508). Kraan 1–39 = vak 1–39, zoals in de Priva-API.
+Watergift per vak per dag (l/m², EC, pH) uit de Priva-bestanden op de NAS (map Priva), per tuin
+(de mappen staan in config.PRIVA_BESTANDEN). Kraan n = vak n, zoals in de Priva-API.
 
-- Afgeronde dagen: `bron historie/water/kraan-per-dag.csv`, eens per dag kort na 00:05 geschreven
+- Afgeronde dagen: `<historie>/water/kraan-per-dag.csv`, eens per dag kort na 00:05 geschreven
   uit het Priva-scherm "KRAAN GISTEREN" (M412.1): `datum;kraan;ec_mS_cm;ph;liter;ml_per_eenheid;
   l_per_m2;…`. EC en pH staan daar op één decimaal.
-- Vandaag tot nu toe: `bron live/water-actueel.json`, elke minuut, scherm "KRAAN VANDAAG" (M412.0):
-  sleutel `M412.0N<pagina>R1.<kraan>V<n>` met pagina 1 = kraan 1–20, 2 = kraan 21–39 en
-  V1 EC, V2 pH, V3 liter, V5 l/m².
+- Vandaag tot nu toe: `<live>/water-actueel.json`, elke minuut, scherm "KRAAN VANDAAG" (M412.0):
+  sleutel `M412.0N<pagina>R1.<kraan>V<n>` met V1 EC, V2 pH, V3 liter, V5 l/m². Tuin 3: pagina 1 =
+  kraan 1–20, pagina 2 = kraan 21–39; tuin 1: alle kranen (1–30) op pagina 1. Een kraan wordt eerst op
+  pagina 1 gezocht en anders op pagina 2.
 
 Alleen inlezen en rekenen; het script priva_watergift.py slaat op. Tests in tests/test_priva_watergift.py.
 """
@@ -48,8 +49,13 @@ def lees_kraan_per_dag(regels):
     return uit
 
 
-def _sleutel(kraan, v):
-    return f"M412.0N{1 if kraan <= 20 else 2}R1.{kraan}V{v}"
+def _waarde(waarden, kraan, v):
+    """De waarde van een kraan: op pagina 1, anders op pagina 2 (tuin 3, kraan 21 en hoger)."""
+    for pagina in (1, 2):
+        sleutel = f"M412.0N{pagina}R1.{kraan}V{v}"
+        if sleutel in waarden:
+            return _getal(waarden[sleutel])
+    return None
 
 
 def lees_vandaag(tekst, nu):
@@ -69,10 +75,10 @@ def lees_vandaag(tekst, nu):
         return None, []
     rijen = []
     for kraan in KRANEN:
-        liter = _getal(waarden.get(_sleutel(kraan, 5)))
+        liter = _waarde(waarden, kraan, 5)
         if liter is None:
             continue
         rijen.append({"vak": kraan, "datum": tijd.date(), "liter_per_m2": round(liter, 2),
-                      "ec": _getal(waarden.get(_sleutel(kraan, 1))) if liter else None,
-                      "ph": _getal(waarden.get(_sleutel(kraan, 2))) if liter else None})
+                      "ec": _waarde(waarden, kraan, 1) if liter else None,
+                      "ph": _waarde(waarden, kraan, 2) if liter else None})
     return tijd.date(), rijen

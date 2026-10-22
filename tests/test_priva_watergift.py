@@ -38,6 +38,15 @@ class TestVandaag(unittest.TestCase):
             {"vak": 39, "datum": date(2026, 10, 9), "liter_per_m2": 16.52, "ec": 1.6, "ph": 6.1},
         ])
 
+    def test_tuin1_alle_kranen_op_pagina_1(self):
+        # Tuin 1 (Matricaria25): kraan 21–30 staan ook op pagina 1, niet op pagina 2 zoals bij tuin 3.
+        tekst = self.actueel("2026-10-22T09:27:56+02:00", {
+            "M412.0N1R1.21V5": 12.017, "M412.0N1R1.21V1": 1.5, "M412.0N1R1.21V2": 5.1,
+            "M412.0N1R1.30V5": None})
+        _dag, rijen = pwg.lees_vandaag(tekst, datetime(2026, 10, 22, 8, 0, tzinfo=UTC))
+        self.assertEqual(rijen, [{"vak": 21, "datum": date(2026, 10, 22), "liter_per_m2": 12.02, "ec": 1.5,
+                                  "ph": 5.1}])
+
     def test_te_oud_of_vlak_na_middernacht_telt_niet(self):
         waarden = {"M412.0N1R1.1V5": 2.0}
         self.assertEqual(pwg.lees_vandaag(self.actueel("2026-10-09T12:00:00+02:00", waarden),

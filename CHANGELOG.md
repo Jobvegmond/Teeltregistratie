@@ -3,6 +3,25 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.19.0] - 2026-10-22
+
+### Toegevoegd
+- **Tuin 1 uit de Priva-bestanden op de NAS** (naast de API): klimaat per uur per afdeling met meteo (ook de
+  uurgrafieken op Tuin), watergift per vak per dag en de stand van vandaag, en gas uit pulsmeter 1. De
+  bestanden van tuin 1 staan in `bron historie/Tuin 1/live` en `.../historie` (sinds 20/21-10-2026).
+  - `config.PRIVA_BESTANDEN`: per tuin de regelaar, de mappen en welke pulsmeter wat meet. Tuin 1 alleen
+    gas: de warmte komt daar van de warmtewisselaar (energie-export), pulsmeter 2 staat op 0.
+  - `priva_klimaat.py`, `priva_watergift.py` en `priva_pulsmeters.py`: `--tuin` (standaard 3) in plaats van
+    `--pcu`; de regelaar in de bestanden wordt gecontroleerd, zodat gegevens nooit bij de verkeerde tuin komen
+    (`logic/priva_bron.py`, tests in `tests/test_priva_bron.py`).
+  - Watergift van vandaag: een kraan wordt op pagina 1 gezocht en anders op pagina 2 (bij tuin 1 staan alle
+    kranen op pagina 1); alleen kranen die een vak van de tuin zijn.
+  - `priva_bestanden.py` (de uurtaak) draait de drie Priva-scripts voor elke tuin; de taak zelf blijft gelijk.
+
+### Nog uit de Priva-API (voor beide tuinen)
+- Klimaat per dag (etmaal/dag/nacht, lichtsom) waar het teeltmodel mee rekent, EC/pH per gift, de losse
+  gietbeurten en de watergift met bron `priva` (gaat voor de bestanden).
+
 ## [2.18.2] - 2026-10-21
 
 ### Gewijzigd
