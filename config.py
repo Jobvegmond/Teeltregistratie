@@ -68,14 +68,15 @@ WATERSYSTEMEN = {1: {1: None}, 3: {1: None}}
 # Per tuin waar de Priva-bestanden staan (in de share Priva, in de container /priva): de regelaar (staat ook
 # in laatste.json en water-actueel.json en wordt gecontroleerd), de map met de minuutbestanden (live) en die
 # met de dagbestanden en de uurhistorie (historie), en welke pulsmeter wat meet. Tuin 1 krijgt zijn warmte van
-# de warmtewisselaar, niet uit een pulsmeter (pulsmeter 2 staat daar op 0): alleen gas.
+# de warmtewisselaar, niet uit een pulsmeter (pulsmeter 2 staat daar op 0): de warmte komt daar uit het
+# gerealiseerde vermogen van de warmtewisselaar (warmte_vermogen, kW, scherm M340.0) maal de tijd.
 PRIVA_BESTANDEN = {
     3: {"pcu": "VP9508", "live": "bron live", "historie": "bron historie", "meters": {1: "gas", 2: "warmte"}},
     1: {"pcu": "Matricaria25", "live": "bron historie/Tuin 1/live", "historie": "bron historie/Tuin 1/historie",
-        "meters": {1: "gas"}},
+        "meters": {1: "gas"}, "warmte_vermogen": "M340.0N1R11.1V1"},
 }
 
 # --- VERSIE ---
 # Staat rechtsboven in de app. Ophogen bij elke wijziging op main (zie CHANGELOG.md):
 # derde getal bij een correctie, tweede bij iets nieuws, eerste bij een grote omzetting.
-APP_VERSIE = "2.19.0"
+APP_VERSIE = "2.20.0"

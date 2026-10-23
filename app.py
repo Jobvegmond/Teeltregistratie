@@ -943,7 +943,8 @@ def _inv_tabel(rijen, kolommen, sleutel):
                              column_order=["Kies", "vak"] + [k for k, _kop, _soort, invul in kolommen if invul]
                              + [k for k, _kop, _soort, invul in kolommen if not invul and k != "vak"],
                              disabled=[k for k, _kop, _soort, invul in kolommen if not invul],
-                             height=min(36 * (len(df) + 1) + 3, 800))
+                             # Een derde van de volle hoogte (hooguit ± 7 regels); de rest scroll je.
+                             height=max(140, min(36 * (len(df) + 1) + 3, 800) // 3))
     return bewerkt.to_dict("records")
 
 
@@ -1842,6 +1843,8 @@ def _pagina_overzicht():
             "klimaatregistratie (bijv. Ri = Rizolex, B5 = Biota 500; ingekort tot wat er past tot de "
             "volgende behandeling; de volledige namen en doseringen in de tooltip); de watergift als dun streepje "
             "onderin.",
+            "Bij Standaard en Watergift staat achter het vaknummer het totaal gegoten van de lopende teelt sinds het "
+            "planten (l/m², bijv. Vak 2 · 145).",
             "*Watergift*: per vak drie regels: de liters (l/m²) en daaronder de EC en pH van de gift van dat vak; "
             "bovenaan de EC van de voorregeling (het uitgangswater vóór bemesting). EC/pH sinds 27-09-26.",
             "Klik op een balk voor het vak, op een driehoekje voor de middelen, op een watergift voor alle "
@@ -2051,7 +2054,21 @@ def _tl_frames(info, afdelingen, van, tot, vandaag, weken, weergave):
     frames = [balken] + [pd.DataFrame(x) for x in (randen, florgib, plan, kopteksten, weeknummers, dagnamen)]
     water, waarden, tabel, wgdata = _tl_watergift(tuin, volgorde, van, min(tot, vandaag), weergave == "Watergift")
     return (volgorde, frames + [_tl_behandelingen(tuin["id"], volgorde, van, tot), water, waarden], stukken,
-            (tabel, wgdata))
+            (tabel, wgdata, _tl_water_totaal(tuin, info["statussen"], vandaag)))
+
+
+def _tl_water_totaal(tuin, statussen, vandaag):
+    """{vak: l/m²}: de totale watergift van de lopende teelt per vak, van het planten t/m vandaag."""
+    starts = {int(vak): s["start"] for vak, s in statussen.items() if s.get("start")}
+    if not starts:
+        return {}
+    d = _wg_data(tuin["id"], min(starts.values()), vandaag, vakstatus_dataversie())
+    totaal = {}
+    for r in d["gift"]:
+        vak, dag = int(r["vaknummer"]), wg.als_datum(r["datum"])
+        if vak in starts and starts[vak] <= dag <= vandaag and r["liter_per_m2"]:
+            totaal[vak] = totaal.get(vak, 0.0) + r["liter_per_m2"]
+    return totaal
 
 
 def _tl_watergift(tuin, volgorde, van, tot, met_ecph=False):
@@ -2125,23 +2142,26 @@ def _tl_behandelingen(tuin_id, volgorde, van, tot):
     return pd.DataFrame(rijen)
 
 
-def _tl_grafiek(volgorde, frames, van, tot, vandaag, weken, weergave):
+def _tl_grafiek(volgorde, frames, van, tot, vandaag, weken, weergave, water_totaal=None):
     """
     De Altair-grafiek van één tuin in de weergave Standaard, Bespuitingen of Watergift. Klikbaar: de balken
     ('tl_klik'), de behandelingen ('tl_beh', 'tl_btekst') en de watergift ('tl_water', 'tl_wtekst', 'tl_ecph');
     elke laag een eigen selectie (dezelfde selectie op twee lagen geeft een dubbel signaal in Vega).
+    water_totaal ({vak: l/m²}): achter het vaknummer het totaal gegoten van de lopende teelt ("Vak 2 · 145").
     """
     balken, randen, florgib, plan, kopteksten, weeknummers, dagnamen, behandelingen, water, waarden = frames
     # Hoe breed een dag op het scherm is, weet alleen de grafiek zelf ("width" = de breedte van het
     # tekenvlak). Getallen en middelen kiezen daarop wat er past: volledig, korter of niets (dan de tooltip).
     px = f"(width / {(tot - van).days + 1})"
     schaal = alt.Scale(domain=[pd.Timestamp(van).isoformat(), pd.Timestamp(tot).isoformat()])
+    met_totaal = {f"Vak {v}": f"Vak {v} · {fmt_getal(t, 0)}" for v, t in (water_totaal or {}).items()}
     x = alt.X("start:T", title=None, scale=schaal, axis=alt.Axis(
         orient="top", grid=True, labels=False, ticks=False, domain=False,
         tickCount={"interval": "week", "step": 1}))
     y = alt.Y("y:N", title=None, sort=volgorde, scale=alt.Scale(domain=volgorde), axis=alt.Axis(
-        labelExpr="indexof(datum.label, '§ec') == 0 ? 'EC' : indexof(datum.label, '§ph') == 0 ? 'pH' : "
-                  "indexof(datum.label, '§') == 0 ? '' : datum.label", labelLimit=80, minExtent=0,
+        labelExpr=("(" + json.dumps(met_totaal, ensure_ascii=False) + ")[datum.label] || "
+                   "(indexof(datum.label, '§ec') == 0 ? 'EC' : indexof(datum.label, '§ph') == 0 ? 'pH' : "
+                   "indexof(datum.label, '§') == 0 ? '' : datum.label)"), labelLimit=110, minExtent=0,
         ticks=False, domain=False, labelFontSize=11))
     klik = alt.selection_point(name="tl_klik", fields=["sleutel"], on="click")
     lagen = [
@@ -2403,7 +2423,9 @@ def _tl_toon(infos, afdelingen, van, tot, weken, vandaag, weergave):
         versie = f"tl_grafiek_{tuin['nummer']}_versie"
         st.session_state.setdefault(versie, 0)
         widget = f"tl_grafiek_{tuin['nummer']}_{st.session_state[versie]}"
-        st.altair_chart(_tl_grafiek(volgorde, frames, van, tot, vandaag, weken, weergave), use_container_width=True,
+        totaal = wgdata[2] if weergave != "Bespuitingen" else {}
+        st.altair_chart(_tl_grafiek(volgorde, frames, van, tot, vandaag, weken, weergave, totaal),
+                        use_container_width=True,
                         on_select=lambda w=widget, v=versie: _tl_geklikt(w, v),
                         selection_mode=selecties, key=widget)
         geklikt = st.session_state.pop(f"{versie}_klik", None)
