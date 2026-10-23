@@ -3,6 +3,12 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.20.1] - 2026-10-23
+
+### Opgelost
+- Registreren, Lengte en gewicht gaf een fout ("cannot use 'list' as a dict key"): de breedte van de kolom
+  Rijpheid (een keuzelijst) werd verkeerd berekend. Fout sinds 2.18.1.
+
 ## [2.20.0] - 2026-10-23
 
 ### Toegevoegd
