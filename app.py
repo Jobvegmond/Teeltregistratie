@@ -926,7 +926,8 @@ def _inv_tabel(rijen, kolommen, sleutel):
     for kolom, kop, soort, invul in kolommen:
         # Zo smal als de kop of de inhoud toelaat (± 7 px per letter in de kop; een invulkolom heeft er een
         # potloodje bij).
-        px = max({"getal": 70, "geheel": 52, "ja/nee": 64}.get(soort, 72), int(len(kop) * 7 + 26)) + 18 * invul
+        basis = {"getal": 70, "geheel": 52, "ja/nee": 64}.get(soort, 72) if isinstance(soort, str) else 72
+        px = max(basis, int(len(kop) * 7 + 26)) + 18 * invul   # soort kan een lijst opties zijn (rijpheid)
         breedte += px
         if soort == "getal":
             config[kolom] = st.column_config.NumberColumn(kop, min_value=0.0, step=0.1, format="%.1f", width=px)
