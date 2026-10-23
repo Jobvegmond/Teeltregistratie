@@ -2,7 +2,8 @@
 Warmte en gas per dag uit de pulsmeters in de Priva-bestanden op de NAS (map Priva). Welke pulsmeter
 wat meet staat per tuin in config.PRIVA_BESTANDEN: tuin 3 pulsmeter 2 = warmte (GJ, opgeslagen in MJ in
 energiedata_dag) en pulsmeter 1 = gas (m³, gasdata_dag); tuin 1 alleen pulsmeter 1 = gas (de warmte komt
-daar van de warmtewisselaar, uit de energie-export). Het rekenwerk staat in logic/pulsmeters.py.
+daar van de warmtewisselaar: het gerealiseerde vermogen (scherm M340.0, kW) maal de tijd, uit
+overig-<datum>.jsonl; logic/warmtewisselaar.py). Het rekenwerk staat in logic/pulsmeters.py.
 
 Standaard vult het alleen dagen aan die nog niet in de database staan: cijfers uit de
 energie-export van Priva (handmatig ingelezen) blijven staan. Met --overschrijven gaan ook
@@ -103,6 +104,8 @@ def main():
         sys.exit(1)
     # Welke pulsmeter wat meet, per tuin (tuin 1 heeft alleen gas; de warmte komt daar van de warmtewisselaar).
     meter_van = {soort: n for n, soort in priva_bron.instellingen(args.tuin)["meters"].items()}
+    vermogen = priva_bron.instellingen(args.tuin).get("warmte_vermogen")
+    met_warmte = "warmte" in meter_van or bool(vermogen)
 
     standen = lees_bestanden(live, historie, vanaf)
     per_meter = {n: pm.dagverbruik(standen.get(n, [])) for n in meter_van.values()}
@@ -118,15 +121,35 @@ def main():
         c.execute("SELECT datum FROM gasdata_dag WHERE tuin_id = %s", (tuin["id"],))
         al_gas = {r[0] for r in c.fetchall()}
 
+    # Tuin 1: de warmte per dag uit het vermogen van de warmtewisselaar (alleen dagen die er nog niet staan; de
+    # dagbestanden zijn groot).
+    warmte_ww = {}
+    if vermogen:
+        from logic import warmtewisselaar as ww
+        for pad in sorted(live.glob("overig-*.jsonl")):
+            gevonden = re.search(r"(\d{4}-\d{2}-\d{2})", pad.name)
+            dag_bestand = date.fromisoformat(gevonden.group(1)) if gevonden else None
+            if not dag_bestand or not vanaf <= dag_bestand <= tot or (
+                    str(dag_bestand) in al_warmte and not args.overschrijven):
+                continue
+            with open(pad, encoding="utf-8") as f:
+                dag_ww, kwh = ww.dag_kwh(f, vermogen)
+            if dag_ww and kwh is not None:
+                warmte_ww[dag_ww] = kwh * 3.6 / 1000          # kWh → GJ
+
     warmte_dagen, gas_dagen, overgeslagen = [], [], []
     dag = vanaf
     while dag <= tot:
-        warmte_gj = per_meter[meter_van["warmte"]][0].get(dag) if "warmte" in meter_van else None
+        if "warmte" in meter_van:
+            warmte_gj = per_meter[meter_van["warmte"]][0].get(dag)
+        else:
+            warmte_gj = warmte_ww.get(dag) if vermogen else None
         gas_m3 = per_meter[meter_van["gas"]][0].get(dag) if "gas" in meter_van else None
         nieuw_w = warmte_gj is not None and (args.overschrijven or str(dag) not in al_warmte)
         nieuw_g = gas_m3 is not None and (args.overschrijven or str(dag) not in al_gas)
         # Onvolledig = een meter van deze tuin heeft die dag geen volledige reeks.
-        onvolledig = ("warmte" in meter_van and warmte_gj is None) or ("gas" in meter_van and gas_m3 is None)
+        onvolledig = (met_warmte and warmte_gj is None and not (vermogen and str(dag) in al_warmte)) or (
+            "gas" in meter_van and gas_m3 is None)
         status = []
         if onvolledig:
             status.append("onvolledig")

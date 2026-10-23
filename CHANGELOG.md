@@ -3,6 +3,17 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.20.0] - 2026-10-23
+
+### Toegevoegd
+- **Warmte van tuin 1 uit de Priva-bestanden**: het gerealiseerde vermogen van de warmtewisselaar (scherm
+  M340.0, "W.WISSELAAR - ger vermogen", kW) maal de tijd, per volledige dag uit `overig-<datum>.jsonl`
+  (`logic/warmtewisselaar.py`, tests in `tests/test_warmtewisselaar.py`). Een energieteller van de
+  warmtewisselaar staat niet in de bestanden. 22-10-2026: 22,4 GJ.
+  - Alleen dagen waar nog geen warmte staat; de Energie-export (CSV) overschrijft het gewoon.
+  - Het scherm M340.0 werd elke 15 minuten gelezen; op 1 minuut (in `scripts\schermen-termijnen.csv` van de
+    poller op de Priva-pc van tuin 1) wordt het nauwkeuriger. Eerst naast de Energie-export vergelijken.
+
 ## [2.19.1] - 2026-10-22
 
 ### Gewijzigd
