@@ -3,6 +3,12 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.21.1] - 2026-10-24
+
+### Opgelost
+- Overzicht: op de tijdlijn verscheen toch nog een kader (x, y, lbl) bij aanraken: Streamlit zet zelf een tooltip
+  op elk merkteken zonder eigen tooltip. Nu op elk merkteken en in de grafiek uitgezet.
+
 ## [2.21.0] - 2026-10-24
 
 ### Gewijzigd
