@@ -3,6 +3,12 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.20.3] - 2026-10-24
+
+### Gewijzigd
+- Overzicht: de tijdlijn heeft geen tooltips meer. Het kader viel op een telefoon vaak half buiten beeld en ging
+  niet meer weg; meer weten = klikken (balk → het vak, driehoekje → de middelen, watergift → de gietbeurten).
+
 ## [2.20.1] - 2026-10-23
 
 ### Opgelost
