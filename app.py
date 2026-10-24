@@ -585,7 +585,6 @@ PAGINA_DEFINITIES = [
     ("pagina_registreren", "Registreren", "registreren"),
     ("pagina_overzicht", "Overzicht", "overzicht"),
     ("pagina_teelt", "Teelt", "teelt"),
-    ("pagina_stek", "Stek", "stek"),
     ("pagina_tuinvergelijking", "Tuin", "tuinvergelijking"),
     ("pagina_opmerkingen", "Opmerkingen", "opmerkingen"),
     ("pagina_meer", "Meer", "meer"),
@@ -708,7 +707,6 @@ _tuin_nummers = [t["nummer"] for t in TUINEN]
 # tuinen (keuze uitgeschakeld). Registreren werkt per tuin; bij Beide registreer je in de laatst gekozen tuin.
 TUIN_MODUS = {
     "registreren": ("een", "Registreren kan maar in één tuin."),
-    "stek": ("een", "Stek werkt per tuin."),
     "meer": ("een", "Import en prognosekwaliteit werken per tuin."),
 }
 # Op titel, niet op _pagina.url_path: dat is leeg voor de startpagina.
@@ -825,9 +823,10 @@ def toon_oogstregistraties_beheer(teelt_id, teelt_info):
 # of één waarde voor alle aangevinkte vakken. Rechts wat er nog te doen is en de laatste registraties.
 # Rekenwerk in logic/registreren.py. Een nieuwe teelt begint niet hier maar op Overzicht: daar staat het
 # concept al klaar in de tijdlijn en zet je het met één knop om in een lopende teelt.
-INV_FLORGIB, INV_EMMERS, INV_LENGTE, INV_OPMERKING, INV_WIJZIGEN = (
-    "Florgib", "Emmers", "Lengte en gewicht", "Opmerking", "Wijzigen")
-INV_ACTIES = [INV_FLORGIB, INV_EMMERS, INV_LENGTE, INV_OPMERKING, INV_WIJZIGEN]
+INV_STEK, INV_FLORGIB, INV_EMMERS, INV_LENGTE, INV_OPMERKING, INV_WIJZIGEN = (
+    "Stek", "Florgib", "Emmers", "Lengte en gewicht", "Opmerking", "Wijzigen")
+# In de volgorde van de teelt: stek bij het poten, Florgib halverwege, emmers en lengte/gewicht bij de oogst.
+INV_ACTIES = [INV_STEK, INV_FLORGIB, INV_EMMERS, INV_LENGTE, INV_OPMERKING, INV_WIJZIGEN]
 INV_SOORT = {INV_FLORGIB: "florgib", INV_EMMERS: "emmers", INV_LENGTE: "lengte", INV_OPMERKING: "opmerking"}
 WIJZIG_ONDERDELEN = ["Startdatum en planten", "Florgib", "Oogst", "Opmerkingen"]
 RIJPHEID_TEKSTEN = ["1", "2", "3", "4", "1-2", "2-3", "3-4", "1-3", "2-4", "1-4"]
@@ -837,8 +836,9 @@ def _pagina_registreren():
     vandaag = date.today()
     layout.pagina_kop(
         "Registreren",
-        wat="Invullen wat er in de kas gebeurd is, in de tuin die bovenaan gekozen is: de Florgib (lengte en "
-            "gram), de emmers, de oogstlengte en het oogstgewicht, een opmerking, of iets wijzigen of verwijderen. "
+        wat="Invullen wat er in de kas gebeurd is, in de tuin die bovenaan gekozen is: het stek per pootweek (met "
+            "het weekrapport voor de stekleverancier), de Florgib (lengte en gram), de emmers, de oogstlengte en het "
+            "oogstgewicht, een opmerking, of iets wijzigen of verwijderen. "
             "Een nieuwe teelt start je op Overzicht (klik op een concept in de tijdlijn).",
         lezen=[
             "Kies bovenaan wat je registreert. Bij Florgib, Emmers en Lengte en gewicht staat elk lopend vak op "
@@ -853,9 +853,14 @@ def _pagina_registreren():
             "verwacht (of die over tijd zijn); bij Emmers de vakken in de oogst en die binnen 3 dagen oogstrijp "
             "zijn; bij Lengte en gewicht de vakken in de oogst zonder oogstlengte.",
             "**Wijzigen**: kies het vak met week, vak en jaar; daaronder per onderdeel een tabblad.",
+            "**Stek**: kies de pootweek met ◀ ▶ of klik op het label (standaard de huidige week; is daar nog niets "
+            "gepoot, dan de laatste week waarin wel). *Hele week invullen*: het stek van een week komt meestal uit "
+            "één partij; vul het één keer in en pas een afwijkend vak in de tabel aan. *Weekrapport*: kopieer de "
+            "tabel, open de mail (onderwerp en ontvangers staan klaar) en plak hem boven je handtekening.",
         ],
         bron="Alles wat je hier opslaat komt in het logboek (Meer), met jouw naam; *Laatst geregistreerd* komt "
-             "daaruit.",
+             "daaruit. Stek: te poten komt uit de teeltregistratie; de stekuitval rekent de app zelf uit (bakjes × "
+             "600 stekken). De pootweek is de plantweek van het vak (ma t/m zo, zoals de teeltcode).",
     )
     if st.session_state.get("inv_melding"):
         st.success(st.session_state.pop("inv_melding"))
@@ -865,6 +870,9 @@ def _pagina_registreren():
     if actie == INV_WIJZIGEN:
         layout.sectie(f"Wijzigen of verwijderen · {TUIN_NAAM}")
         _inv_wijzigen()
+        return
+    if actie == INV_STEK:
+        _inv_stek(balk)
         return
 
     data, _model, stook, _afwijking = _nu_alles(vandaag)
@@ -4337,19 +4345,11 @@ def _stek_mailhtml(rapport, totaal_geplant):
     )
 
 
-def _pagina_stek_1():
-    layout.pagina_kop(
-        "Stek",
-        wat="Per pootweek het geleverde stek per vak, en het weekrapport voor de stekleverancier.",
-        lezen=["Kies de pootweek met ◀ ▶ of klik op het label. Standaard de huidige week; is daar nog niets "
-               "gepoot, dan de laatste week waarin wel.",
-               "Hele week invullen: het stek van een week komt meestal uit één partij. Vul het één keer in; wijkt "
-               "een vak af, pas het dan in de tabel aan en sla op.",
-               "Weekrapport: kopieer de tabel, open de mail (onderwerp en ontvangers staan klaar) en plak hem boven "
-               "je handtekening. Het rapport toont ook wat nog niet is opgeslagen."],
-        bron="Te poten komt uit de teeltregistratie; de stekuitval rekent de app zelf uit (bakjes × 600 stekken). "
-             "De pootweek is de plantweek van het vak (ma t/m zo, zoals de teeltcode).",
-    )
+def _inv_stek(balk):
+    """
+    Registreren → Stek (vroeger het tabblad Stek): per pootweek het geleverde stek per vak, en het weekrapport
+    voor de stekleverancier. De pootweek-kiezer komt in de filterbalk van Registreren (`balk`).
+    """
     stekweken = get_stekweken()
     if not stekweken:
         st.info("Er zijn nog geen vakken gestart.")
@@ -4365,7 +4365,7 @@ def _pagina_stek_1():
 
         stek_maandag = filters.bladeraar(
             f"stek_week_t{TUIN_NUMMER}", sorted(stekweken), standaard_stekweek, format_func=_stekweek_label,
-            huidig=deze_maandag if deze_maandag in stekweken else None, plek=layout.filterbalk("stek"),
+            huidig=deze_maandag if deze_maandag in stekweken else None, plek=balk,
             naam="pootweek", breedte=330, spring_label="Spring naar pootweek")
         stek_jaar, stek_week = get_isojaar_week(stek_maandag)
         rijen_stek = get_stek_voor_week(stek_maandag)
@@ -4918,10 +4918,6 @@ def pagina_registreren():
     _pagina_registreren()
 
 
-def pagina_stek():
-    _pagina_stek_1()
-
-
 def pagina_overzicht():
     _pagina_overzicht()
 
@@ -4953,7 +4949,7 @@ def pagina_meer():
             "stuurt de prognose bij.",
             "Datums staan als dd-mm-jj; weken lopen van zondag t/m zaterdag (de plantweek in de code blijft de "
             "ISO-week van de plantdatum). Lijsten lopen van laag naar hoog.",
-            "**Tuin** kies je alleen bovenaan. Pagina's die per tuin werken (Registreren, Stek, Meer, het "
+            "**Tuin** kies je alleen bovenaan. Pagina's die per tuin werken (Registreren, Meer, het "
             "plannen op Overzicht) tonen bij Beide de laatst gekozen tuin.",
             "**Registreren**: *Florgib* (lengte en gram), *Emmers* (100 stelen per emmer; vink Afronden aan bij de "
             "laatste), *Lengte en gewicht* (rijpheid 1 rauw – 4 rijp) en *Opmerking*, voor één of meer vakken; "
