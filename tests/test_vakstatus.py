@@ -122,5 +122,58 @@ class TestBeoordeling(unittest.TestCase):
         self.assertIsNone(s["afwijking_pct"])
 
 
+class TestDatums(unittest.TestCase):
+    def test_alle_vormen_van_een_datum(self):
+        from datetime import datetime
+
+        import pandas as pd
+        d = date(2026, 9, 26)
+        for waarde in ("2026-09-26", "2026-09-26 00:00:00", "2026-09-26T10:15:00", d,
+                       datetime(2026, 9, 26, 10, 15), pd.Timestamp("2026-09-26")):
+            self.assertEqual(vs.als_datum(waarde), d, waarde)
+        self.assertIsNone(vs.als_datum(None))
+        self.assertIsNone(vs.als_datum(float("nan")))
+
+    def test_niet_iso_valt_terug_op_strptime(self):
+        self.assertEqual(vs.als_datum("2026-9-6"), date(2026, 9, 6))
+
+
+class TestReferentiebasis(unittest.TestCase):
+    """De vooraf uitgerekende basis moet precies hetzelfde geven als zonder."""
+    start = date(2026, 8, 3)
+
+    def kandidaten(self):
+        refs = [referentie(i, 3 if i % 2 else 1, self.start - timedelta(weeks=i % 5), lengte_half=30 + i,
+                           lengte_eind=70 + i) for i in range(1, 15)]
+        refs.append(teelt(50, 3, self.start))                                        # lopend, geen referentie
+        refs.append(teelt(51, 3, self.start, oogst=self.start + timedelta(days=50)))  # geen meting
+        return refs
+
+    def test_alleen_referenties_met_plantweek(self):
+        basis = vs.referentiebasis(self.kandidaten())
+        self.assertEqual(len(basis), 14)
+        self.assertTrue(all(w == vs.plantweek(k["datum_teelt_start"]) for k, w in basis))
+
+    def test_kies_referenties_gelijk_met_en_zonder_basis(self):
+        kandidaten = self.kandidaten()
+        basis = vs.referentiebasis(kandidaten)
+        for t in (teelt(99, 3, self.start), teelt(99, 1, self.start), kandidaten[0]):  # ook een teelt uit de lijst
+            self.assertEqual(vs.kies_referenties(t, kandidaten, basis), vs.kies_referenties(t, kandidaten))
+
+    def test_beoordeling_gelijk_met_en_zonder_basis(self):
+        kandidaten = self.kandidaten()
+        t = teelt(99, 3, self.start, self.start + timedelta(days=30), 31)
+        vandaag = self.start + timedelta(days=38)
+        self.assertEqual(vs.beoordeel_teelt(t, kandidaten, vandaag, plan_50_dagen, vs.referentiebasis(kandidaten)),
+                         vs.beoordeel_teelt(t, kandidaten, vandaag, plan_50_dagen))
+
+    def test_groeicurve_gelijk_aan_verwachte_lengte_per_dag(self):
+        refs = vs.kies_referenties(teelt(99, 3, self.start), self.kandidaten())[0]
+        curve = vs.groeicurve(refs)
+        self.assertEqual(len(curve), 51)
+        for leeftijd, p25, mediaan, p75 in curve:
+            self.assertEqual((mediaan, p25, p75), vs.verwachte_lengte(refs, leeftijd))
+
+
 if __name__ == "__main__":
     unittest.main()

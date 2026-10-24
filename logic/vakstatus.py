@@ -47,7 +47,11 @@ def als_datum(waarde):
         return waarde.date()
     if isinstance(waarde, date):
         return waarde
-    return datetime.strptime(str(waarde)[:10], "%Y-%m-%d").date()
+    tekst = str(waarde)[:10]
+    try:
+        return date.fromisoformat(tekst)  # veel sneller dan strptime; dit draait tienduizenden keren per run
+    except ValueError:
+        return datetime.strptime(tekst, "%Y-%m-%d").date()
 
 
 def _getal(waarde):
@@ -112,23 +116,35 @@ def kwantiel(waarden, q):
     return rij[onder] + (rij[boven] - rij[onder]) * (positie - onder)
 
 
-def kies_referenties(teelt, kandidaten):
+def referentiebasis(kandidaten):
+    """
+    De kandidaten die als referentie kunnen dienen, met hun plantweek: [(teelt, plantweek)].
+    Eén keer per lijst kandidaten uitrekenen en aan kies_referenties/beoordeel_teelt meegeven
+    scheelt het opnieuw omzetten van alle datums voor elk vak.
+    """
+    return [(k, plantweek(k["datum_teelt_start"])) for k in kandidaten if is_referentie(k)]
+
+
+def kies_referenties(teelt, kandidaten, basis=None):
     """
     Referentieteelten voor `teelt` volgens de ladder. Geeft (lijst, niveau)
     met niveau "eigen", "beide" of "breed", of ([], None) als geen trede er
     minstens MIN_REFERENTIES oplevert. De teelt zelf doet nooit mee.
+    `basis` = referentiebasis(kandidaten), als die al klaarligt.
     """
     week = plantweek(teelt["datum_teelt_start"])
     tuin = teelt.get("tuin_id")
-    refs = [k for k in kandidaten if k.get("id") != teelt.get("id") and is_referentie(k)]
+    if basis is None:
+        basis = referentiebasis(kandidaten)
+    refs = [(k, w) for k, w in basis if k.get("id") != teelt.get("id")]
     for niveau, venster, eigen_tuin in (
         ("eigen", REF_WEEKVENSTER, True),
         ("beide", REF_WEEKVENSTER, False),
         ("breed", REF_WEEKVENSTER_BREED, True),
     ):
         gekozen = [
-            k for k in refs
-            if weekafstand(plantweek(k["datum_teelt_start"]), week) <= venster
+            k for k, w in refs
+            if weekafstand(w, week) <= venster
             and (not eigen_tuin or k.get("tuin_id") == tuin)
         ]
         if len(gekozen) >= MIN_REFERENTIES:
@@ -136,18 +152,24 @@ def kies_referenties(teelt, kandidaten):
     return [], None
 
 
+def _verwacht_op(lijnen, leeftijd):
+    """(mediaan, P25, P75) op `leeftijd` uit al uitgerekende referentiepunten."""
+    waarden = [interpoleer(punten, leeftijd) for punten in lijnen]
+    return kwantiel(waarden, 0.5), kwantiel(waarden, 0.25), kwantiel(waarden, 0.75)
+
+
 def verwachte_lengte(refs, leeftijd):
     """(mediaan, P25, P75) van de referentielijnen op `leeftijd` dagen."""
-    waarden = [interpoleer(referentiepunten(r), leeftijd) for r in refs]
-    return kwantiel(waarden, 0.5), kwantiel(waarden, 0.25), kwantiel(waarden, 0.75)
+    return _verwacht_op([referentiepunten(r) for r in refs], leeftijd)
 
 
 def groeicurve(refs, tot_leeftijd=None):
     """Per dag (leeftijd, P25, mediaan, P75) van 0 tot de langste referentie (of tot_leeftijd)."""
-    einde = tot_leeftijd or max(referentiepunten(r)[-1][0] for r in refs)
+    lijnen = [referentiepunten(r) for r in refs]  # één keer per referentie, niet per dag
+    einde = tot_leeftijd or max(punten[-1][0] for punten in lijnen)
     curve = []
     for leeftijd in range(0, einde + 1):
-        mediaan, p25, p75 = verwachte_lengte(refs, leeftijd)
+        mediaan, p25, p75 = _verwacht_op(lijnen, leeftijd)
         curve.append((leeftijd, p25, mediaan, p75))
     return curve
 
@@ -176,11 +198,12 @@ def bepaal_kleur(afwijking_pct, prognose_dagen):
     return "groen"
 
 
-def beoordeel_teelt(teelt, kandidaten, vandaag, plan_oogst):
+def beoordeel_teelt(teelt, kandidaten, vandaag, plan_oogst, basis=None):
     """
     Status van één lopende teelt. `plan_oogst(start)` geeft (duur_weken,
     oogstdatum) uit de teeltduur-tabel. Geeft een dict met leeftijd, meting,
     verwachting, afwijking, plan- en prognose-oogst, referenties en kleur.
+    `basis` = referentiebasis(kandidaten), bij veel teelten één keer vooraf.
     """
     start = als_datum(teelt["datum_teelt_start"])
     _, plan = plan_oogst(start)
@@ -199,7 +222,7 @@ def beoordeel_teelt(teelt, kandidaten, vandaag, plan_oogst):
         status["florgib"] = half
         if lengte:
             status["meting"], status["meet_leeftijd"] = lengte, (half - start).days
-    refs, niveau = kies_referenties(teelt, kandidaten)
+    refs, niveau = kies_referenties(teelt, kandidaten, basis)
     status["refs"], status["niveau"] = refs, niveau
 
     if status["meting"] is not None and refs:

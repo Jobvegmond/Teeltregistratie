@@ -1332,7 +1332,30 @@ def _nu_alles(vandaag):
             data["teelten"], tp.klimaat_per_afdeling(data["klimaat"]), model, vandaag, _plandatum)
         _prognose_loggen(vandaag, data, model, stook, afwijking)
         _NU_PER_RUN["alles"] = (data, model, stook, afwijking)
+        _NU_PER_RUN["versie"] = versie
     return _NU_PER_RUN["alles"]
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _nu_statussen(versie, dag, tuin_id):
+    """
+    {vak: vakstatus} van de lopende teelten van één tuin (lengte t.o.v. de referenties). Het zwaarste
+    rekenwerk van Overzicht, dus op dezelfde sleutels gecachet als _nu_data; _nu_tuin zet er per run het
+    teeltmodel bij.
+    """
+    vandaag = date.fromisoformat(dag)
+    alle = _nu_data(versie, dag)["teelten"].to_dict("records")
+    lopend = {}
+    for t in alle:
+        if t["tuin_id"] != tuin_id:
+            continue
+        start = vs.als_datum(t["datum_teelt_start"])
+        if not vs.als_datum(t["datum_oogst"]) and start <= vandaag:
+            if t["vaknummer"] not in lopend or start > vs.als_datum(lopend[t["vaknummer"]]["datum_teelt_start"]):
+                lopend[t["vaknummer"]] = t
+    basis = vs.referentiebasis(alle)
+    return {vak: vs.beoordeel_teelt(t, alle, vandaag, bereken_verwachte_oogstdatum, basis)
+            for vak, t in lopend.items()}
 
 
 def _nu_uitval(t):
@@ -1348,14 +1371,7 @@ def _nu_tuin(data, model, stook, afwijking, tuin, vandaag):
     alle = data["teelten"].to_dict("records")
     eigen = [t for t in alle if t["tuin_id"] == tuin["id"]]
     vakken = data["vakken"][data["vakken"]["tuin_id"] == tuin["id"]]
-
-    lopend = {}
-    for t in eigen:
-        start = vs.als_datum(t["datum_teelt_start"])
-        if not vs.als_datum(t["datum_oogst"]) and start <= vandaag:
-            if t["vaknummer"] not in lopend or start > vs.als_datum(lopend[t["vaknummer"]]["datum_teelt_start"]):
-                lopend[t["vaknummer"]] = t
-    statussen = {vak: vs.beoordeel_teelt(t, alle, vandaag, bereken_verwachte_oogstdatum) for vak, t in lopend.items()}
+    statussen = _nu_statussen(_NU_PER_RUN["versie"], str(vandaag), tuin["id"])
 
     # De prognose en de status volgen het teeltmodel; de lengtevergelijking
     # (meting, verwacht, afwijking_pct) blijft alleen in het venster.

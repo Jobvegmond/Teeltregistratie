@@ -3,6 +3,18 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.20.4] - 2026-10-24
+
+### Gewijzigd
+- **Overzicht sneller**: de vakstatus (lengte t.o.v. de referenties) werd bij elke klik opnieuw berekend, met
+  ± 49.000 datumomzettingen per keer. Nu:
+  - gecachet per tuin op dezelfde sleutels als de vakdata (`_nu_statussen`: wijzigingenlog + dag, 10 minuten);
+  - de referenties met hun plantweek één keer per lijst bepaald (`vakstatus.referentiebasis`) in plaats van
+    per vak, en de referentiepunten één keer per referentie in plaats van per dag van de groeicurve;
+  - `als_datum` met `date.fromisoformat` (strptime alleen nog als terugval).
+  - Gemeten (lokaal, NAS-database): Overzicht bij een klik 1,03 → 0,76 s; de inhoud van alle pagina's is gelijk
+    gebleven. Tests in `tests/test_vakstatus.py`.
+
 ## [2.20.3] - 2026-10-24
 
 ### Gewijzigd
