@@ -2190,7 +2190,8 @@ def _tl_grafiek(volgorde, frames, van, tot, vandaag, weken, weergave, water_tota
         ticks=False, domain=False, labelFontSize=11))
     klik = alt.selection_point(name="tl_klik", fields=["sleutel"], on="click")
     lagen = [
-        alt.Chart(balken).mark_bar(height=TL_RIJ - 8, cornerRadius=2, stroke="#000000", clip=True, cursor="pointer")
+        alt.Chart(balken).mark_bar(tooltip=None, height=TL_RIJ - 8, cornerRadius=2, stroke="#000000", clip=True,
+                                   cursor="pointer")
         .encode(x=x, x2="eind:T", y=y, color=alt.Color("kleur:N", scale=None),
                 opacity=alt.Opacity("dekking:Q", scale=None), strokeOpacity=alt.StrokeOpacity("lijn:Q", scale=None))
         .add_params(klik)
@@ -2199,20 +2200,22 @@ def _tl_grafiek(volgorde, frames, van, tot, vandaag, weken, weergave, water_tota
                                   ("florgib", [2, 2], 1.5), ("overlap", [4, 2], 2)):
         deel = randen[randen["streep"] == streep] if not randen.empty else randen
         if not deel.empty:
-            lagen.append(alt.Chart(deel).mark_bar(height=TL_RIJ - 8, cornerRadius=2, filled=False, clip=True,
+            lagen.append(alt.Chart(deel).mark_bar(tooltip=None, height=TL_RIJ - 8, cornerRadius=2, filled=False,
+                                                  clip=True,
                                                   strokeDash=dash, strokeWidth=breedte)
                          .encode(x="start:T", x2="eind:T", y=y, stroke=alt.Stroke("rand:N", scale=None)))
     # Dunne lijnen op dagniveau over de balken heen (de weeklijnen zijn de rasterlijnen van de as). Bij een dag
     # smaller dan 6 px staan ze te dicht op elkaar: dan niet.
     dagen = pd.DataFrame({"d": pd.date_range(pd.Timestamp(van), pd.Timestamp(tot) + pd.Timedelta(days=1))})
-    lagen.append(alt.Chart(dagen).mark_rule(color="#808080", strokeWidth=0.5,
+    lagen.append(alt.Chart(dagen).mark_rule(tooltip=None, color="#808080", strokeWidth=0.5,
                                             opacity=alt.expr(f"{px} >= 6 ? 0.25 : 0"))
                  .encode(x="d:T"))
     if not plan.empty:
-        lagen.append(alt.Chart(plan).mark_tick(orient="vertical", thickness=2, size=TL_RIJ - 4, color="#1f1f1f")
+        lagen.append(alt.Chart(plan).mark_tick(tooltip=None, orient="vertical", thickness=2, size=TL_RIJ - 4,
+                                               color="#1f1f1f")
                      .encode(x="x:T", y=y))
     if not florgib.empty:
-        lagen.append(alt.Chart(florgib).mark_point(size=45, strokeWidth=2, color=TL_FLORGIB, opacity=1)
+        lagen.append(alt.Chart(florgib).mark_point(tooltip=None, size=45, strokeWidth=2, color=TL_FLORGIB, opacity=1)
                      .encode(x="x:T", y=y, fill=alt.condition("datum.soort == 'geregistreerd'",
                                                                alt.value(TL_FLORGIB), alt.value("transparent"))))
     if not water.empty:
@@ -2220,7 +2223,7 @@ def _tl_grafiek(volgorde, frames, van, tot, vandaag, weken, weergave, water_tota
         # breed genoeg is, anders in hele liters). Bij Bespuitingen een dun licht streepje onderin, zonder getal.
         groot = weergave != "Bespuitingen"
         hoogte = TL_RIJ - 8 if groot else 4
-        lagen.append(alt.Chart(water).mark_bar(height=hoogte, color=TL_WATER if groot else TL_WATER_LICHT,
+        lagen.append(alt.Chart(water).mark_bar(tooltip=None, height=hoogte, color=TL_WATER if groot else TL_WATER_LICHT,
                                                cursor="pointer",
                                                yOffset=0 if groot else (TL_RIJ - 8) / 2 - hoogte / 2)
                      .encode(x="start:T", x2="eind:T", y=y)
@@ -2228,7 +2231,8 @@ def _tl_grafiek(volgorde, frames, van, tot, vandaag, weken, weergave, water_tota
         if groot:
             # Bij ≥ 30 px per dag met een decimaal, daaronder in hele liters (kleiner naarmate de dag smaller
             # is); pas onder 8 px niet (klik voor de gietbeurten).
-            lagen.append(alt.Chart(water).mark_text(fontSize=alt.expr(f"{px} >= 30 ? 12 : {px} >= 17 ? 11 : 9"),
+            lagen.append(alt.Chart(water).mark_text(tooltip=None,
+                                                    fontSize=alt.expr(f"{px} >= 30 ? 12 : {px} >= 17 ? 11 : 9"),
                                                     fontWeight="bold", color="white", cursor="pointer")
                          .transform_calculate(lbl=f"{px} >= 30 ? datum.tekst : {px} >= 8 ? datum.heel : ''")
                          .encode(x="x:T", y=y, text="lbl:N")
@@ -2237,11 +2241,12 @@ def _tl_grafiek(volgorde, frames, van, tot, vandaag, weken, weergave, water_tota
         # Weergave Watergift: de EC en pH van de gift per vak en de EC van de voorregeling, als getal (EC met
         # 2 decimalen bij ≥ 26 px per dag, met 1 bij ≥ 16 px). Past er geen getal, dan een grijs blokje met de
         # zodat je ziet dat er een meting is (klik voor de waarden).
-        lagen.append(alt.Chart(waarden).mark_square(size=30, color="#8a8a85", cursor="pointer",
+        lagen.append(alt.Chart(waarden).mark_square(tooltip=None, size=30, color="#8a8a85", cursor="pointer",
                                                     opacity=alt.expr(f"{px} >= 16 ? 0 : 1"))
                      .encode(x="x:T", y=y)
                      .add_params(alt.selection_point(name="tl_ecph_blok", fields=["sleutel"], on="click")))
-        lagen.append(alt.Chart(waarden).mark_text(fontSize=alt.expr(f"{px} >= 26 ? 11 : 9"), color="#3d3d3a",
+        lagen.append(alt.Chart(waarden).mark_text(tooltip=None, fontSize=alt.expr(f"{px} >= 26 ? 11 : 9"),
+                                                  color="#3d3d3a",
                                                   cursor="pointer")
                      .transform_calculate(lbl=f"{px} >= 26 ? datum.tekst : {px} >= 16 ? datum.kort : ''")
                      .encode(x="x:T", y=y, text="lbl:N")
@@ -2250,7 +2255,7 @@ def _tl_grafiek(volgorde, frames, van, tot, vandaag, weken, weergave, water_tota
         # Bespuitingen: een driehoekje bovenin de regel, zodat de balk zichtbaar blijft. In de weergave
         # Bespuitingen groter, met de afkortingen van de middelen erachter (logic/klimaatregistratie.afkorting).
         groot = weergave == "Bespuitingen"
-        lagen.append(alt.Chart(behandelingen).mark_point(shape="triangle-down", size=130 if groot else 55,
+        lagen.append(alt.Chart(behandelingen).mark_point(tooltip=None, shape="triangle-down", size=130 if groot else 55,
                                                          filled=True, opacity=1, stroke="white", strokeWidth=1,
                                                          yOffset=-(TL_RIJ - 8) / 2 + (1 if groot else 0),
                                                          cursor="pointer")
@@ -2260,27 +2265,31 @@ def _tl_grafiek(volgorde, frames, van, tot, vandaag, weken, weergave, water_tota
             # De middelen tot de volgende behandeling in het vak (± 6 px per letter); past er te weinig, dan
             # ingekort met "…" of niets (klik voor alles).
             tekens = f"floor((datum.ruimte * {px} - 10) / 6)"
-            lagen.append(alt.Chart(behandelingen).mark_text(align="left", dx=6, dy=1, fontSize=10, fontWeight="bold",
+            lagen.append(alt.Chart(behandelingen).mark_text(tooltip=None, align="left", dx=6, dy=1, fontSize=10,
+                                                            fontWeight="bold",
                                                             cursor="pointer")
                          .transform_calculate(lbl=f"{tekens} < 3 ? '' : length(datum.Middelen) <= {tekens} ? "
                                                   f"datum.Middelen : slice(datum.Middelen, 0, {tekens} - 1) + '…'")
                          .encode(x="x:T", y=y, text="lbl:N", color=alt.Color("kleur:N", scale=None))
                          .add_params(alt.selection_point(name="tl_btekst", fields=["sleutel"], on="click")))
     if not kopteksten.empty:
-        lagen.append(alt.Chart(kopteksten).mark_text(align="left", dx=6, fontSize=11, fontWeight="bold")
+        lagen.append(alt.Chart(kopteksten).mark_text(tooltip=None, align="left", dx=6, fontSize=11, fontWeight="bold")
                      .encode(x="x:T", y=y, text="tekst:N"))
     uitlijning = "center" if _tl_stap(weken) == 1 else "left"
-    lagen.append(alt.Chart(weeknummers).mark_text(fontSize=11, opacity=0.6, align=uitlijning)
+    lagen.append(alt.Chart(weeknummers).mark_text(tooltip=None, fontSize=11, opacity=0.6, align=uitlijning)
                  .encode(x="x:T", y=y, text="tekst:N"))
     # Weekdag en dagnummer: bij ≥ 10 px per dag (anders staan ze over elkaar); vandaag in rood.
-    lagen.append(alt.Chart(dagnamen).mark_text(fontSize=alt.expr(f"{px} >= 20 ? 10 : 9"))
+    lagen.append(alt.Chart(dagnamen).mark_text(tooltip=None, fontSize=alt.expr(f"{px} >= 20 ? 10 : 9"))
                  .transform_calculate(lbl=f"{px} >= 10 ? datum.tekst : ''")
                  .encode(x="x:T", y=y, text="lbl:N",
                          color=alt.condition("datum.vandaag", alt.value(TL_ROOD), alt.value("#8a8a85"))))
     lagen.append(alt.Chart(pd.DataFrame({"d": [pd.Timestamp(vandaag)]}))
-                 .mark_rule(color=TL_ROOD, strokeDash=[4, 3]).encode(x="d:T"))
+                 .mark_rule(tooltip=None, color=TL_ROOD, strokeDash=[4, 3]).encode(x="d:T"))
     return (alt.layer(*lagen).properties(height=alt.Step(TL_RIJ))
-            .configure_view(strokeOpacity=0).configure_axis(gridOpacity=0.5))
+            .configure_view(strokeOpacity=0).configure_axis(gridOpacity=0.5)
+            # Geen tooltips: Streamlit zet anders op elk merkteken een kader met alle velden (x, y, lbl), dat op een
+            # telefoon half buiten beeld valt en niet weggaat. Meer weten = klikken.
+            .configure_mark(tooltip=None))
 
 
 def _tl_geklikt(widget, versie):

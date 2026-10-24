@@ -79,4 +79,4 @@ PRIVA_BESTANDEN = {
 # --- VERSIE ---
 # Staat rechtsboven in de app. Ophogen bij elke wijziging op main (zie CHANGELOG.md):
 # derde getal bij een correctie, tweede bij iets nieuws, eerste bij een grote omzetting.
-APP_VERSIE = "2.21.0"
+APP_VERSIE = "2.21.1"
