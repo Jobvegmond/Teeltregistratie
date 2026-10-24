@@ -1833,16 +1833,16 @@ def _pagina_overzicht():
             "afgerond.",
         lezen=[
             "**Tijdlijn**: per vak één regel. Weken lopen van zondag t/m zaterdag; bovenaan het weeknummer en "
-            "daaronder de weekdag en de datum. De lopende teelt is groen tot vandaag en loopt daarna doorzichtig door tot de "
-            "prognose-oogst; per teelt (plantweek) wisselen donker en licht; het zwarte streepje is de plan-oogst. "
-            "Hoeveel de prognose voor of achter loopt op plan staat in de tooltip en in het vak.",
+            "daaronder de weekdag en de datum. De lopende teelt is groen tot vandaag en loopt daarna doorzichtig "
+            "door tot de prognose-oogst; per teelt (plantweek) wisselen donker en licht; het zwarte streepje is de "
+            "plan-oogst. Hoeveel de prognose voor of achter loopt op plan staat in het vak (klik op de balk).",
             "**Weergave** *Standaard*: een driehoekje bovenin de balk op elke dag met een behandeling (kleur = "
             "soort) en een blauw vakje op elke dag met water, met het aantal l/m² erin "
-            "(met een decimaal als de dag breed genoeg is, anders in hele liters; past er niets, dan in de "
-            "tooltip; dat hangt af van de periode en de breedte van het scherm).",
+            "(met een decimaal als de dag breed genoeg is, anders in hele liters; past er niets, klik dan op het "
+            "vakje; dat hangt af van de periode en de breedte van het scherm).",
             "*Bespuitingen*: grotere driehoekjes met de afkortingen van de middelen erachter, zoals in de "
             "klimaatregistratie (bijv. Ri = Rizolex, B5 = Biota 500; ingekort tot wat er past tot de "
-            "volgende behandeling; de volledige namen en doseringen in de tooltip); de watergift als dun streepje "
+            "volgende behandeling; klik voor de volledige namen en doseringen); de watergift als dun streepje "
             "onderin.",
             "Bij Standaard en Watergift staat achter het vaknummer het totaal gegoten van de lopende teelt sinds het "
             "planten (l/m², bijv. Vak 2 · 145).",
@@ -1895,7 +1895,7 @@ def _pagina_overzicht():
     water = _tl_toon(infos, afdelingen, van, tot, weken, vandaag, weergave)
     _tl_legenda(weergave)
     if weergave == "Watergift" and weken > 4:
-        uitleg_help.voetnoot("Grijze blokjes bij EC en pH: het getal past niet in een dag; beweeg erover of kies 4 wk "
+        uitleg_help.voetnoot("Grijze blokjes bij EC en pH: het getal past niet in een dag; klik erop of kies 4 wk "
                              "voor alle getallen.")
 
     _planning_uitklappen(vandaag)
@@ -1918,7 +1918,7 @@ def _pagina_overzicht():
 # toont daar meer van (middelen; EC/pH per vak en de voorregeling).
 # Rekenwerk in logic/tijdlijn.py en logic/watergift.py.
 # Lopend groen, afgerond grijs; per teelt (plantweek) om en om donker en licht, zodat je ziet waar de ene teelt
-# ophoudt en de volgende begint. De prognose t.o.v. plan staat in de tooltip.
+# ophoudt en de volgende begint. De prognose t.o.v. plan staat in het vak (klik op de balk).
 TL_LOPEND = ("#9fc58c", "#cbe1bf")
 TL_AFGEROND_TINT = ("#a8a8a3", "#cacac5")
 TL_CONCEPT, TL_FLORGIB, TL_ROOD = "#2a78d6", "#8e44ad", "#e34948"
@@ -2121,7 +2121,7 @@ def _tl_watergift(tuin, volgorde, van, tot, met_ecph=False):
 
 def _tl_behandelingen(tuin_id, volgorde, van, tot):
     """
-    Per vak per dag met behandelingen één punt: kleur = de hoofdsoort, tooltip = de middelen. "Middelen" = de
+    Per vak per dag met behandelingen één punt: kleur = de hoofdsoort, klik = de middelen. "Middelen" = de
     middelen kort en "ruimte" = het aantal dagen tot de volgende behandeling in dat vak: de grafiek kort de
     middelen in tot wat er op het scherm past (weergave Bespuitingen).
     """
@@ -2152,7 +2152,7 @@ def _tl_grafiek(volgorde, frames, van, tot, vandaag, weken, weergave, water_tota
     """
     balken, randen, florgib, plan, kopteksten, weeknummers, dagnamen, behandelingen, water, waarden = frames
     # Hoe breed een dag op het scherm is, weet alleen de grafiek zelf ("width" = de breedte van het
-    # tekenvlak). Getallen en middelen kiezen daarop wat er past: volledig, korter of niets (dan de tooltip).
+    # tekenvlak). Getallen en middelen kiezen daarop wat er past: volledig, korter of niets.
     px = f"(width / {(tot - van).days + 1})"
     schaal = alt.Scale(domain=[pd.Timestamp(van).isoformat(), pd.Timestamp(tot).isoformat()])
     met_totaal = {f"Vak {v}": f"Vak {v} · {fmt_getal(t, 0)}" for v, t in (water_totaal or {}).items()}
@@ -2168,8 +2168,7 @@ def _tl_grafiek(volgorde, frames, van, tot, vandaag, weken, weergave, water_tota
     lagen = [
         alt.Chart(balken).mark_bar(height=TL_RIJ - 8, cornerRadius=2, stroke="#000000", clip=True, cursor="pointer")
         .encode(x=x, x2="eind:T", y=y, color=alt.Color("kleur:N", scale=None),
-                opacity=alt.Opacity("dekking:Q", scale=None), strokeOpacity=alt.StrokeOpacity("lijn:Q", scale=None),
-                tooltip=[alt.Tooltip("y:N", title="Vak"), "Wat:N", "Periode:N", "Toelichting:N"])
+                opacity=alt.Opacity("dekking:Q", scale=None), strokeOpacity=alt.StrokeOpacity("lijn:Q", scale=None))
         .add_params(klik)
     ]
     for streep, dash, breedte in (("vol", [1, 0], 1.2), ("concept", [4, 2], 1.5),
@@ -2187,65 +2186,61 @@ def _tl_grafiek(volgorde, frames, van, tot, vandaag, weken, weergave, water_tota
                  .encode(x="d:T"))
     if not plan.empty:
         lagen.append(alt.Chart(plan).mark_tick(orient="vertical", thickness=2, size=TL_RIJ - 4, color="#1f1f1f")
-                     .encode(x="x:T", y=y, tooltip=[alt.Tooltip("y:N", title="Vak"), "Plan-oogst:N"]))
+                     .encode(x="x:T", y=y))
     if not florgib.empty:
         lagen.append(alt.Chart(florgib).mark_point(size=45, strokeWidth=2, color=TL_FLORGIB, opacity=1)
                      .encode(x="x:T", y=y, fill=alt.condition("datum.soort == 'geregistreerd'",
-                                                               alt.value(TL_FLORGIB), alt.value("transparent")),
-                             tooltip=[alt.Tooltip("y:N", title="Vak"), "Florgib:N"]))
+                                                               alt.value(TL_FLORGIB), alt.value("transparent"))))
     if not water.empty:
         # Watergift: een blauw vakje per dag met water (één kleur), met de liters erin (met een decimaal als de dag
         # breed genoeg is, anders in hele liters). Bij Bespuitingen een dun licht streepje onderin, zonder getal.
         groot = weergave != "Bespuitingen"
         hoogte = TL_RIJ - 8 if groot else 4
-        tip = [alt.Tooltip("y:N", title="Vak"), "Watergift:N"]
         lagen.append(alt.Chart(water).mark_bar(height=hoogte, color=TL_WATER if groot else TL_WATER_LICHT,
                                                cursor="pointer",
                                                yOffset=0 if groot else (TL_RIJ - 8) / 2 - hoogte / 2)
-                     .encode(x="start:T", x2="eind:T", y=y, tooltip=tip)
+                     .encode(x="start:T", x2="eind:T", y=y)
                      .add_params(alt.selection_point(name="tl_water", fields=["sleutel"], on="click")))
         if groot:
             # Bij ≥ 30 px per dag met een decimaal, daaronder in hele liters (kleiner naarmate de dag smaller
-            # is); pas onder 8 px alleen in de tooltip.
+            # is); pas onder 8 px niet (klik voor de gietbeurten).
             lagen.append(alt.Chart(water).mark_text(fontSize=alt.expr(f"{px} >= 30 ? 12 : {px} >= 17 ? 11 : 9"),
                                                     fontWeight="bold", color="white", cursor="pointer")
                          .transform_calculate(lbl=f"{px} >= 30 ? datum.tekst : {px} >= 8 ? datum.heel : ''")
-                         .encode(x="x:T", y=y, text="lbl:N", tooltip=tip)
+                         .encode(x="x:T", y=y, text="lbl:N")
                          .add_params(alt.selection_point(name="tl_wtekst", fields=["sleutel"], on="click")))
     if not waarden.empty:
         # Weergave Watergift: de EC en pH van de gift per vak en de EC van de voorregeling, als getal (EC met
         # 2 decimalen bij ≥ 26 px per dag, met 1 bij ≥ 16 px). Past er geen getal, dan een grijs blokje met de
-        # waarde in de tooltip, zodat je ziet dat er een meting is.
+        # zodat je ziet dat er een meting is (klik voor de waarden).
         lagen.append(alt.Chart(waarden).mark_square(size=30, color="#8a8a85", cursor="pointer",
                                                     opacity=alt.expr(f"{px} >= 16 ? 0 : 1"))
-                     .encode(x="x:T", y=y, tooltip=[alt.Tooltip("Watergift:N", title="Watergift")])
+                     .encode(x="x:T", y=y)
                      .add_params(alt.selection_point(name="tl_ecph_blok", fields=["sleutel"], on="click")))
         lagen.append(alt.Chart(waarden).mark_text(fontSize=alt.expr(f"{px} >= 26 ? 11 : 9"), color="#3d3d3a",
                                                   cursor="pointer")
                      .transform_calculate(lbl=f"{px} >= 26 ? datum.tekst : {px} >= 16 ? datum.kort : ''")
-                     .encode(x="x:T", y=y, text="lbl:N", tooltip=[alt.Tooltip("Watergift:N", title="Watergift")])
+                     .encode(x="x:T", y=y, text="lbl:N")
                      .add_params(alt.selection_point(name="tl_ecph", fields=["sleutel"], on="click")))
     if not behandelingen.empty:
         # Bespuitingen: een driehoekje bovenin de regel, zodat de balk zichtbaar blijft. In de weergave
         # Bespuitingen groter, met de afkortingen van de middelen erachter (logic/klimaatregistratie.afkorting).
         groot = weergave == "Bespuitingen"
-        tip = [alt.Tooltip("y:N", title="Vak"), "Behandeling:N"]
         lagen.append(alt.Chart(behandelingen).mark_point(shape="triangle-down", size=130 if groot else 55,
                                                          filled=True, opacity=1, stroke="white", strokeWidth=1,
                                                          yOffset=-(TL_RIJ - 8) / 2 + (1 if groot else 0),
                                                          cursor="pointer")
-                     .encode(x="x:T", y=y, color=alt.Color("kleur:N", scale=None), tooltip=tip)
+                     .encode(x="x:T", y=y, color=alt.Color("kleur:N", scale=None))
                      .add_params(alt.selection_point(name="tl_beh", fields=["sleutel"], on="click")))
         if groot:
             # De middelen tot de volgende behandeling in het vak (± 6 px per letter); past er te weinig, dan
-            # ingekort met "…" of niets (de tooltip heeft alles).
+            # ingekort met "…" of niets (klik voor alles).
             tekens = f"floor((datum.ruimte * {px} - 10) / 6)"
             lagen.append(alt.Chart(behandelingen).mark_text(align="left", dx=6, dy=1, fontSize=10, fontWeight="bold",
                                                             cursor="pointer")
                          .transform_calculate(lbl=f"{tekens} < 3 ? '' : length(datum.Middelen) <= {tekens} ? "
                                                   f"datum.Middelen : slice(datum.Middelen, 0, {tekens} - 1) + '…'")
-                         .encode(x="x:T", y=y, text="lbl:N", color=alt.Color("kleur:N", scale=None),
-                                 tooltip=tip)
+                         .encode(x="x:T", y=y, text="lbl:N", color=alt.Color("kleur:N", scale=None))
                          .add_params(alt.selection_point(name="tl_btekst", fields=["sleutel"], on="click")))
     if not kopteksten.empty:
         lagen.append(alt.Chart(kopteksten).mark_text(align="left", dx=6, fontSize=11, fontWeight="bold")
