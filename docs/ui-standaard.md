@@ -18,7 +18,7 @@ Elke pagina, van boven naar beneden:
 
 Een onderdeel dat een pagina niet heeft, valt weg. De volgorde blijft.
 
-**Schermnummers.** De tabbladen zijn genummerd (1. Registreren … 7. Meer) en elke sectie en elk
+**Schermnummers.** De tabbladen zijn genummerd (1. Registreren … 6. Meer) en elke sectie en elk
 openklapmenu op een pagina krijgt automatisch een volgnummer ("2.3"), zodat feedback naar een scherm kan
 verwijzen. Geef daarom elke hoofdweergave een `layout.sectie()`-kop en gebruik voor openklapmenu's
 `layout.uitklap()` (niet `st.expander`).
@@ -68,7 +68,7 @@ oogst), nooit om weken of perioden te kiezen.
 `TUIN_MODUS` in app.py zegt per pagina wat de tuinkeuze doet:
 
 - **vrij** (standaard): Tuin 1 / Tuin 3 / Beide.
-- **een**: de pagina werkt per tuin (Stek, Meer). Beide staat er niet bij; stond Beide aan,
+- **een**: de pagina werkt per tuin (Registreren, Meer). Beide staat er niet bij; stond Beide aan,
   dan toont de pagina de laatst gekozen tuin met de melding "Beide kan hier niet".
 - Op de pagina **Teelt** kiest de tuinkeuze de weergave: Beide = vergelijken (Tuin 1 naast Tuin 3), Tuin 1 /
   Tuin 3 = opzoeken in die tuin. De teeltkeuze blijft staan.

@@ -3,6 +3,13 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.21.0] - 2026-10-24
+
+### Gewijzigd
+- **Stek is verhuisd naar Registreren** (keuze *Stek* bij "Wat registreer je?", vooraan, in de volgorde van de
+  teelt). Hele week invullen, stek per vak en het weekrapport voor de stekleverancier werken zoals voorheen; de
+  pootweek kies je in dezelfde balk. Het tabblad Stek is weg: nu 6 tabbladen (1. Registreren … 6. Meer).
+
 ## [2.20.4] - 2026-10-24
 
 ### Gewijzigd
