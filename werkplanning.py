@@ -31,6 +31,8 @@ def lees_argumenten():
 
 def main():
     args = lees_argumenten()
+    # Altijd UTF-8 (ook in een Windows-console of als de uitvoer naar een bestand gaat): "–" en "·" in de taken.
+    sys.stdout.reconfigure(encoding="utf-8")
     if args.doel == "productie":
         import database as _db          # laadt .env; daarna het productie-adres als DATABASE_URL
         doel_url = os.environ.get("DATABASE_URL_PRODUCTIE")
