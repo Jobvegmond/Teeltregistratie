@@ -81,9 +81,14 @@ PRIVA_BESTANDEN = {
 # (alleen PATS-C). De server: "beta" zolang API v2 nog niet op pats-c.com staat, daarna "productie"
 # (of PATS_SERVER in de omgeving).
 PATS_SECTIONS = {58: 3, 869: 1}
+# Bij welke vakken een Trap-Eye hangt, per tuin: rij r (bij PATS) → vakken r + a en r + b. Tuin 3: rij r hangt op
+# de palenrij tussen vak r − 1 en r (rij 2 tussen 1 en 2, rij 38 tussen 37 en 38). Tuin 1 krijgt de Trap-Eyes later;
+# tot de tuin hier staat, tellen ze alleen mee in het totaal van de tuin. (De PATS-C hangt anders: "tralie 38" op
+# rij 39, tussen vak 37 en 38; die tellen alleen voor de hele tuin.)
+PATS_TRAPEYE_VAKKEN = {3: (-1, 0)}
 PATS_SERVER = "beta"
 
 # --- VERSIE ---
 # Staat rechtsboven in de app. Ophogen bij elke wijziging op main (zie CHANGELOG.md):
 # derde getal bij een correctie, tweede bij iets nieuws, eerste bij een grote omzetting.
-APP_VERSIE = "2.22.1"
+APP_VERSIE = "2.23.0"

@@ -1579,6 +1579,41 @@ def upsert_pats_tellingen(regels):
         conn.commit()
 
 
+def get_gewasmetingen(tuin_id, van, tot):
+    """
+    Gewasmetingen van de teelten van een tuin die in van..tot liepen: de Florgib-meting (datum_half, lengte_half,
+    florgib_gram) en de eindmeting (lengte_eind, oogstgewicht, rijpheid). De eindmeting heeft geen eigen datum:
+    `gemeten_op` = wanneer ze laatst geregistreerd is (wijzigingenlog), anders de eerste emmers of de oogstdatum.
+    Lengtes en gewichten van 0 zijn None (zie meting()).
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            WITH t AS (
+                SELECT t.id, v.vaknummer, t.datum_half, t.lengte_half, t.florgib_gram, t.lengte_eind,
+                       t.oogstgewicht, t.rijpheid, t.datum_oogst
+                FROM teelten t JOIN teeltvakken v ON v.id = t.teeltvak_id
+                WHERE v.tuin_id = %(tuin)s AND v.vaknummer IS NOT NULL AND t.datum_teelt_start <= %(tot)s
+                  AND (t.datum_oogst IS NULL OR t.datum_oogst >= %(van)s)
+                  AND (t.lengte_half IS NOT NULL OR t.lengte_eind IS NOT NULL OR t.oogstgewicht IS NOT NULL)
+            )
+            SELECT t.*,
+                   (SELECT MAX(l.tijdstip) FROM wijzigingenlog l
+                    WHERE l.entiteit = 'teelt' AND l.entiteit_id = t.id::text
+                      AND l.omschrijving LIKE 'Oogstgegevens geregistreerd%%') AS gemeten_op,
+                   (SELECT MIN(o.datum) FROM oogstregistraties o WHERE o.teelt_id = t.id) AS eerste_emmers
+            FROM t
+        """, {"tuin": tuin_id, "van": str(van), "tot": str(tot)})
+        kolommen = [k[0] for k in cursor.description]
+        uit = []
+        for r in cursor.fetchall():
+            d = dict(zip(kolommen, r))
+            for k in ("lengte_half", "florgib_gram", "lengte_eind", "oogstgewicht"):
+                d[k] = meting(d[k])
+            uit.append(d)
+        return uit
+
+
 def pats_tuinen_met_tellingen():
     """De tuin_ids waarvan al PATS-tellingen in de database staan."""
     with get_connection() as conn:

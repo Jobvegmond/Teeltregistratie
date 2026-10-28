@@ -36,8 +36,8 @@ layout.pagina_kop(
 )
 balk = layout.filterbalk("overzicht")
 lengte, van = filters.periode("tl_venster", ["4 wk", "3 mnd", "6 mnd", "1 jaar"], "3 mnd", ..., plek=balk)
-weergave = filters.weergave("Weergave", ["Standaard", "Bespuitingen", "Watergift"], "ov_weergave", "Standaard",
-                            plek=balk)
+weergave = filters.weergave("Weergave", ["Standaard", "Bespuitingen", "Watergift", "Waarnemingen"], "ov_weergave",
+                            "Standaard", plek=balk)
 layout.sectie("Tijdlijn")
 ...                                   # hoofdweergave
 legend.legenda([...])

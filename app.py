@@ -102,6 +102,7 @@ from database import (
     get_vergelijking_data,
     get_behandelingen,
     get_pats_tellingen,
+    get_gewasmetingen,
     get_klimaat_uur,
     get_teeltvergelijking_data,
     warmte_per_bezette_m2,
@@ -131,6 +132,7 @@ from ui import filters, layout, legend, styles, vergelijkingstabel
 from ui import help as uitleg_help
 from ui.vergelijkingstabel import Kengetal, verloop_frame
 from config import (
+    PATS_TRAPEYE_VAKKEN,
     AFDELING_VOLGORDE, AFWIJKING_VENSTER_DAGEN, C_GRENZEN, FLORGIB_ACHTERSTAND_DAGEN,
     OP_KOERS_MARGE, OPMERKING_CATEGORIEEN, APP_VERSIE, WATERSYSTEMEN,
     DIF_MIN, STOOK_MAX, EC_BEREIK, PH_BEREIK,
@@ -1869,13 +1871,17 @@ def _pagina_overzicht():
             "*Bespuitingen*: grotere driehoekjes met de afkortingen van de middelen erachter, zoals in de "
             "klimaatregistratie (bijv. Ri = Rizolex, B5 = Biota 500; ingekort tot wat er past tot de "
             "volgende behandeling; klik voor de volledige namen en doseringen); de watergift als dun streepje "
-            "onderin. Bovenaan per insect de tellingen van PATS: het aantal nieuwe insecten op alle vangplaten "
-            "(Trap-Eye, ± 3 foto's per week) of in de insectensensoren (PATS-C, per dag van 12 tot 12 uur) van de "
-            "tuin samen; een grijs getal = 0. Klik op een getal voor de telling per vangplaat of sensor.",
+            "onderin.",
             "Bij Standaard en Watergift staat achter het vaknummer het totaal gegoten van de lopende teelt sinds het "
             "planten (l/m², bijv. Vak 2 · 145).",
             "*Watergift*: per vak drie regels: de liters (l/m²) en daaronder de EC en pH van de gift van dat vak; "
             "bovenaan de EC van de voorregeling (het uitgangswater vóór bemesting). EC/pH sinds 27-09-26.",
+            "*Waarnemingen*: bovenaan per insect de tellingen van PATS voor de hele tuin: het aantal nieuwe insecten "
+            "op alle vangplaten (Trap-Eye, ± 3 foto's per week: trips) of in de insectensensoren (PATS-C, per dag "
+            "van 12 tot 12 uur: turkse mot); een grijs getal = 0. Onder elk vak de regel *plaat*: de nieuwe trips "
+            "op de Trap-Eye(s) naast dat vak (een plaat hangt tussen twee vakken en telt voor allebei). In de balk "
+            "de gewasmetingen: de lengte bij de Florgib en de eindmeting (lengte · gewicht · rijpheid) op de dag "
+            "dat ze geregistreerd is. Klik op een getal voor de telling per plaat, op een meting voor het vak.",
             "Klik op een balk voor het vak, op een driehoekje voor de middelen, op een watergift voor alle "
             "gietbeurten van die dag, op een concept om het te verschuiven, te starten als teelt of te verwijderen, "
             "en op een lege plek in een vakregel (vanaf deze week) om daar een concept te plannen.",
@@ -1886,7 +1892,7 @@ def _pagina_overzicht():
             "In het register opent een klik op een regel het vak.",
         ],
         bron="Watergift: Priva (API), elke ochtend opgehaald. Behandelingen: Agro4all, daarvoor de "
-             "klimaatregistratie. Insectentellingen: PATS, elk uur opgehaald. Het teeltmodel telt per dag een deel van de teelt af, afhankelijk van de "
+             "klimaatregistratie. Insectentellingen: PATS, elk uur opgehaald (tuin 1: nog alleen de twee PATS-C's). Het teeltmodel telt per dag een deel van de teelt af, afhankelijk van de "
              "lichtsom binnen en de "
              f"afwijking van de lichtlijn ({formule_tekst()}), met een correctie per tuin. Het leert van alle "
              "afgeronde vakken (historie uit de klimaatregistratie plus wat in de app is afgerond). Na de Florgib "
@@ -1956,11 +1962,27 @@ def _tl_tint(start):
     """0 of 1, om en om per plantweek (ISO-week van de plantdatum), ook over de jaargrens heen."""
     return ((start - timedelta(days=start.weekday())).toordinal() // 7) % 2
 TL_VENSTERS = {"4 wk": 4, "3 mnd": 13, "6 mnd": 26, "1 jaar": 52}
-TL_WEERGAVEN = ["Standaard", "Bespuitingen", "Watergift"]
+TL_WEERGAVEN = ["Standaard", "Bespuitingen", "Watergift", "Waarnemingen"]
 TL_WATER = "#2a6fb5"           # watergift: blauw, dekking naar de liters
 TL_WATER_LICHT = "#9cc4ec"     # watergift in de weergave Bespuitingen: licht blauw, zodat de middelen opvallen
-TL_PATS, TL_PATS_NUL = "#6b4f2a", "#b5b5b0"   # PATS-tellingen in de weergave Bespuitingen: bruin, 0 in grijs
+TL_PATS, TL_PATS_NUL = "#6b4f2a", "#b5b5b0"   # PATS-tellingen (weergave Waarnemingen): bruin, 0 in grijs
+TL_METING = "#1f1f1f"                            # gewasmetingen (weergave Waarnemingen)
 TL_RIJ = 22   # hoogte van een regel (px)
+TL_RIJ_PLAAT = 12   # de regel "plaat" onder een vak (weergave Waarnemingen) is lager
+
+
+def _tl_rij_hoogte(regel):
+    return TL_RIJ_PLAAT if regel.startswith("§val") else TL_RIJ
+
+
+def _tl_label(regel, met_totaal):
+    """De tekst links van een regel: "Vak 2 · 145" (watergift), EC/pH, "plaat", niets bij andere §-regels."""
+    if regel in met_totaal:
+        return met_totaal[regel]
+    for begin, tekst in (("§ec", "EC"), ("§ph", "pH"), ("§val", "plaat"), ("§", "")):
+        if regel.startswith(begin):
+            return tekst
+    return regel
 
 
 def _tl_stap(weken):
@@ -1978,7 +2000,8 @@ def _tl_frames(info, afdelingen, van, tot, vandaag, weken, weergave):
     De DataFrames voor de grafiek van één tuin: (balken, randen, florgib, plan, kopteksten, weeknummers, dagen,
     behandelingen, watergift, waarden), de volgorde van de regels (y): de vakken in teeltvolgorde, bij de
     weergave Watergift met onder elk vak een regel EC ("§ec<vak>") en pH ("§ph<vak>") en bovenaan "EC voorr.",
-    bij de weergave Bespuitingen bovenaan een regel per insect met PATS-tellingen (frame "plagen");
+    bij de weergave Waarnemingen bovenaan een regel per insect met PATS-tellingen (frame "plagen") en onder elk
+    vak met een Trap-Eye een regel "plaat" ("§val<vak>", frame "vangst"), en de gewasmetingen (frame "metingen");
     de stukken en (Excel-tabel watergift, watergiftdata voor het dagvenster).
     """
     tuin = info["tuin"]
@@ -1988,15 +2011,18 @@ def _tl_frames(info, afdelingen, van, tot, vandaag, weken, weergave):
     vak_afd = {int(v): int(a) for v, a in zip(info["vakken"]["vaknummer"], info["vakken"]["afdeling"]) if a == a}
 
     stap = _tl_stap(weken)
+    waarnemingen = weergave == "Waarnemingen"
     volgorde, kopteksten = ["Week", "Dag", "Datum"], []
     for afdeling in sorteer_afdelingen(set(vak_afd.values()), tuin["nummer"]):
         if afdelingen is not None and afdeling not in afdelingen:
             continue
         for vak in sorted(v for v, a in vak_afd.items() if a == afdeling):
-            volgorde += [f"Vak {vak}"] + ([f"§ec{vak}", f"§ph{vak}"] if weergave == "Watergift" else [])
+            volgorde += [f"Vak {vak}"] + ([f"§ec{vak}", f"§ph{vak}"] if weergave == "Watergift" else
+                                          [f"§val{vak}"] if waarnemingen and tuin["nummer"] in PATS_TRAPEYE_VAKKEN
+                                          else [])
     if weergave == "Watergift":
         volgorde.insert(3, "EC voorr.")
-    plagen = _tl_plagen(tuin["id"], van, min(tot, vandaag)) if weergave == "Bespuitingen" else pd.DataFrame()
+    plagen = _tl_plagen(tuin["id"], van, min(tot, vandaag)) if waarnemingen else pd.DataFrame()
     if not plagen.empty:
         volgorde[3:3] = list(dict.fromkeys(plagen["y"]))
     zichtbaar = set(volgorde)
@@ -2087,7 +2113,14 @@ def _tl_frames(info, afdelingen, van, tot, vandaag, weken, weergave):
     balken["lijn"] = balken["lijn"].fillna(0.12)   # dunne rand om elke balk, niet om lege plekken
     frames = [balken] + [pd.DataFrame(x) for x in (randen, florgib, plan, kopteksten, weeknummers, dagnamen)]
     water, waarden, tabel, wgdata = _tl_watergift(tuin, volgorde, van, min(tot, vandaag), weergave == "Watergift")
-    return (volgorde, frames + [_tl_behandelingen(tuin["id"], volgorde, van, tot), water, waarden, plagen], stukken,
+    if waarnemingen:
+        water = pd.DataFrame()
+        vangst = _tl_vangst(tuin, volgorde, van, min(tot, vandaag))
+        metingen = _tl_metingen(tuin["id"], volgorde, van, tot)
+    else:
+        vangst = metingen = pd.DataFrame()
+    return (volgorde, frames + [_tl_behandelingen(tuin["id"], volgorde, van, tot), water, waarden, plagen, vangst,
+                                metingen], stukken,
             (tabel, wgdata, _tl_water_totaal(tuin, info["statussen"], vandaag)))
 
 
@@ -2196,15 +2229,76 @@ def _tl_plagen(tuin_id, van, tot):
     return pd.DataFrame(rijen)
 
 
+def _tl_vangst(tuin, volgorde, van, tot):
+    """
+    Weergave Waarnemingen: onder elk vak (regel "§val<vak>") per fotodag de nieuwe vangst op de Trap-Eye(s) naast
+    het vak (logic/pats.per_vak, "T3 M1"); "ruimte" = dagen tot de volgende foto, voor het inkorten.
+    """
+    verschuiving = PATS_TRAPEYE_VAKKEN.get(tuin["nummer"])
+    zichtbaar = {int(y[4:]) for y in volgorde if y.startswith("§val")}
+    if not verschuiving or not zichtbaar or van > tot:
+        return pd.DataFrame()
+    per = pats_logic.per_vak(_pats_tellingen(tuin["id"], van, tot), verschuiving, zichtbaar)
+    dagen = {}
+    for r in per:
+        dagen.setdefault(r["vak"], []).append(r["datum"])
+    rijen = []
+    for r in per:
+        dag = r["datum"]
+        volgende = min([d for d in dagen[r["vak"]] if d > dag] or [tot + timedelta(days=1)])
+        tekst = pats_logic.kort(r["nieuw"])
+        rijen.append({"y": f"§val{r['vak']}", "x": pd.Timestamp(dag), "xm": pd.Timestamp(dag) + pd.Timedelta(hours=12),
+                      "tekst": tekst, "nul": tekst == "0",
+                      "ruimte": (volgende - dag).days, "sleutel": f"v:{r['vak']}:{dag.isoformat()}"})
+    return pd.DataFrame(rijen)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _gewasmetingen(tuin_id, van, tot, versie):
+    """Gewasmetingen van een tuin; `versie` (vakstatus_dataversie) is alleen de cachesleutel."""
+    return get_gewasmetingen(tuin_id, van, tot)
+
+
+def _tl_metingen(tuin_id, volgorde, van, tot):
+    """
+    Weergave Waarnemingen: de gewasmetingen in de balk van het vak: de lengte bij de Florgib (op de Florgibdag)
+    en de eindmeting (lengte · gewicht · rijpheid) op de dag dat ze geregistreerd is; klik = het vak.
+    """
+    zichtbaar = set(volgorde)
+    rijen = []
+    for m in _gewasmetingen(tuin_id, van, tot, vakstatus_dataversie()):
+        y = f"Vak {m['vaknummer']}"
+        if y not in zichtbaar:
+            continue
+        sleutel = f"t:{m['id']}"
+        florgib = vs.als_datum(m["datum_half"])
+        if florgib and m["lengte_half"] and van <= florgib <= tot:
+            rijen.append({"y": y, "x": pd.Timestamp(florgib) + pd.Timedelta(hours=12), "soort": "florgib",
+                          "tekst": f"{fmt_kort(m['lengte_half'], 1)} cm", "sleutel": sleutel})
+        if m["lengte_eind"] or m["oogstgewicht"]:
+            gemeten = m["gemeten_op"]
+            dag = (gemeten.astimezone(_NL_TIJD).date() if gemeten else
+                   vs.als_datum(m["eerste_emmers"]) or vs.als_datum(m["datum_oogst"]))
+            if dag and van <= dag <= tot:
+                delen = ([f"{fmt_kort(m['lengte_eind'], 1)} cm"] if m["lengte_eind"] else []) + (
+                    [f"{fmt_getal(m['oogstgewicht'], 0)} g"] if m["oogstgewicht"] else []) + (
+                    [f"R{m['rijpheid']}"] if m.get("rijpheid") else [])
+                rijen.append({"y": y, "x": pd.Timestamp(dag) + pd.Timedelta(hours=12), "soort": "eind",
+                              "tekst": " · ".join(delen), "sleutel": sleutel})
+    return pd.DataFrame(rijen)
+
+
 def _tl_grafiek(volgorde, frames, van, tot, vandaag, weken, weergave, water_totaal=None):
     """
     De Altair-grafiek van één tuin in de weergave Standaard, Bespuitingen of Watergift. Klikbaar: de balken
     ('tl_klik'), de behandelingen ('tl_beh', 'tl_btekst'), de watergift ('tl_water', 'tl_wtekst', 'tl_ecph') en
-    de PATS-tellingen ('tl_pats', 'tl_pats_blok');
+    de PATS-tellingen ('tl_pats', 'tl_pats_blok', 'tl_vangst', 'tl_vangst_blok') en de gewasmetingen
+    ('tl_meting');
     elke laag een eigen selectie (dezelfde selectie op twee lagen geeft een dubbel signaal in Vega).
     water_totaal ({vak: l/m²}): achter het vaknummer het totaal gegoten van de lopende teelt ("Vak 2 · 145").
     """
-    balken, randen, florgib, plan, kopteksten, weeknummers, dagnamen, behandelingen, water, waarden, plagen = frames
+    (balken, randen, florgib, plan, kopteksten, weeknummers, dagnamen, behandelingen, water, waarden, plagen, vangst,
+     metingen) = frames
     # Hoe breed een dag op het scherm is, weet alleen de grafiek zelf ("width" = de breedte van het
     # tekenvlak). Getallen en middelen kiezen daarop wat er past: volledig, korter of niets.
     px = f"(width / {(tot - van).days + 1})"
@@ -2213,16 +2307,35 @@ def _tl_grafiek(volgorde, frames, van, tot, vandaag, weken, weergave, water_tota
     x = alt.X("start:T", title=None, scale=schaal, axis=alt.Axis(
         orient="top", grid=True, labels=False, ticks=False, domain=False,
         tickCount={"interval": "week", "step": 1}))
-    y = alt.Y("y:N", title=None, sort=volgorde, scale=alt.Scale(domain=volgorde), axis=alt.Axis(
-        labelExpr=("(" + json.dumps(met_totaal, ensure_ascii=False) + ")[datum.label] || "
-                   "(indexof(datum.label, '§ec') == 0 ? 'EC' : indexof(datum.label, '§ph') == 0 ? 'pH' : "
-                   "indexof(datum.label, '§') == 0 ? '' : datum.label)"), labelLimit=110, minExtent=0,
-        ticks=False, domain=False, labelFontSize=11))
+    # Elke regel een eigen hoogte (de regel "plaat" is lager): y is de positie van het midden van de regel in px
+    # vanaf boven ("pos"), met de tekst van de regel als aslabel.
+    pos, boven = {}, 0
+    for regel in volgorde:
+        pos[regel] = boven + _tl_rij_hoogte(regel) / 2
+        boven += _tl_rij_hoogte(regel)
+    for f in frames:
+        if not f.empty and "y" in f:
+            f["pos"] = f["y"].map(pos)
+    labels = {f"{p:g}": _tl_label(regel, met_totaal) for regel, p in pos.items()}
+    y_schaal = alt.Scale(domain=[0, boven], reverse=True, nice=False, zero=False)
+    y_as = alt.Axis(values=list(pos.values()), labelExpr=f"({json.dumps(labels, ensure_ascii=False)})[datum.value] || ''",
+                    labelLimit=110, minExtent=0, grid=False, ticks=False, domain=False, labelFontSize=11,
+                    labelOverlap=False)
+    y = alt.Y("pos:Q", title=None, scale=y_schaal, axis=y_as)
+
+    def balk(f, hoogte, midden=0.0):
+        """De boven- en onderkant (b1, b2) van een balk van `hoogte` px rond het midden van de regel (+ midden)."""
+        if not f.empty:
+            f["b1"] = f["pos"] + midden - hoogte / 2
+            f["b2"] = f["pos"] + midden + hoogte / 2
+        return {"y": alt.Y("b1:Q", title=None, scale=y_schaal, axis=y_as), "y2": "b2:Q"}
+
+    balk_y = balk(balken, TL_RIJ - 8)
+    randen_y = balk(randen, TL_RIJ - 8)
     klik = alt.selection_point(name="tl_klik", fields=["sleutel"], on="click")
     lagen = [
-        alt.Chart(balken).mark_bar(tooltip=None, height=TL_RIJ - 8, cornerRadius=2, stroke="#000000", clip=True,
-                                   cursor="pointer")
-        .encode(x=x, x2="eind:T", y=y, color=alt.Color("kleur:N", scale=None),
+        alt.Chart(balken).mark_bar(tooltip=None, cornerRadius=2, stroke="#000000", clip=True, cursor="pointer")
+        .encode(x=x, x2="eind:T", **balk_y, color=alt.Color("kleur:N", scale=None),
                 opacity=alt.Opacity("dekking:Q", scale=None), strokeOpacity=alt.StrokeOpacity("lijn:Q", scale=None))
         .add_params(klik)
     ]
@@ -2230,10 +2343,9 @@ def _tl_grafiek(volgorde, frames, van, tot, vandaag, weken, weergave, water_tota
                                   ("florgib", [2, 2], 1.5), ("overlap", [4, 2], 2)):
         deel = randen[randen["streep"] == streep] if not randen.empty else randen
         if not deel.empty:
-            lagen.append(alt.Chart(deel).mark_bar(tooltip=None, height=TL_RIJ - 8, cornerRadius=2, filled=False,
-                                                  clip=True,
+            lagen.append(alt.Chart(deel).mark_bar(tooltip=None, cornerRadius=2, filled=False, clip=True,
                                                   strokeDash=dash, strokeWidth=breedte)
-                         .encode(x="start:T", x2="eind:T", y=y, stroke=alt.Stroke("rand:N", scale=None)))
+                         .encode(x="start:T", x2="eind:T", **randen_y, stroke=alt.Stroke("rand:N", scale=None)))
     # Dunne lijnen op dagniveau over de balken heen (de weeklijnen zijn de rasterlijnen van de as). Bij een dag
     # smaller dan 6 px staan ze te dicht op elkaar: dan niet.
     dagen = pd.DataFrame({"d": pd.date_range(pd.Timestamp(van), pd.Timestamp(tot) + pd.Timedelta(days=1))})
@@ -2253,10 +2365,10 @@ def _tl_grafiek(volgorde, frames, van, tot, vandaag, weken, weergave, water_tota
         # breed genoeg is, anders in hele liters). Bij Bespuitingen een dun licht streepje onderin, zonder getal.
         groot = weergave != "Bespuitingen"
         hoogte = TL_RIJ - 8 if groot else 4
-        lagen.append(alt.Chart(water).mark_bar(tooltip=None, height=hoogte, color=TL_WATER if groot else TL_WATER_LICHT,
-                                               cursor="pointer",
-                                               yOffset=0 if groot else (TL_RIJ - 8) / 2 - hoogte / 2)
-                     .encode(x="start:T", x2="eind:T", y=y)
+        water_y = balk(water, hoogte, 0 if groot else (TL_RIJ - 8) / 2 - hoogte / 2)
+        lagen.append(alt.Chart(water).mark_bar(tooltip=None, color=TL_WATER if groot else TL_WATER_LICHT,
+                                               cursor="pointer")
+                     .encode(x="start:T", x2="eind:T", **water_y)
                      .add_params(alt.selection_point(name="tl_water", fields=["sleutel"], on="click")))
         if groot:
             # Bij ≥ 30 px per dag met een decimaal, daaronder in hele liters (kleiner naarmate de dag smaller
@@ -2281,8 +2393,38 @@ def _tl_grafiek(volgorde, frames, van, tot, vandaag, weken, weergave, water_tota
                      .transform_calculate(lbl=f"{px} >= 26 ? datum.tekst : {px} >= 16 ? datum.kort : ''")
                      .encode(x="x:T", y=y, text="lbl:N")
                      .add_params(alt.selection_point(name="tl_ecph", fields=["sleutel"], on="click")))
+    if not vangst.empty:
+        # Weergave Waarnemingen, regel "plaat" onder elk vak: de nieuwe vangst vanaf de fotodag ("T3 M1", ± 6 px per
+        # teken, ingekort tot wat er past tot de volgende foto); past er niets, dan een blokje (klik voor de platen).
+        kleur = alt.condition("datum.nul", alt.value(TL_PATS_NUL), alt.value(TL_PATS))
+        tekens = f"floor((datum.ruimte * {px} - 4) / 6)"
+        lagen.append(alt.Chart(vangst).mark_square(tooltip=None, size=30, cursor="pointer",
+                                                   opacity=alt.expr(f"{px} >= 14 ? 0 : 1"))
+                     .encode(x="xm:T", y=y, color=kleur)
+                     .add_params(alt.selection_point(name="tl_vangst_blok", fields=["sleutel"], on="click")))
+        lagen.append(alt.Chart(vangst).mark_text(tooltip=None, align="left", dx=2, fontSize=10, fontWeight="bold",
+                                                 cursor="pointer")
+                     .transform_calculate(lbl=f"{px} < 14 || {tekens} < 1 ? '' : length(datum.tekst) <= {tekens} ? "
+                                              f"datum.tekst : {tekens} < 3 ? '…' : "
+                                              f"slice(datum.tekst, 0, {tekens} - 1) + '…'")
+                     .encode(x="x:T", y=y, text="lbl:N", color=kleur)
+                     .add_params(alt.selection_point(name="tl_vangst", fields=["sleutel"], on="click")))
+    if not metingen.empty:
+        # Weergave Waarnemingen: de gewasmetingen in de balk: een ruitje met de meting erachter (Florgib in paars,
+        # bij de Florgibstip); bij < 8 px per dag alleen het ruitje.
+        kleur = alt.condition("datum.soort == 'florgib'", alt.value(TL_FLORGIB), alt.value(TL_METING))
+        eind = metingen[metingen["soort"] == "eind"]
+        if not eind.empty:
+            lagen.append(alt.Chart(eind).mark_point(tooltip=None, shape="diamond", size=50, filled=True, opacity=1,
+                                                    color=TL_METING, cursor="pointer")
+                         .encode(x="x:T", y=y))
+        lagen.append(alt.Chart(metingen).mark_text(tooltip=None, align="left", dx=7, fontSize=10, fontWeight="bold",
+                                                   cursor="pointer")
+                     .transform_calculate(lbl=f"{px} >= 8 ? datum.tekst : ''")
+                     .encode(x="x:T", y=y, text="lbl:N", color=kleur)
+                     .add_params(alt.selection_point(name="tl_meting", fields=["sleutel"], on="click")))
     if not plagen.empty:
-        # Weergave Bespuitingen: de PATS-tellingen per insect als getal (0 in grijs); past er geen getal (< 14 px
+        # Weergave Waarnemingen: de PATS-tellingen per insect als getal (0 in grijs); past er geen getal (< 14 px
         # per dag), dan een blokje (klik voor de telling).
         kleur = alt.condition("datum.nul", alt.value(TL_PATS_NUL), alt.value(TL_PATS))
         lagen.append(alt.Chart(plagen).mark_square(tooltip=None, size=30, cursor="pointer",
@@ -2328,7 +2470,9 @@ def _tl_grafiek(volgorde, frames, van, tot, vandaag, weken, weergave, water_tota
                          color=alt.condition("datum.vandaag", alt.value(TL_ROOD), alt.value("#8a8a85"))))
     lagen.append(alt.Chart(pd.DataFrame({"d": [pd.Timestamp(vandaag)]}))
                  .mark_rule(tooltip=None, color=TL_ROOD, strokeDash=[4, 3]).encode(x="d:T"))
-    return (alt.layer(*lagen).properties(height=alt.Step(TL_RIJ))
+    # Alleen de breedte passend maken (fit-x): bij "fit" (de standaard van Streamlit bij een vaste hoogte) tellen
+    # de weeklijnen over de hele hoogte mee en wordt het tekenvlak 0 px hoog.
+    return (alt.layer(*lagen).properties(height=boven, autosize=alt.AutoSizeParams(type="fit-x", contains="padding"))
             .configure_view(strokeOpacity=0).configure_axis(gridOpacity=0.5)
             # Geen tooltips: Streamlit zet anders op elk merkteken een kader met alle velden (x, y, lbl), dat op een
             # telefoon half buiten beeld valt en niet weggaat. Meer weten = klikken.
@@ -2339,7 +2483,8 @@ def _tl_geklikt(widget, versie):
     """Callback van de tijdlijn: onthoud wat er geklikt is en begin de grafiek opnieuw (lege keuze)."""
     selectie = (st.session_state.get(widget) or {}).get("selection", {})
     items = next((selectie[n] for n in ("tl_beh", "tl_btekst", "tl_water", "tl_wtekst", "tl_ecph", "tl_ecph_blok",
-                                        "tl_pats", "tl_pats_blok", "tl_klik")
+                                        "tl_pats", "tl_pats_blok", "tl_vangst", "tl_vangst_blok", "tl_meting",
+                                        "tl_klik")
                   if selectie.get(n)), [])
     if items and items[0].get("sleutel"):
         st.session_state[f"{versie}_klik"] = items[0]["sleutel"]
@@ -2483,20 +2628,22 @@ def _tl_toon(infos, afdelingen, van, tot, weken, vandaag, weergave):
                                                        weergave)
         water.append((tuin, wgdata[0]))
         # De selecties die in de grafiek zitten (zie _tl_grafiek): een laag zonder gegevens heeft er geen.
-        beh, gift, ecph, plagen = (not f.empty for f in frames[-4:])
+        beh, gift, ecph, plagen, vangst, metingen = (not f.empty for f in frames[-6:])
         selecties = (["tl_klik"] + (["tl_beh"] if beh else [])
                      + (["tl_btekst"] if beh and weergave == "Bespuitingen" else [])
                      + (["tl_water"] if gift else [])
                      + (["tl_wtekst"] if gift and weergave != "Bespuitingen" else [])
                      + (["tl_ecph", "tl_ecph_blok"] if ecph else [])
-                     + (["tl_pats", "tl_pats_blok"] if plagen else []))
+                     + (["tl_pats", "tl_pats_blok"] if plagen else [])
+                     + (["tl_vangst", "tl_vangst_blok"] if vangst else [])
+                     + (["tl_meting"] if metingen else []))
         # Een klik wordt in de callback opgepakt (vóór de nieuwe run): die onthoudt wat er geklikt is en geeft
         # de grafiek een nieuwe sleutel, zodat de keuze leeg begint en je hetzelfde vak na het sluiten van het
         # venster opnieuw kunt aanklikken.
         versie = f"tl_grafiek_{tuin['nummer']}_versie"
         st.session_state.setdefault(versie, 0)
         widget = f"tl_grafiek_{tuin['nummer']}_{st.session_state[versie]}"
-        totaal = wgdata[2] if weergave != "Bespuitingen" else {}
+        totaal = wgdata[2] if weergave in ("Standaard", "Watergift") else {}
         st.altair_chart(_tl_grafiek(volgorde, frames, van, tot, vandaag, weken, weergave, totaal),
                         use_container_width=True,
                         on_select=lambda w=widget, v=versie: _tl_geklikt(w, v),
@@ -2516,6 +2663,8 @@ def _tl_toon(infos, afdelingen, van, tot, weken, vandaag, weergave):
                                 info["vakken"], d["beurten"])
             elif soort == "p":
                 _tl_pats_venster(tuin, int(nummer), date.fromisoformat(geklikt.split(":", 2)[2]))
+            elif soort == "v":
+                _tl_plaat_venster(tuin, int(nummer), date.fromisoformat(geklikt.split(":", 2)[2]))
             elif soort == "n":
                 vak, zondag = nummer, date.fromisoformat(geklikt.split(":", 2)[2])
                 _tl_nieuw_venster(int(vak), zondag, info, stukken, vandaag)
@@ -2581,6 +2730,38 @@ def _tl_pats_venster(tuin, klasse_id, dag):
     _venster()
 
 
+def _tl_plaat_venster(tuin, vak, dag):
+    """Klik op de vangst bij een vak: per Trap-Eye naast het vak de nieuwe insecten en de stand op de plaat."""
+    verschuiving = PATS_TRAPEYE_VAKKEN.get(tuin["nummer"])
+
+    @st.dialog(f"Vangplaten vak {vak} · {tuin['naam']} · {DAGEN_KORT_WG[dag.weekday()]} {format_datum(dag)}",
+               width="large")
+    def _venster():
+        tellingen = [t for t in _pats_tellingen(tuin["id"], dag, dag) if t["apparaat"] == "trapeye"
+                     and t["klasse_id"] in pats_logic.PLAAT_INSECTEN and verschuiving
+                     and vak in pats_logic.vakken_van_rij(t["rij"], verschuiving)]
+        if not tellingen:
+            st.caption("Geen telling op deze dag.")
+            return
+        platen = {}
+        for t in tellingen:
+            p = platen.setdefault((t["rij"], t["paal"]), {"Rij": t["rij"], "Paal": t["paal"]})
+            naam = pats_logic.INSECTEN[t["klasse_id"]]
+            p[naam] = t["nieuw"]
+            p[f"{naam} op plaat"] = t["stand"]
+        namen = [pats_logic.INSECTEN[k] for k in pats_logic.PLAAT_INSECTEN]
+        toon_tabel(pd.DataFrame([platen[k] for k in sorted(platen)]),
+                   [("Rij", "Rij", "getal", "%d", "small"), ("Paal", "Paal", "getal", "%d", "small")]
+                   + [(n, f"{n} nieuw", "getal", "%g", "small") for n in namen]
+                   + [(f"{n} op plaat", f"{n} op plaat", "getal", "%g", "small") for n in namen],
+                   verberg_leeg=True)
+        buren = ", ".join(str(v) for v in pats_logic.vakken_van_rij(tellingen[0]["rij"], verschuiving))
+        uitleg_help.voetnoot(f"Rij en paal zoals bij PATS; een plaat hangt tussen twee vakken (deze: vak {buren}). "
+                             "Nieuw = sinds de vorige foto; op plaat = de stand op de vangplaat.")
+
+    _venster()
+
+
 def _tl_legenda(weergave):
     legend.legenda([
         {"label": "lopend (per teelt donker/licht)",
@@ -2599,13 +2780,18 @@ def _tl_legenda(weergave):
     ])
     legend.legenda([{"kleur": kleur, "label": soort, "stijl": "clip-path:polygon(0 0,100% 0,50% 100%);"}
                     for soort, kleur in wg.BEHANDELING_KLEUR.items()]
-                   + [{"kleur": TL_WATER, "label": "watergift in l/m² (klik voor de gietbeurten)",
-                       "stijl": f"height:0.3rem;background:{TL_WATER_LICHT};" if weergave == "Bespuitingen"
-                       else ""}],
-                   titel="Bespuitingen (▼) en watergift:")
-    if weergave == "Bespuitingen":
-        legend.legenda([{"kleur": TL_PATS, "label": "aantal nieuw (PATS, hele tuin)"},
-                        {"kleur": TL_PATS_NUL, "label": "telling 0"}], titel="Insecten:")
+                   + ([] if weergave == "Waarnemingen" else
+                      [{"kleur": TL_WATER, "label": "watergift in l/m² (klik voor de gietbeurten)",
+                        "stijl": f"height:0.3rem;background:{TL_WATER_LICHT};" if weergave == "Bespuitingen"
+                        else ""}]),
+                   titel="Bespuitingen (▼)" + ("" if weergave == "Waarnemingen" else " en watergift") + ":")
+    if weergave == "Waarnemingen":
+        legend.legenda([{"kleur": TL_PATS, "label": "aantal nieuw (PATS); plaat = nieuwe trips naast het vak"},
+                        {"kleur": TL_PATS_NUL, "label": "telling 0"},
+                        {"kleur": TL_METING, "label": "eindmeting (lengte · gewicht · rijpheid)",
+                         "stijl": "transform:rotate(45deg);width:0.55rem;height:0.55rem;"},
+                        {"kleur": TL_FLORGIB, "vorm": "stip", "label": "lengte bij de Florgib"}],
+                       titel="Waarnemingen:")
 
 
 # --- TUINVERGELIJKING: wat er in een periode in de kas gebeurde, per m² ---
