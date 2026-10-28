@@ -16,7 +16,10 @@ inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
     telling per plaat (nieuw en de stand op de plaat);
   - de gewasmetingen in de balk: de lengte bij de Florgib en de eindmeting (lengte · gewicht · rijpheid) op de
     dag dat ze geregistreerd is (uit het wijzigingenlog, anders de eerste emmers); klik voor het vak;
-  - de bespuitingen als kleine driehoekjes, geen watergift.
+  - de bespuitingen als kleine driehoekjes, geen watergift;
+  - de regel *plaat* is lager dan een vakregel (12 in plaats van 22 px). Daarvoor heeft elke regel van de
+    tijdlijn nu een eigen hoogte: de y-as is een positie in px (`_tl_rij_hoogte`), de balken hebben een
+    boven- en onderkant, en de grafiek past alleen in de breedte (`autosize` fit-x).
 - `logic/pats.py`: `per_vak` en `kort` (tests); `database.get_gewasmetingen`.
 
 ### Gewijzigd

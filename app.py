@@ -1968,6 +1968,21 @@ TL_WATER_LICHT = "#9cc4ec"     # watergift in de weergave Bespuitingen: licht bl
 TL_PATS, TL_PATS_NUL = "#6b4f2a", "#b5b5b0"   # PATS-tellingen (weergave Waarnemingen): bruin, 0 in grijs
 TL_METING = "#1f1f1f"                            # gewasmetingen (weergave Waarnemingen)
 TL_RIJ = 22   # hoogte van een regel (px)
+TL_RIJ_PLAAT = 12   # de regel "plaat" onder een vak (weergave Waarnemingen) is lager
+
+
+def _tl_rij_hoogte(regel):
+    return TL_RIJ_PLAAT if regel.startswith("§val") else TL_RIJ
+
+
+def _tl_label(regel, met_totaal):
+    """De tekst links van een regel: "Vak 2 · 145" (watergift), EC/pH, "plaat", niets bij andere §-regels."""
+    if regel in met_totaal:
+        return met_totaal[regel]
+    for begin, tekst in (("§ec", "EC"), ("§ph", "pH"), ("§val", "plaat"), ("§", "")):
+        if regel.startswith(begin):
+            return tekst
+    return regel
 
 
 def _tl_stap(weken):
@@ -2292,17 +2307,35 @@ def _tl_grafiek(volgorde, frames, van, tot, vandaag, weken, weergave, water_tota
     x = alt.X("start:T", title=None, scale=schaal, axis=alt.Axis(
         orient="top", grid=True, labels=False, ticks=False, domain=False,
         tickCount={"interval": "week", "step": 1}))
-    y = alt.Y("y:N", title=None, sort=volgorde, scale=alt.Scale(domain=volgorde), axis=alt.Axis(
-        labelExpr=("(" + json.dumps(met_totaal, ensure_ascii=False) + ")[datum.label] || "
-                   "(indexof(datum.label, '§ec') == 0 ? 'EC' : indexof(datum.label, '§ph') == 0 ? 'pH' : "
-                   "indexof(datum.label, '§val') == 0 ? 'plaat' : "
-                   "indexof(datum.label, '§') == 0 ? '' : datum.label)"), labelLimit=110, minExtent=0,
-        ticks=False, domain=False, labelFontSize=11))
+    # Elke regel een eigen hoogte (de regel "plaat" is lager): y is de positie van het midden van de regel in px
+    # vanaf boven ("pos"), met de tekst van de regel als aslabel.
+    pos, boven = {}, 0
+    for regel in volgorde:
+        pos[regel] = boven + _tl_rij_hoogte(regel) / 2
+        boven += _tl_rij_hoogte(regel)
+    for f in frames:
+        if not f.empty and "y" in f:
+            f["pos"] = f["y"].map(pos)
+    labels = {f"{p:g}": _tl_label(regel, met_totaal) for regel, p in pos.items()}
+    y_schaal = alt.Scale(domain=[0, boven], reverse=True, nice=False, zero=False)
+    y_as = alt.Axis(values=list(pos.values()), labelExpr=f"({json.dumps(labels, ensure_ascii=False)})[datum.value] || ''",
+                    labelLimit=110, minExtent=0, grid=False, ticks=False, domain=False, labelFontSize=11,
+                    labelOverlap=False)
+    y = alt.Y("pos:Q", title=None, scale=y_schaal, axis=y_as)
+
+    def balk(f, hoogte, midden=0.0):
+        """De boven- en onderkant (b1, b2) van een balk van `hoogte` px rond het midden van de regel (+ midden)."""
+        if not f.empty:
+            f["b1"] = f["pos"] + midden - hoogte / 2
+            f["b2"] = f["pos"] + midden + hoogte / 2
+        return {"y": alt.Y("b1:Q", title=None, scale=y_schaal, axis=y_as), "y2": "b2:Q"}
+
+    balk_y = balk(balken, TL_RIJ - 8)
+    randen_y = balk(randen, TL_RIJ - 8)
     klik = alt.selection_point(name="tl_klik", fields=["sleutel"], on="click")
     lagen = [
-        alt.Chart(balken).mark_bar(tooltip=None, height=TL_RIJ - 8, cornerRadius=2, stroke="#000000", clip=True,
-                                   cursor="pointer")
-        .encode(x=x, x2="eind:T", y=y, color=alt.Color("kleur:N", scale=None),
+        alt.Chart(balken).mark_bar(tooltip=None, cornerRadius=2, stroke="#000000", clip=True, cursor="pointer")
+        .encode(x=x, x2="eind:T", **balk_y, color=alt.Color("kleur:N", scale=None),
                 opacity=alt.Opacity("dekking:Q", scale=None), strokeOpacity=alt.StrokeOpacity("lijn:Q", scale=None))
         .add_params(klik)
     ]
@@ -2310,10 +2343,9 @@ def _tl_grafiek(volgorde, frames, van, tot, vandaag, weken, weergave, water_tota
                                   ("florgib", [2, 2], 1.5), ("overlap", [4, 2], 2)):
         deel = randen[randen["streep"] == streep] if not randen.empty else randen
         if not deel.empty:
-            lagen.append(alt.Chart(deel).mark_bar(tooltip=None, height=TL_RIJ - 8, cornerRadius=2, filled=False,
-                                                  clip=True,
+            lagen.append(alt.Chart(deel).mark_bar(tooltip=None, cornerRadius=2, filled=False, clip=True,
                                                   strokeDash=dash, strokeWidth=breedte)
-                         .encode(x="start:T", x2="eind:T", y=y, stroke=alt.Stroke("rand:N", scale=None)))
+                         .encode(x="start:T", x2="eind:T", **randen_y, stroke=alt.Stroke("rand:N", scale=None)))
     # Dunne lijnen op dagniveau over de balken heen (de weeklijnen zijn de rasterlijnen van de as). Bij een dag
     # smaller dan 6 px staan ze te dicht op elkaar: dan niet.
     dagen = pd.DataFrame({"d": pd.date_range(pd.Timestamp(van), pd.Timestamp(tot) + pd.Timedelta(days=1))})
@@ -2333,10 +2365,10 @@ def _tl_grafiek(volgorde, frames, van, tot, vandaag, weken, weergave, water_tota
         # breed genoeg is, anders in hele liters). Bij Bespuitingen een dun licht streepje onderin, zonder getal.
         groot = weergave != "Bespuitingen"
         hoogte = TL_RIJ - 8 if groot else 4
-        lagen.append(alt.Chart(water).mark_bar(tooltip=None, height=hoogte, color=TL_WATER if groot else TL_WATER_LICHT,
-                                               cursor="pointer",
-                                               yOffset=0 if groot else (TL_RIJ - 8) / 2 - hoogte / 2)
-                     .encode(x="start:T", x2="eind:T", y=y)
+        water_y = balk(water, hoogte, 0 if groot else (TL_RIJ - 8) / 2 - hoogte / 2)
+        lagen.append(alt.Chart(water).mark_bar(tooltip=None, color=TL_WATER if groot else TL_WATER_LICHT,
+                                               cursor="pointer")
+                     .encode(x="start:T", x2="eind:T", **water_y)
                      .add_params(alt.selection_point(name="tl_water", fields=["sleutel"], on="click")))
         if groot:
             # Bij ≥ 30 px per dag met een decimaal, daaronder in hele liters (kleiner naarmate de dag smaller
@@ -2438,7 +2470,9 @@ def _tl_grafiek(volgorde, frames, van, tot, vandaag, weken, weergave, water_tota
                          color=alt.condition("datum.vandaag", alt.value(TL_ROOD), alt.value("#8a8a85"))))
     lagen.append(alt.Chart(pd.DataFrame({"d": [pd.Timestamp(vandaag)]}))
                  .mark_rule(tooltip=None, color=TL_ROOD, strokeDash=[4, 3]).encode(x="d:T"))
-    return (alt.layer(*lagen).properties(height=alt.Step(TL_RIJ))
+    # Alleen de breedte passend maken (fit-x): bij "fit" (de standaard van Streamlit bij een vaste hoogte) tellen
+    # de weeklijnen over de hele hoogte mee en wordt het tekenvlak 0 px hoog.
+    return (alt.layer(*lagen).properties(height=boven, autosize=alt.AutoSizeParams(type="fit-x", contains="padding"))
             .configure_view(strokeOpacity=0).configure_axis(gridOpacity=0.5)
             # Geen tooltips: Streamlit zet anders op elk merkteken een kader met alle velden (x, y, lbl), dat op een
             # telefoon half buiten beeld valt en niet weggaat. Meer weten = klikken.
