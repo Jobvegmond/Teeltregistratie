@@ -101,6 +101,7 @@ from database import (
     verwijder_opmerking,
     get_vergelijking_data,
     get_behandelingen,
+    get_pats_tellingen,
     get_klimaat_uur,
     get_teeltvergelijking_data,
     warmte_per_bezette_m2,
@@ -115,6 +116,7 @@ from logic import opmerkingen as opm_logic
 from logic import opzoeken
 from logic import selectie
 from logic import watergift as wg
+from logic import pats as pats_logic
 from logic import weken as kalender
 from logic import tuinvergelijking as tuinvgl
 from logic import tuin_overzicht as tuin_ov
@@ -1867,7 +1869,9 @@ def _pagina_overzicht():
             "*Bespuitingen*: grotere driehoekjes met de afkortingen van de middelen erachter, zoals in de "
             "klimaatregistratie (bijv. Ri = Rizolex, B5 = Biota 500; ingekort tot wat er past tot de "
             "volgende behandeling; klik voor de volledige namen en doseringen); de watergift als dun streepje "
-            "onderin.",
+            "onderin. Bovenaan per insect de tellingen van PATS: het aantal nieuwe insecten op alle vangplaten "
+            "(Trap-Eye, ± 3 foto's per week) of in de insectensensoren (PATS-C, per dag van 12 tot 12 uur) van de "
+            "tuin samen; een grijs getal = 0. Klik op een getal voor de telling per vangplaat of sensor.",
             "Bij Standaard en Watergift staat achter het vaknummer het totaal gegoten van de lopende teelt sinds het "
             "planten (l/m², bijv. Vak 2 · 145).",
             "*Watergift*: per vak drie regels: de liters (l/m²) en daaronder de EC en pH van de gift van dat vak; "
@@ -1882,7 +1886,7 @@ def _pagina_overzicht():
             "In het register opent een klik op een regel het vak.",
         ],
         bron="Watergift: Priva (API), elke ochtend opgehaald. Behandelingen: Agro4all, daarvoor de "
-             "klimaatregistratie. Het teeltmodel telt per dag een deel van de teelt af, afhankelijk van de "
+             "klimaatregistratie. Insectentellingen: PATS, elk uur opgehaald. Het teeltmodel telt per dag een deel van de teelt af, afhankelijk van de "
              "lichtsom binnen en de "
              f"afwijking van de lichtlijn ({formule_tekst()}), met een correctie per tuin. Het leert van alle "
              "afgeronde vakken (historie uit de klimaatregistratie plus wat in de app is afgerond). Na de Florgib "
@@ -1955,6 +1959,7 @@ TL_VENSTERS = {"4 wk": 4, "3 mnd": 13, "6 mnd": 26, "1 jaar": 52}
 TL_WEERGAVEN = ["Standaard", "Bespuitingen", "Watergift"]
 TL_WATER = "#2a6fb5"           # watergift: blauw, dekking naar de liters
 TL_WATER_LICHT = "#9cc4ec"     # watergift in de weergave Bespuitingen: licht blauw, zodat de middelen opvallen
+TL_PATS, TL_PATS_NUL = "#6b4f2a", "#b5b5b0"   # PATS-tellingen in de weergave Bespuitingen: bruin, 0 in grijs
 TL_RIJ = 22   # hoogte van een regel (px)
 
 
@@ -1972,7 +1977,8 @@ def _tl_frames(info, afdelingen, van, tot, vandaag, weken, weergave):
     """
     De DataFrames voor de grafiek van één tuin: (balken, randen, florgib, plan, kopteksten, weeknummers, dagen,
     behandelingen, watergift, waarden), de volgorde van de regels (y): de vakken in teeltvolgorde, bij de
-    weergave Watergift met onder elk vak een regel EC ("§ec<vak>") en pH ("§ph<vak>") en bovenaan "EC voorr.";
+    weergave Watergift met onder elk vak een regel EC ("§ec<vak>") en pH ("§ph<vak>") en bovenaan "EC voorr.",
+    bij de weergave Bespuitingen bovenaan een regel per insect met PATS-tellingen (frame "plagen");
     de stukken en (Excel-tabel watergift, watergiftdata voor het dagvenster).
     """
     tuin = info["tuin"]
@@ -1990,6 +1996,9 @@ def _tl_frames(info, afdelingen, van, tot, vandaag, weken, weergave):
             volgorde += [f"Vak {vak}"] + ([f"§ec{vak}", f"§ph{vak}"] if weergave == "Watergift" else [])
     if weergave == "Watergift":
         volgorde.insert(3, "EC voorr.")
+    plagen = _tl_plagen(tuin["id"], van, min(tot, vandaag)) if weergave == "Bespuitingen" else pd.DataFrame()
+    if not plagen.empty:
+        volgorde[3:3] = list(dict.fromkeys(plagen["y"]))
     zichtbaar = set(volgorde)
 
     def periode(s):
@@ -2078,7 +2087,7 @@ def _tl_frames(info, afdelingen, van, tot, vandaag, weken, weergave):
     balken["lijn"] = balken["lijn"].fillna(0.12)   # dunne rand om elke balk, niet om lege plekken
     frames = [balken] + [pd.DataFrame(x) for x in (randen, florgib, plan, kopteksten, weeknummers, dagnamen)]
     water, waarden, tabel, wgdata = _tl_watergift(tuin, volgorde, van, min(tot, vandaag), weergave == "Watergift")
-    return (volgorde, frames + [_tl_behandelingen(tuin["id"], volgorde, van, tot), water, waarden], stukken,
+    return (volgorde, frames + [_tl_behandelingen(tuin["id"], volgorde, van, tot), water, waarden, plagen], stukken,
             (tabel, wgdata, _tl_water_totaal(tuin, info["statussen"], vandaag)))
 
 
@@ -2167,14 +2176,35 @@ def _tl_behandelingen(tuin_id, volgorde, van, tot):
     return pd.DataFrame(rijen)
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def _pats_tellingen(tuin_id, van, tot):
+    """PATS-tellingen van een tuin over van..tot; tien minuten bewaard (de import draait elk uur)."""
+    return get_pats_tellingen(tuin_id, van, tot)
+
+
+def _tl_plagen(tuin_id, van, tot):
+    """
+    Weergave Bespuitingen: per insect (regel "y" = de naam) en dag met een PATS-telling het aantal nieuwe
+    insecten van de hele tuin (logic/pats.dagtotalen), als getal; klik = de telling per vangplaat of sensor.
+    """
+    rijen = []
+    for d in pats_logic.dagtotalen(_pats_tellingen(tuin_id, van, tot) if van <= tot else []):
+        dag = d["datum"]
+        rijen.append({"y": d["insect"], "x": pd.Timestamp(dag) + pd.Timedelta(hours=12),
+                      "tekst": fmt_kort(d["totaal"], 1), "nul": d["totaal"] == 0,
+                      "sleutel": f"p:{d['klasse_id']}:{dag.isoformat()}"})
+    return pd.DataFrame(rijen)
+
+
 def _tl_grafiek(volgorde, frames, van, tot, vandaag, weken, weergave, water_totaal=None):
     """
     De Altair-grafiek van één tuin in de weergave Standaard, Bespuitingen of Watergift. Klikbaar: de balken
-    ('tl_klik'), de behandelingen ('tl_beh', 'tl_btekst') en de watergift ('tl_water', 'tl_wtekst', 'tl_ecph');
+    ('tl_klik'), de behandelingen ('tl_beh', 'tl_btekst'), de watergift ('tl_water', 'tl_wtekst', 'tl_ecph') en
+    de PATS-tellingen ('tl_pats', 'tl_pats_blok');
     elke laag een eigen selectie (dezelfde selectie op twee lagen geeft een dubbel signaal in Vega).
     water_totaal ({vak: l/m²}): achter het vaknummer het totaal gegoten van de lopende teelt ("Vak 2 · 145").
     """
-    balken, randen, florgib, plan, kopteksten, weeknummers, dagnamen, behandelingen, water, waarden = frames
+    balken, randen, florgib, plan, kopteksten, weeknummers, dagnamen, behandelingen, water, waarden, plagen = frames
     # Hoe breed een dag op het scherm is, weet alleen de grafiek zelf ("width" = de breedte van het
     # tekenvlak). Getallen en middelen kiezen daarop wat er past: volledig, korter of niets.
     px = f"(width / {(tot - van).days + 1})"
@@ -2251,6 +2281,19 @@ def _tl_grafiek(volgorde, frames, van, tot, vandaag, weken, weergave, water_tota
                      .transform_calculate(lbl=f"{px} >= 26 ? datum.tekst : {px} >= 16 ? datum.kort : ''")
                      .encode(x="x:T", y=y, text="lbl:N")
                      .add_params(alt.selection_point(name="tl_ecph", fields=["sleutel"], on="click")))
+    if not plagen.empty:
+        # Weergave Bespuitingen: de PATS-tellingen per insect als getal (0 in grijs); past er geen getal (< 14 px
+        # per dag), dan een blokje (klik voor de telling).
+        kleur = alt.condition("datum.nul", alt.value(TL_PATS_NUL), alt.value(TL_PATS))
+        lagen.append(alt.Chart(plagen).mark_square(tooltip=None, size=30, cursor="pointer",
+                                                   opacity=alt.expr(f"{px} >= 14 ? 0 : 1"))
+                     .encode(x="x:T", y=y, color=kleur)
+                     .add_params(alt.selection_point(name="tl_pats_blok", fields=["sleutel"], on="click")))
+        lagen.append(alt.Chart(plagen).mark_text(tooltip=None, fontSize=alt.expr(f"{px} >= 26 ? 11 : 10"),
+                                                 fontWeight="bold", cursor="pointer")
+                     .transform_calculate(lbl=f"{px} >= 14 ? datum.tekst : ''")
+                     .encode(x="x:T", y=y, text="lbl:N", color=kleur)
+                     .add_params(alt.selection_point(name="tl_pats", fields=["sleutel"], on="click")))
     if not behandelingen.empty:
         # Bespuitingen: een driehoekje bovenin de regel, zodat de balk zichtbaar blijft. In de weergave
         # Bespuitingen groter, met de afkortingen van de middelen erachter (logic/klimaatregistratie.afkorting).
@@ -2296,7 +2339,7 @@ def _tl_geklikt(widget, versie):
     """Callback van de tijdlijn: onthoud wat er geklikt is en begin de grafiek opnieuw (lege keuze)."""
     selectie = (st.session_state.get(widget) or {}).get("selection", {})
     items = next((selectie[n] for n in ("tl_beh", "tl_btekst", "tl_water", "tl_wtekst", "tl_ecph", "tl_ecph_blok",
-                                        "tl_klik")
+                                        "tl_pats", "tl_pats_blok", "tl_klik")
                   if selectie.get(n)), [])
     if items and items[0].get("sleutel"):
         st.session_state[f"{versie}_klik"] = items[0]["sleutel"]
@@ -2440,12 +2483,13 @@ def _tl_toon(infos, afdelingen, van, tot, weken, vandaag, weergave):
                                                        weergave)
         water.append((tuin, wgdata[0]))
         # De selecties die in de grafiek zitten (zie _tl_grafiek): een laag zonder gegevens heeft er geen.
-        beh, gift, ecph = (not f.empty for f in frames[-3:])
+        beh, gift, ecph, plagen = (not f.empty for f in frames[-4:])
         selecties = (["tl_klik"] + (["tl_beh"] if beh else [])
                      + (["tl_btekst"] if beh and weergave == "Bespuitingen" else [])
                      + (["tl_water"] if gift else [])
                      + (["tl_wtekst"] if gift and weergave != "Bespuitingen" else [])
-                     + (["tl_ecph", "tl_ecph_blok"] if ecph else []))
+                     + (["tl_ecph", "tl_ecph_blok"] if ecph else [])
+                     + (["tl_pats", "tl_pats_blok"] if plagen else []))
         # Een klik wordt in de callback opgepakt (vóór de nieuwe run): die onthoudt wat er geklikt is en geeft
         # de grafiek een nieuwe sleutel, zodat de keuze leeg begint en je hetzelfde vak na het sluiten van het
         # venster opnieuw kunt aanklikken.
@@ -2470,6 +2514,8 @@ def _tl_toon(infos, afdelingen, van, tot, weken, vandaag, weergave):
                 d = wgdata[1]
                 _wg_dag_venster(tuin, date.fromisoformat(geklikt.split(":", 2)[2]), d["gift"], d["kwaliteit"],
                                 info["vakken"], d["beurten"])
+            elif soort == "p":
+                _tl_pats_venster(tuin, int(nummer), date.fromisoformat(geklikt.split(":", 2)[2]))
             elif soort == "n":
                 vak, zondag = nummer, date.fromisoformat(geklikt.split(":", 2)[2])
                 _tl_nieuw_venster(int(vak), zondag, info, stukken, vandaag)
@@ -2508,6 +2554,33 @@ def _tl_behandeling_venster(info, vak, dag):
     _venster()
 
 
+def _tl_pats_venster(tuin, klasse_id, dag):
+    """Klik op een PATS-telling: per vangplaat (Trap-Eye) of sensor (PATS-C) het aantal nieuwe van die dag."""
+    insect = pats_logic.INSECTEN.get(klasse_id, str(klasse_id))
+
+    @st.dialog(f"{insect} · {tuin['naam']} · {DAGEN_KORT_WG[dag.weekday()]} {format_datum(dag)}", width="large")
+    def _venster():
+        regels = [t for t in _pats_tellingen(tuin["id"], dag, dag) if t["klasse_id"] == klasse_id]
+        if not regels:
+            st.caption("Geen telling op deze dag.")
+            return
+        regels.sort(key=lambda t: (-(t["nieuw"] or 0), t["apparaat"], t["rij"], t["paal"]))
+        toon_kengetallen([
+            {"label": "Nieuw", "waarde": fmt_kort(sum(t["nieuw"] or 0 for t in regels), 1),
+             "help": "Nieuwe insecten op deze dag, alle vangplaten of sensoren van de tuin samen."},
+            {"label": "Met vangst", "waarde": f"{sum(1 for t in regels if t['nieuw'])} van {len(regels)}"},
+        ])
+        toon_tabel(pd.DataFrame([{"Apparaat": pats_logic.APPARAAT[t["apparaat"]], "Rij": t["rij"], "Paal": t["paal"],
+                                  "Nieuw": t["nieuw"], "Op de plaat": t["stand"]} for t in regels]), [
+            ("Apparaat", "Apparaat", "tekst", None, "small"), ("Rij", "Rij", "getal", "%d", "small"),
+            ("Paal", "Paal", "getal", "%d", "small"), ("Nieuw", "Nieuw", "getal", "%g", "small"),
+            ("Op de plaat", "Op de plaat", "getal", "%g", "small")], verberg_leeg=True)
+        uitleg_help.voetnoot("Rij en paal zoals bij PATS. Trap-Eye: nieuw sinds de vorige foto, op de plaat = de "
+                             "stand op de vangplaat. PATS-C: van 12 uur deze dag tot 12 uur de volgende dag.")
+
+    _venster()
+
+
 def _tl_legenda(weergave):
     legend.legenda([
         {"label": "lopend (per teelt donker/licht)",
@@ -2530,6 +2603,9 @@ def _tl_legenda(weergave):
                        "stijl": f"height:0.3rem;background:{TL_WATER_LICHT};" if weergave == "Bespuitingen"
                        else ""}],
                    titel="Bespuitingen (▼) en watergift:")
+    if weergave == "Bespuitingen":
+        legend.legenda([{"kleur": TL_PATS, "label": "aantal nieuw (PATS, hele tuin)"},
+                        {"kleur": TL_PATS_NUL, "label": "telling 0"}], titel="Insecten:")
 
 
 # --- TUINVERGELIJKING: wat er in een periode in de kas gebeurde, per m² ---

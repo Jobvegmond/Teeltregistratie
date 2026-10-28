@@ -3,6 +3,21 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.22.0] - 2026-10-27
+
+### Toegevoegd
+- **Insectentellingen van PATS in het Overzicht** (weergave *Bespuitingen*): bovenaan per insect een regel met het
+  aantal nieuw gevangen insecten van de hele tuin per dag, naast de bespuitingen. Trips, witte vlieg en
+  mineervlieg van de Trap-Eyes (camera boven de vangplaat, ± 3 foto's per week, alleen tuin 3); Duponchelia en
+  turkse mot van de PATS-C (insectensensor, per dag van 12 tot 12 uur, beide tuinen). Een 0 staat in grijs. Klik
+  op een getal voor de telling per vangplaat of sensor (rij en paal zoals bij PATS) en de stand op de plaat.
+- `pats_import.py`: haalt elk uur (via `priva_bestanden.py`) de tellingen van de laatste 14 dagen op bij de
+  PATS-API (v2, nu nog op de testserver beta.pats-c.com; `config.PATS_SERVER`) en zet ze in de nieuwe tabel
+  `pats_telling`. Section "20" = tuin 3, "29" = tuin 1 (`config.PATS_SECTIONS`). Inloggen met PATS_USER en
+  PATS_PASSW (in .env.taak); zonder die gegevens doet het script niets. Alleen lezen bij PATS.
+- `integrations/pats.py` (de koppeling), `logic/pats.py` (rekenwerk, tests in `tests/test_pats.py`) en
+  `pats_proef.py` (alles van PATS tonen, zonder op te slaan).
+
 ## [2.21.1] - 2026-10-24
 
 ### Opgelost
