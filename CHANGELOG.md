@@ -3,6 +3,19 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.24.1] - 2026-10-28
+
+### Gecorrigeerd
+- **Warmte tuin 1 per dag uit Priva's eigen dagwaarde**: scherm M302.1 "warmte gisteren", regel W.WISSELAAR
+  (gemiddeld kW × 24 uur; `logic.warmtewisselaar.gisteren_kw`, test). Gelijk aan de Energie-export
+  (Ave_24h_HXCapacity; Sum_24h_HXEnergy ± 1 %). De schatting uit het vermogen (M340.0 × tijd, 2.20.0) zat er
+  10 % of meer naast: de poller las dat scherm tot vandaag maar elke ± 15 minuten, terwijl de
+  warmtewisselaar steeds aan- en afslaat. Die blijft alleen als terugval. De dagwaarde gaat ook voor wat er
+  al stond, zodat 22–27 oktober goed komen.
+- De regelaar van tuin 1 is niet mee naar wintertijd gegaan: sinds 25-10 wisselt zijn dag om 23:00. Een
+  dagwaarde die tussen 22:00 en 3:00 binnenkomt, hoort bij de dag van 3 uur eerder. In de Energie-export
+  staat bij 25-10 de waarde van 26-10 (Priva Office verschuift die dag); de dagwaarde zet dat recht.
+
 ## [2.24.0] - 2026-10-28
 
 ### Gewijzigd

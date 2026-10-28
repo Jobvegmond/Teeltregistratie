@@ -2,12 +2,15 @@
 Warmte en gas per dag uit de pulsmeters in de Priva-bestanden op de NAS (map Priva). Welke pulsmeter
 wat meet staat per tuin in config.PRIVA_BESTANDEN: tuin 3 pulsmeter 2 = warmte (GJ, opgeslagen in MJ in
 energiedata_dag) en pulsmeter 1 = gas (m³, gasdata_dag); tuin 1 alleen pulsmeter 1 = gas (de warmte komt
-daar van de warmtewisselaar: het gerealiseerde vermogen (scherm M340.0, kW) maal de tijd, uit
-overig-<datum>.jsonl; logic/warmtewisselaar.py). Het rekenwerk staat in logic/pulsmeters.py.
+daar van de warmtewisselaar: Priva's dagwaarde "warmte gisteren" (scherm M302.1, gemiddeld kW × 24 uur), anders
+het gerealiseerde vermogen (scherm M340.0, kW) maal de tijd, uit overig-<datum>.jsonl;
+logic/warmtewisselaar.py). Het rekenwerk staat in logic/pulsmeters.py.
 
 Standaard vult het alleen dagen aan die nog niet in de database staan: cijfers uit de
-energie-export van Priva (handmatig ingelezen) blijven staan. Met --overschrijven gaan ook
-bestaande dagen over. Een dag wordt alleen opgeslagen als hij voorbij en helemaal gedekt is.
+energie-export van Priva (handmatig ingelezen) blijven staan. Uitzondering: de dagwaarde "warmte gisteren"
+van tuin 1 gaat altijd voor (hetzelfde als de export, die alleen de dag van de wintertijd verschuift). Met
+--overschrijven gaan ook bestaande dagen over. Een dag wordt alleen opgeslagen als hij voorbij en helemaal
+gedekt is.
 
 Gebruik:
     python priva_pulsmeters.py                      # tuin 3, laatste 14 dagen, naar DATABASE_URL
@@ -116,20 +119,32 @@ def main():
 
     with database.get_connection() as conn:
         c = conn.cursor()
-        c.execute("SELECT datum FROM energiedata_dag WHERE tuin_id = %s", (tuin["id"],))
-        al_warmte = {r[0] for r in c.fetchall()}
+        c.execute("SELECT datum, warmte_mj_totaal FROM energiedata_dag WHERE tuin_id = %s", (tuin["id"],))
+        al_warmte = {r[0]: r[1] for r in c.fetchall()}
         c.execute("SELECT datum FROM gasdata_dag WHERE tuin_id = %s", (tuin["id"],))
         al_gas = {r[0] for r in c.fetchall()}
 
-    # Tuin 1: de warmte per dag uit het vermogen van de warmtewisselaar (alleen dagen die er nog niet staan; de
-    # dagbestanden zijn groot).
-    warmte_ww = {}
+    # Tuin 1: de warmte per dag van de warmtewisselaar. Eerst Priva's eigen dagwaarde (scherm "warmte gisteren",
+    # gemiddeld kW × 24 uur); die gaat ook voor wat er al staat (de Energie-export geeft hetzelfde, behalve op de
+    # dag van de wintertijd, en de oude schatting uit het vermogen zat ernaast). Valt die weg, dan het vermogen
+    # maal de tijd (alleen dagen die er nog niet staan; de dagbestanden zijn groot).
+    warmte_ww, priva_dag = {}, set()
     if vermogen:
         from logic import warmtewisselaar as ww
+        bestanden = []
         for pad in sorted(live.glob("overig-*.jsonl")):
             gevonden = re.search(r"(\d{4}-\d{2}-\d{2})", pad.name)
             dag_bestand = date.fromisoformat(gevonden.group(1)) if gevonden else None
-            if not dag_bestand or not vanaf <= dag_bestand <= tot or (
+            if dag_bestand and vanaf <= dag_bestand <= tot + timedelta(days=1):
+                bestanden.append((dag_bestand, pad))
+        for _, pad in bestanden:
+            with open(pad, encoding="utf-8") as f:
+                for dag_ww, kw in ww.gisteren_kw(f).items():
+                    if vanaf <= dag_ww <= tot:
+                        warmte_ww[dag_ww] = kw * 24 * 3.6 / 1000        # gem. kW × 24 u = kWh → GJ
+                        priva_dag.add(dag_ww)
+        for dag_bestand, pad in bestanden:
+            if dag_bestand > tot or dag_bestand in priva_dag or (
                     str(dag_bestand) in al_warmte and not args.overschrijven):
                 continue
             with open(pad, encoding="utf-8") as f:
@@ -145,7 +160,8 @@ def main():
         else:
             warmte_gj = warmte_ww.get(dag) if vermogen else None
         gas_m3 = per_meter[meter_van["gas"]][0].get(dag) if "gas" in meter_van else None
-        nieuw_w = warmte_gj is not None and (args.overschrijven or str(dag) not in al_warmte)
+        nieuw_w = warmte_gj is not None and (args.overschrijven or str(dag) not in al_warmte or (
+            dag in priva_dag and round(warmte_gj * GJ_NAAR_MJ, 1) != al_warmte[str(dag)]))
         nieuw_g = gas_m3 is not None and (args.overschrijven or str(dag) not in al_gas)
         # Onvolledig = een meter van deze tuin heeft die dag geen volledige reeks.
         onvolledig = (met_warmte and warmte_gj is None and not (vermogen and str(dag) in al_warmte)) or (
