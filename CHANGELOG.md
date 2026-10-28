@@ -3,6 +3,12 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.22.1] - 2026-10-28
+
+### Gewijzigd
+- `pats_import.py`: staan er van een tuin nog geen PATS-tellingen in de database, dan haalt het de eerste keer
+  60 dagen op in plaats van 14 (zo staat online meteen een flink stuk historie).
+
 ## [2.22.0] - 2026-10-27
 
 ### Toegevoegd

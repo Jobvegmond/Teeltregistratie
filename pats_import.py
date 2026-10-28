@@ -9,6 +9,7 @@ Gebruik:
     python pats_import.py --droog              # alleen tonen, niets opslaan
     python pats_import.py --doel productie     # naar DATABASE_URL_PRODUCTIE
 
+Staan er van een tuin nog geen tellingen in de database, dan haalt het de eerste keer EERSTE_KEER (60) dagen op.
 Draait elk uur via priva_bestanden.py. Zonder PATS_USER/PATS_PASSW (in .env.taak): een melding, geen fout.
 Mislukt het ophalen: een foutcode (mail), de database blijft staan.
 """
@@ -16,6 +17,8 @@ import argparse
 import os
 import sys
 from datetime import date, datetime, timedelta, timezone
+
+EERSTE_KEER = 60                        # dagen terug als er van een tuin nog niets in de database staat
 
 
 def lees_argumenten():
@@ -49,8 +52,17 @@ def main():
         print(f"[{stempel}] Geen PATS_USER/PATS_PASSW; niets gedaan.")
         return
     tot = date.today()
-    van = tot - timedelta(days=args.dagen)
     tuinen = {t["nummer"]: t["id"] for t in database.get_tuinen()}
+    if args.droog:
+        try:
+            al = database.pats_tuinen_met_tellingen()
+        except Exception:               # de tabel bestaat nog niet
+            al = set()
+    else:
+        database.init_db()              # de tabel pats_telling (2.22.0)
+        al = database.pats_tuinen_met_tellingen()
+    van = {tuin: tot - timedelta(days=args.dagen if tuinen[tuin] in al else max(args.dagen, EERSTE_KEER))
+           for tuin in PATS_SECTIONS.values()}
     try:
         api = koppeling.Pats(*login)
         sections = {s["id"]: s for s in api.sections()}
@@ -61,19 +73,19 @@ def main():
                 print(f"[{stempel}] Section {section_id} (tuin {tuin}) niet gevonden bij PATS.", file=sys.stderr)
                 continue
             klassen = {k["id"]: k.get("label") for k in s.get("detection_classes") or []}
-            alle += lp.regels(api.counts(section_id, van, tot), klassen, tuinen[tuin], section_id)
+            alle += lp.regels(api.counts(section_id, van[tuin], tot), klassen, tuinen[tuin], section_id)
     except Exception as fout:           # netwerk, verlopen toegang: melden, de database blijft staan
         print(f"[{stempel}] FOUT bij ophalen uit PATS: {fout}", file=sys.stderr)
         sys.exit(1)
     per_tuin = {}
     for r in alle:
         per_tuin[r["tuin_id"]] = per_tuin.get(r["tuin_id"], 0) + 1
-    samenvatting = (f"{len(alle)} tellingen {van:%d-%m-%y} t/m {tot:%d-%m-%y} ("
-                    + ", ".join(f"tuin {nr}: {per_tuin.get(tid, 0)}" for nr, tid in sorted(tuinen.items())) + ")")
+    samenvatting = (f"{len(alle)} tellingen t/m {tot:%d-%m-%y} ("
+                    + ", ".join(f"tuin {nr}: {per_tuin.get(tuinen[nr], 0)} vanaf {v:%d-%m-%y}"
+                                for nr, v in sorted(van.items())) + ")")
     if args.droog:
         print(f"[{stempel}] DROOG, niets opgeslagen; zou opslaan: {samenvatting}")
         return
-    database.init_db()                  # de tabel pats_telling (2.22.0)
     database.upsert_pats_tellingen(alle)
     print(f"[{stempel}] {samenvatting}")
 

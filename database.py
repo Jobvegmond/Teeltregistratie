@@ -1579,6 +1579,14 @@ def upsert_pats_tellingen(regels):
         conn.commit()
 
 
+def pats_tuinen_met_tellingen():
+    """De tuin_ids waarvan al PATS-tellingen in de database staan."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT DISTINCT tuin_id FROM pats_telling")
+        return {r[0] for r in cursor.fetchall()}
+
+
 def get_pats_tellingen(tuin_id, van, tot):
     """PATS-tellingen van een tuin over van..tot als dicts (datum als date), op apparaat, rij, paal en datum."""
     with get_connection() as conn:
