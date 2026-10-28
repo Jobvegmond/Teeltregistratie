@@ -40,5 +40,19 @@ class TestDagKwh(unittest.TestCase):
         self.assertAlmostEqual(kwh, 2500.0, places=3)
 
 
+class TestGisteren(unittest.TestCase):
+    def test_dagwaarde_bij_de_afgelopen_dag_ook_na_wintertijd(self):
+        G = ww.GISTEREN
+        # Zoals in de bestanden van tuin 1 rond 25-10-2026: de regelaar blijft op zomertijd, dus na de
+        # wintertijd komt de nieuwe waarde om ± 23:00 binnen in plaats van om 0:10.
+        regels = [regel("2026-10-25T00:00:03+02:00", {G: 245}, "basis"),          # oude stand: niet gebruiken
+                  regel("2026-10-25T00:13:34+02:00", {G: 276}),                   # 24-10
+                  regel("2026-10-25T12:00:00+01:00", {G: 999}),                   # niet rond de daggrens
+                  regel("2026-10-25T23:15:29+01:00", {G: 133}),                   # 25-10
+                  regel("2026-10-26T23:02:17+01:00", {G: 223})]                   # 26-10
+        self.assertEqual(ww.gisteren_kw(regels), {date(2026, 10, 24): 276.0, date(2026, 10, 25): 133.0,
+                                                  date(2026, 10, 26): 223.0})
+
+
 if __name__ == "__main__":
     unittest.main()

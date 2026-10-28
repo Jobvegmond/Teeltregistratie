@@ -4,6 +4,9 @@ in de database, voor elke tuin die een Priva-site heeft. Bedoeld om periodiek
 (bijv. drie keer per dag) te draaien, als vervanger van handmatig op de knop in
 de app drukken.
 
+Het klimaat per dag komt sinds 2.24.0 uit de Priva-bestanden (priva_klimaat.py, bron 'bestanden'); deze
+taak overschrijft die dagen niet en vult alleen aan waar de bestanden een gat hebben.
+
 Gebruik:
     python priva_ophalen.py                  # naar de database uit DATABASE_URL
     python priva_ophalen.py --doel productie # naar DATABASE_URL_PRODUCTIE

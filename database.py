@@ -262,6 +262,9 @@ def init_db():
         cursor.execute("ALTER TABLE klimaatdata_dag ADD COLUMN IF NOT EXISTS gem_temperatuur_nacht REAL")
         cursor.execute("ALTER TABLE klimaatdata_dag ADD COLUMN IF NOT EXISTS gem_rv_dag REAL")
         cursor.execute("ALTER TABLE klimaatdata_dag ADD COLUMN IF NOT EXISTS gem_rv_nacht REAL")
+        # Waar een dag vandaan komt: 'csv' (upload), 'api' (Priva-API) of 'bestanden' (Priva-bestanden op de
+        # NAS, priva_klimaat.py). Leeg = van vóór deze kolom (CSV of API).
+        cursor.execute("ALTER TABLE klimaatdata_dag ADD COLUMN IF NOT EXISTS bron TEXT")
 
         # Watergift per vak per dag (liter/m²), opgehaald uit Priva
         # (KRAAN.VERBRUIKM2). Per vak i.p.v. per afdeling, want de kranen in
@@ -1249,15 +1252,15 @@ def afdeling_van_vaknummer(vaknummer):
 
 def upsert_klimaatdata_dag(afdeling, datum, gem_temperatuur, gem_rv, stralingssom_dag,
                             gem_temperatuur_dag=None, gem_temperatuur_nacht=None,
-                            gem_rv_dag=None, gem_rv_nacht=None, tuin_id=None):
+                            gem_rv_dag=None, gem_rv_nacht=None, tuin_id=None, bron=None):
     """Slaat één afdeling-dag klimaatgegevens op (of overschrijft de bestaande dag bij een herupload)."""
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
             INSERT INTO klimaatdata_dag
                 (tuin_id, afdeling, datum, gem_temperatuur, gem_rv, stralingssom_dag,
-                 gem_temperatuur_dag, gem_temperatuur_nacht, gem_rv_dag, gem_rv_nacht)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                 gem_temperatuur_dag, gem_temperatuur_nacht, gem_rv_dag, gem_rv_nacht, bron)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (tuin_id, afdeling, datum)
             DO UPDATE SET gem_temperatuur = EXCLUDED.gem_temperatuur,
                           gem_rv = EXCLUDED.gem_rv,
@@ -1265,12 +1268,51 @@ def upsert_klimaatdata_dag(afdeling, datum, gem_temperatuur, gem_rv, stralingsso
                           gem_temperatuur_dag = EXCLUDED.gem_temperatuur_dag,
                           gem_temperatuur_nacht = EXCLUDED.gem_temperatuur_nacht,
                           gem_rv_dag = EXCLUDED.gem_rv_dag,
-                          gem_rv_nacht = EXCLUDED.gem_rv_nacht
+                          gem_rv_nacht = EXCLUDED.gem_rv_nacht,
+                          bron = EXCLUDED.bron
         """, (
             _tuin_of_standaard(tuin_id), afdeling, str(datum), gem_temperatuur, gem_rv,
-            stralingssom_dag, gem_temperatuur_dag, gem_temperatuur_nacht, gem_rv_dag, gem_rv_nacht,
+            stralingssom_dag, gem_temperatuur_dag, gem_temperatuur_nacht, gem_rv_dag, gem_rv_nacht, bron,
         ))
         conn.commit()
+
+
+KLIMAAT_DAG_VELDEN = ("gem_temperatuur", "gem_rv", "gem_temperatuur_dag", "gem_temperatuur_nacht", "gem_rv_dag",
+                      "gem_rv_nacht", "stralingssom_dag")
+
+
+def upsert_klimaatdata_bestanden(rijen, tuin_id):
+    """
+    Klimaat per dag uit de Priva-bestanden (logic.klimaat_dag.dagwaarden) in één keer opslaan, met bron
+    'bestanden'. Een waarde die (nog) leeg is, laat staan wat er al stond (bijv. de nacht van gisteren tot
+    zonsopkomst). Geeft het aantal afdeling-dagen.
+    """
+    from psycopg2.extras import execute_values
+    waarden = [(tuin_id, r["afdeling"], str(r["datum"]), *(r.get(v) for v in KLIMAAT_DAG_VELDEN)) for r in rijen]
+    if not waarden:
+        return 0
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        execute_values(cursor, f"""
+            INSERT INTO klimaatdata_dag (tuin_id, afdeling, datum, {", ".join(KLIMAAT_DAG_VELDEN)}, bron)
+            VALUES %s
+            ON CONFLICT (tuin_id, afdeling, datum) DO UPDATE SET
+            {", ".join(f"{v} = COALESCE(EXCLUDED.{v}, klimaatdata_dag.{v})" for v in KLIMAAT_DAG_VELDEN)},
+            bron = EXCLUDED.bron""", waarden,
+                       template="(" + ", ".join(["%s"] * (len(KLIMAAT_DAG_VELDEN) + 3)) + ", 'bestanden')")
+        conn.commit()
+    return len(waarden)
+
+
+def get_klimaatdata_dagen(tuin_id, van, tot):
+    """{(afdeling, datum): {veld: waarde, "bron": …}} van een tuin, van `van` t/m `tot` (ter vergelijking)."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(f"""
+            SELECT afdeling, datum, {", ".join(KLIMAAT_DAG_VELDEN)}, bron FROM klimaatdata_dag
+            WHERE tuin_id = %s AND datum BETWEEN %s AND %s""", (tuin_id, str(van), str(tot)))
+        return {(r[0], date.fromisoformat(str(r[1]))): dict(zip(KLIMAAT_DAG_VELDEN + ("bron",), r[2:]))
+                for r in cursor.fetchall()}
 
 
 def verwerk_klimaat_csv(bestand, gebruiker=None, tuin_id=None):
@@ -1326,7 +1368,7 @@ def verwerk_klimaat_csv(bestand, gebruiker=None, tuin_id=None):
             gem_temperatuur_nacht=_eerste_waarde(groep, KLIMAAT_TEMP_NACHT_LABEL),
             gem_rv_dag=_eerste_waarde(groep, KLIMAAT_RV_DAG_LABEL),
             gem_rv_nacht=_eerste_waarde(groep, KLIMAAT_RV_NACHT_LABEL),
-            tuin_id=tuin_id,
+            tuin_id=tuin_id, bron="csv",
         )
         verwerkt += 1
 
@@ -1366,14 +1408,20 @@ def importeer_klimaat_uit_priva(dagen_terug=4, gebruiker=None, tuin_id=None):
     geschreven/overschreven.
 
     Geeft (aantal geschreven afdeling-dagen, aantal overgeslagen) terug.
-    Overgeslagen = dagen die nog niet compleet in het verleden liggen.
+    Overgeslagen = dagen die nog niet compleet in het verleden liggen, en dagen die al uit de
+    Priva-bestanden komen (bron 'bestanden', priva_klimaat.py): die gaan voor, de API vult alleen aan.
     """
     rijen = priva_client_voor_tuin(tuin_id).haal_etmaal_dagwaarden(dagen_terug)
+    uit_bestanden = set()
+    if rijen:
+        uit_bestanden = {sleutel for sleutel, w in get_klimaatdata_dagen(
+            _tuin_of_standaard(tuin_id), min(r["datum"] for r in rijen), max(r["datum"] for r in rijen)).items()
+            if w["bron"] == "bestanden"}
 
     verwerkt = 0
     overgeslagen = 0
     for rij in rijen:
-        if rij["datum"] >= date.today():
+        if rij["datum"] >= date.today() or (rij["afdeling"], rij["datum"]) in uit_bestanden:
             overgeslagen += 1
             continue
         upsert_klimaatdata_dag(
@@ -1383,7 +1431,7 @@ def importeer_klimaat_uit_priva(dagen_terug=4, gebruiker=None, tuin_id=None):
             gem_temperatuur_nacht=rij.get("gem_temperatuur_nacht"),
             gem_rv_dag=rij.get("gem_rv_dag"),
             gem_rv_nacht=rij.get("gem_rv_nacht"),
-            tuin_id=tuin_id,
+            tuin_id=tuin_id, bron="api",
         )
         verwerkt += 1
 
