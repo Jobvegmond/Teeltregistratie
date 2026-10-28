@@ -3046,9 +3046,10 @@ def _pagina_tuin():
                "geplante vakken, de watergift en de opmerkingen van de periode.",
                "**Tuin 1 / Tuin 3**: een klik op een regel bij *Wat er gebeurde* opent het vak. In de grafieken: beweeg over een tijdstip voor "
                "alle afdelingen tegelijk."],
-        bron="Klimaat per dag, watergift en energie uit Priva. Klimaat per uur uit de Priva-bestanden op de NAS, elk "
+        bron="Watergift en energie uit Priva. Klimaat per uur en per dag uit de Priva-bestanden op de NAS, elk "
              "uur bijgewerkt: het gemiddelde van de minuten (tuin 3 vóór 7 oktober 2026 de waarde op het hele uur; "
-             "tuin 1 sinds 21 oktober 2026). "
+             "tuin 1 sinds 21 oktober 2026). Per dag: dag = zonsopkomst tot zonsondergang, nacht = tot de "
+             "volgende ochtend (pas na zonsopkomst compleet); oudere dagen uit de Priva-API of de CSV-export. "
              "Geplant, Florgib, geoogst en opmerkingen uit de registratie; geoogste stelen = emmers × 100.",
         kleuren="Groen/rood pijltje = beter/slechter dan de vergelijking; lichtgroen vak = de beste tuin (Beide); "
                 "⚠ = niet alle dagen, uren of vakken met data. Grafieken: vaste kleur per afdeling, grijs gestippeld "
@@ -5232,7 +5233,8 @@ def pagina_meer():
             "lezen; aanpassen gaat via Registreren of de pagina's. Export naar Excel of CSV (puntkomma, "
             "decimale komma)."],
         bron="Import: dagexport van de klimaatcomputer en de energie-export uit Priva; de Priva-API wordt elke "
-             "ochtend automatisch opgehaald. Prognosekwaliteit: elke dag legt de app per lopend vak de "
+             "ochtend automatisch opgehaald (het klimaat per dag komt uit de Priva-bestanden; de API vult daar "
+             "alleen gaten aan).Prognosekwaliteit: elke dag legt de app per lopend vak de "
              "oogstprognose vast; na de oogst wordt die vergeleken met de dag waarop de helft van de emmers "
              "binnen was (zonder emmers de oogstdatum).",
     )

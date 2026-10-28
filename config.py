@@ -75,6 +75,9 @@ PRIVA_BESTANDEN = {
     1: {"pcu": "Matricaria25", "live": "bron historie/Tuin 1/live", "historie": "bron historie/Tuin 1/historie",
         "meters": {1: "gas"}, "warmte_vermogen": "M340.0N1R11.1V1"},
 }
+# Ligging van de kwekerij (breedte, lengte in graden), voor zonsopkomst en -ondergang: die scheiden dag en nacht
+# in het klimaat per dag (logic/klimaat_dag.py), net als bij de Priva-API.
+LIGGING = (52.011, 4.535)
 
 # --- PATS (vangplaten en insectensensoren) ---
 # Per PATS-section het tuinnummer (pats_import.py). Section "20" = tuin 3 (Trap-Eyes en PATS-C), "29" = tuin 1
@@ -91,4 +94,4 @@ PATS_SERVER = "beta"
 # --- VERSIE ---
 # Staat rechtsboven in de app. Ophogen bij elke wijziging op main (zie CHANGELOG.md):
 # derde getal bij een correctie, tweede bij iets nieuws, eerste bij een grote omzetting.
-APP_VERSIE = "2.23.0"
+APP_VERSIE = "2.24.0"

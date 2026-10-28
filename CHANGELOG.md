@@ -3,6 +3,24 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.24.0] - 2026-10-28
+
+### Gewijzigd
+- **Klimaat per dag uit de Priva-bestanden** in plaats van de Priva-API (eerste stap om van de API af te
+  komen; het teeltmodel rekent hiermee). `priva_klimaat.py` berekent elk uur, na het klimaat per uur, per
+  afdeling het etmaal, de dag, de nacht, de RV's en de lichtsom (`logic/klimaat_dag.py`, tests):
+  - etmaal = 0–24 uur; dag = zonsopkomst tot zonsondergang (uitgerekend voor de ligging, `config.LIGGING`);
+    nacht = zonsondergang tot zonsopkomst de volgende ochtend, bij de dag waarop hij begint. Zo deed de API
+    het ook. De regelaar zelf (scherm M101.0/M101.1) wisselt een paar minuten na zonsopkomst naar dag en
+    ± 15 min vóór zonsondergang al naar nacht; dat geeft overdag tot 0,1 °C verschil, daarom de zon zelf;
+  - temperatuur en RV uit de minuten (`historie-<datum>.jsonl`), de lichtsom uit de berekende straling in de
+    afdeling (`alles-<datum>.jsonl`, hetzelfde punt als de API) opgeteld over de dag;
+  - vergeleken met de API over 14–27 oktober (beide tuinen): temperatuur meestal ± 0,01 °C, RV ± 0,1 %,
+    lichtsom ± 1 J/cm². Rond de wintertijd tot 0,1 °C: de poller schreef het tweede uur van 2 tot 3 niet;
+  - alleen complete dagen (geen gat van meer dan een uur); de nacht van gisteren komt erbij na zonsopkomst.
+- `klimaatdata_dag` heeft een kolom `bron` ('csv', 'api', 'bestanden'). De API (`priva_ophalen.py`, knop op
+  Meer) overschrijft dagen uit de bestanden niet meer en vult alleen gaten aan.
+
 ## [2.23.0] - 2026-10-28
 
 ### Toegevoegd
