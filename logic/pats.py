@@ -9,11 +9,17 @@ Alleen rekenwerk; pats_import.py haalt op en slaat op. Tests in tests/test_pats.
 """
 from datetime import date
 
-# De insecten in de tijdlijn, in deze volgorde (klasse-id bij PATS → naam). Anomalies (63) en No size (64)
+# De namen van de insecten (klasse-id bij PATS → naam). Alles wordt opgeslagen; Anomalies (63) en No size (64)
 # zijn geen insecten en worden niet opgeslagen.
 INSECTEN = {28: "Trips", 24: "Witte vlieg", 27: "Mineervlieg", 2: "Duponchelia", 1: "Turkse mot"}
+# Wat de tijdlijn toont, in deze volgorde: trips (Trap-Eye) en turkse mot (PATS-C); de rest vindt de teler
+# minder interessant (oktober 2026).
+GETOOND = (28, 1)
 GEEN_INSECT = {63, 64}
 APPARAAT = {"trapeye": "Trap-Eye", "c": "PATS-C"}
+# De insecten van de vangplaten (Trap-Eye) in de regel "plaat" onder elk vak, met hun letter (bij één insect
+# alleen het getal).
+PLAAT_INSECTEN = {28: "T"}
 
 
 def als_datum(tekst):
@@ -61,20 +67,55 @@ def regels(antwoord, klassen, tuin_id, section_id):
                                                r["klasse_id"]))
 
 
+def vakken_van_rij(rij, verschuiving):
+    """De vakken naast een Trap-Eye-rij: verschuiving (a, b) → (rij + a, rij + b); tuin 3: (−1, 0)."""
+    return [rij + d for d in verschuiving]
+
+
+def per_vak(tellingen, verschuiving, vakken):
+    """
+    De nieuwe vangst van de Trap-Eyes per vak en fotodag: een plaat telt voor beide buurvakken.
+    [{vak, datum, nieuw: {klasse_id: n}, platen: [(rij, paal)]}], op vak en datum; alleen PLAAT_INSECTEN, alleen
+    platen met een bekende "nieuw" en alleen vakken uit `vakken`.
+    """
+    per = {}
+    for t in tellingen:
+        if t["apparaat"] != "trapeye" or t["klasse_id"] not in PLAAT_INSECTEN or t["nieuw"] is None:
+            continue
+        for vak in vakken_van_rij(t["rij"], verschuiving):
+            if vak not in vakken:
+                continue
+            d = per.setdefault((vak, t["datum"]), {"nieuw": {k: 0.0 for k in PLAAT_INSECTEN}, "platen": set()})
+            d["nieuw"][t["klasse_id"]] += t["nieuw"]
+            d["platen"].add((t["rij"], t["paal"]))
+    return [{"vak": vak, "datum": dag, "nieuw": d["nieuw"], "platen": sorted(d["platen"])}
+            for (vak, dag), d in sorted(per.items())]
+
+
+def kort(nieuw):
+    """{klasse_id: n} → "T3 M1" (alleen wat er gevangen is; bij één insect alleen "3"), of "0"."""
+    def getal(n):
+        return f"{n:g}".replace(".", ",")
+    if len(PLAAT_INSECTEN) == 1:
+        return getal(sum(nieuw.get(k) or 0 for k in PLAAT_INSECTEN))
+    delen = [f"{letter}{getal(nieuw[k])}" for k, letter in PLAAT_INSECTEN.items() if nieuw.get(k)]
+    return " ".join(delen) or "0"
+
+
 def dagtotalen(tellingen):
     """
-    Per insect (INSECTEN) en dag het totaal nieuw over alle apparaten van de tuin:
-    [{klasse_id, insect, datum, totaal, apparaten, met_vangst}], op insect (volgorde INSECTEN) en datum.
+    Per getoond insect (GETOOND) en dag het totaal nieuw over alle apparaten van de tuin:
+    [{klasse_id, insect, datum, totaal, apparaten, met_vangst}], op insect (volgorde GETOOND) en datum.
     Alleen dagen met een telling (Trap-Eye: een foto; PATS-C: elke dag).
     """
     per = {}
     for t in tellingen:
-        if t["klasse_id"] not in INSECTEN or t["nieuw"] is None:
+        if t["klasse_id"] not in GETOOND or t["nieuw"] is None:
             continue
         d = per.setdefault((t["klasse_id"], t["datum"]), {"totaal": 0.0, "apparaten": 0, "met_vangst": 0})
         d["totaal"] += t["nieuw"]
         d["apparaten"] += 1
         d["met_vangst"] += t["nieuw"] > 0
-    volgorde = list(INSECTEN)
+    volgorde = list(GETOOND)
     return [{"klasse_id": k, "insect": INSECTEN[k], "datum": dag, **d}
             for (k, dag), d in sorted(per.items(), key=lambda x: (volgorde.index(x[0][0]), x[0][1]))]

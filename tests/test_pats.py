@@ -38,13 +38,27 @@ class TestPats(unittest.TestCase):
 
     def test_dagtotalen(self):
         totalen = lp.dagtotalen(lp.regels(ANTWOORD, KLASSEN, 7, 58))
+        # Alleen trips en turkse mot (GETOOND); witte vlieg en Duponchelia niet.
         self.assertEqual([(t["insect"], t["datum"], t["totaal"]) for t in totalen], [
             ("Trips", date(2026, 10, 22), 3.5),                    # 1 + 2,5; op 20-10 geen "nieuw"
-            ("Witte vlieg", date(2026, 10, 22), 0.0),
-            ("Duponchelia", date(2026, 10, 20), 18.0), ("Duponchelia", date(2026, 10, 21), 10.0),
             ("Turkse mot", date(2026, 10, 20), 1.0), ("Turkse mot", date(2026, 10, 21), 0.0)])
         trips = totalen[0]
         self.assertEqual((trips["apparaten"], trips["met_vangst"]), (2, 2))
+
+    def test_per_vak_beide_buurvakken(self):
+        regels = lp.regels(ANTWOORD, KLASSEN, 7, 58)
+        uit = lp.per_vak(regels, (-1, 0), set(range(1, 40)))
+        # Rij 2 → vak 1 en 2, rij 6 → vak 5 en 6; op 20-10 geen "nieuw"; PATS-C telt niet mee.
+        self.assertEqual([(r["vak"], r["datum"]) for r in uit],
+                         [(1, date(2026, 10, 22)), (2, date(2026, 10, 22)), (5, date(2026, 10, 22)),
+                          (6, date(2026, 10, 22))])
+        self.assertEqual(uit[0]["nieuw"], {28: 1.0})
+        self.assertEqual(uit[0]["platen"], [(2, 3)])
+        self.assertEqual(lp.kort(uit[0]["nieuw"]), "1")             # alleen trips: alleen het getal
+        self.assertEqual(lp.kort(uit[2]["nieuw"]), "2,5")
+        self.assertEqual(lp.kort({28: 0.0}), "0")
+        # Een vak dat niet bestaat (rij 2 → vak 1 en 2, alleen vak 2 gevraagd).
+        self.assertEqual({r["vak"] for r in lp.per_vak(regels, (-1, 0), {2})}, {2})
 
 
 if __name__ == "__main__":

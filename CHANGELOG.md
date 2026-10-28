@@ -3,6 +3,25 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.23.0] - 2026-10-28
+
+### Toegevoegd
+- **Overzicht: weergave Waarnemingen** (naast Standaard, Bespuitingen en Watergift):
+  - bovenaan de PATS-tellingen van de hele tuin (verhuisd van Bespuitingen), alleen nog **trips** (Trap-Eye) en
+    **turkse mot** (PATS-C): de rest vindt de teler minder interessant (`logic.pats.GETOOND`; alles wordt wel
+    opgeslagen);
+  - onder elk vak een regel *plaat*: de nieuwe trips op de Trap-Eye(s) naast dat vak. Een plaat hangt tussen
+    twee vakken en telt voor allebei: rij r bij PATS = tussen vak r − 1
+    en r (`config.PATS_TRAPEYE_VAKKEN`, nu alleen tuin 3; tuin 1 krijgt de Trap-Eyes later). Klik voor de
+    telling per plaat (nieuw en de stand op de plaat);
+  - de gewasmetingen in de balk: de lengte bij de Florgib en de eindmeting (lengte · gewicht · rijpheid) op de
+    dag dat ze geregistreerd is (uit het wijzigingenlog, anders de eerste emmers); klik voor het vak;
+  - de bespuitingen als kleine driehoekjes, geen watergift.
+- `logic/pats.py`: `per_vak` en `kort` (tests); `database.get_gewasmetingen`.
+
+### Gewijzigd
+- Bespuitingen toont geen insectentellingen meer (die staan nu bij Waarnemingen).
+
 ## [2.22.1] - 2026-10-28
 
 ### Gewijzigd
