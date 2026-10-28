@@ -76,7 +76,14 @@ PRIVA_BESTANDEN = {
         "meters": {1: "gas"}, "warmte_vermogen": "M340.0N1R11.1V1"},
 }
 
+# --- PATS (vangplaten en insectensensoren) ---
+# Per PATS-section het tuinnummer (pats_import.py). Section "20" = tuin 3 (Trap-Eyes en PATS-C), "29" = tuin 1
+# (alleen PATS-C). De server: "beta" zolang API v2 nog niet op pats-c.com staat, daarna "productie"
+# (of PATS_SERVER in de omgeving).
+PATS_SECTIONS = {58: 3, 869: 1}
+PATS_SERVER = "beta"
+
 # --- VERSIE ---
 # Staat rechtsboven in de app. Ophogen bij elke wijziging op main (zie CHANGELOG.md):
 # derde getal bij een correctie, tweede bij iets nieuws, eerste bij een grote omzetting.
-APP_VERSIE = "2.21.1"
+APP_VERSIE = "2.22.0"

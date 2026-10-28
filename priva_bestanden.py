@@ -1,7 +1,8 @@
 """
 Alle imports uit de bestanden op de NAS achter elkaar: uit de Priva-bestanden de pulsmeters (warmte en gas),
 de watergift en het klimaat per uur, voor elke tuin in config.PRIVA_BESTANDEN (tuin 3 en tuin 1), en de behandelingen uit de Agro4all-export en de historie uit de
-klimaatregistratie (klimaatregistratie-tuin*.json in de map agro4all). Eén taak in de Synology
+klimaatregistratie (klimaatregistratie-tuin*.json in de map agro4all) en de vangplaattellingen van PATS
+(pats_import.py, via internet). Eén taak in de Synology
 Taakplanner hoeft zo niet bij elke nieuwe import aangepast te worden.
 
 Elk script draait los; gaat er één mis, dan draaien de andere toch en sluit dit af met een foutcode
@@ -22,7 +23,7 @@ from pathlib import Path
 # Eerst de Priva-scripts, per tuin. Agro4all vóór de klimaatregistratie: die laatste neemt alleen de dagen
 # vóór de eerste Agro4all-behandeling. Het rapport "Teelt afgerond" als laatste, met alle data van dit uur erin.
 PRIVA_SCRIPTS = ("priva_pulsmeters.py", "priva_watergift.py", "priva_klimaat.py")
-SCRIPTS = ("agro4all_import.py", "klimaatregistratie_import.py", "teelt_rapport.py")
+SCRIPTS = ("agro4all_import.py", "klimaatregistratie_import.py", "pats_import.py", "teelt_rapport.py")
 
 
 def main():

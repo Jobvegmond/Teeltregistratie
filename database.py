@@ -595,6 +595,8 @@ def init_db():
         # Klimaat en meteo per uur uit de Priva-bestanden op de NAS (priva_klimaat.py, sinds 2.11.0).
         cursor.execute(KLIMAAT_UUR_TABEL)
         cursor.execute(METEO_UUR_TABEL)
+        # Vangplaat- en insectentellingen van PATS (pats_import.py, sinds 2.22.0).
+        cursor.execute(PATS_TELLING_TABEL)
         # Welke rapporten "Teelt afgerond" al gemaild zijn (teelt_rapport.py, sinds 2.16.0).
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS teelt_rapport (
@@ -1534,6 +1536,59 @@ def upsert_watergift_dag_bestand(vaknummer, datum, liter_per_m2, ec, ph, bron, t
         opgeslagen = cursor.rowcount > 0
         conn.commit()
     return opgeslagen
+
+
+PATS_TELLING_TABEL = """
+    CREATE TABLE IF NOT EXISTS pats_telling (
+        id SERIAL PRIMARY KEY,
+        tuin_id INTEGER NOT NULL REFERENCES tuinen (id),
+        section_id INTEGER NOT NULL,
+        apparaat TEXT NOT NULL CHECK (apparaat IN ('trapeye', 'c')),
+        rij INTEGER NOT NULL,
+        paal INTEGER NOT NULL,
+        datum TEXT NOT NULL,
+        klasse_id INTEGER NOT NULL,
+        klasse TEXT,
+        nieuw REAL,
+        stand REAL,
+        UNIQUE (tuin_id, apparaat, rij, paal, datum, klasse_id)
+    )
+"""
+PATS_TELLING_KOLOMMEN = ("tuin_id", "section_id", "apparaat", "rij", "paal", "datum", "klasse_id", "klasse", "nieuw",
+                         "stand")
+
+
+def upsert_pats_tellingen(regels):
+    """
+    Tellingen (logic.pats.regels) opslaan; dezelfde plek, dag en insect wordt overschreven. Een lege waarde
+    overschrijft geen bekende (de eerste Trap-Eye-foto van een opgevraagde periode heeft geen "nieuw").
+    """
+    from psycopg2.extras import execute_values
+    if not regels:
+        return
+    rijen = [tuple(str(r[k]) if k == "datum" else -1 if k in ("rij", "paal") and r[k] is None else r[k]
+                   for k in PATS_TELLING_KOLOMMEN) for r in regels]
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        execute_values(cursor, f"""
+            INSERT INTO pats_telling ({", ".join(PATS_TELLING_KOLOMMEN)}) VALUES %s
+            ON CONFLICT (tuin_id, apparaat, rij, paal, datum, klasse_id) DO UPDATE SET
+                section_id = EXCLUDED.section_id, klasse = EXCLUDED.klasse,
+                nieuw = COALESCE(EXCLUDED.nieuw, pats_telling.nieuw),
+                stand = COALESCE(EXCLUDED.stand, pats_telling.stand)""", rijen, page_size=1000)
+        conn.commit()
+
+
+def get_pats_tellingen(tuin_id, van, tot):
+    """PATS-tellingen van een tuin over van..tot als dicts (datum als date), op apparaat, rij, paal en datum."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(f"""
+            SELECT {", ".join(PATS_TELLING_KOLOMMEN)} FROM pats_telling
+            WHERE tuin_id = %s AND datum BETWEEN %s AND %s
+            ORDER BY apparaat, rij, paal, datum, klasse_id
+        """, (tuin_id, str(van), str(tot)))
+        return [{**dict(zip(PATS_TELLING_KOLOMMEN, r)), "datum": date.fromisoformat(r[5])} for r in cursor.fetchall()]
 
 
 WATER_KWALITEIT_TABEL = """
