@@ -1,0 +1,354 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Status teeltregistratie</title>
+<style>
+/* De pagina van statusmonitor.py: de flowchart met per onderdeel een kleur en het laatste moment, daaronder de
+   details van het gekozen onderdeel en de lijst van alles. Systeemlettertypen, zodat hij ook zonder internet werkt. */
+:root {
+  --bg: #f6f8f6; --surface: #ffffff; --fg: #1b2620; --muted: #5b6b62; --line: #6b7a71; --rule: #d5ddd8;
+  --accent: #2e6a4c;
+  --groen: #2e7d4f; --groen-bg: #e6f3ea;
+  --oranje: #b8650a; --oranje-bg: #fbefdc;
+  --rood: #c0392b; --rood-bg: #fbe5e2;
+  --grijs: #8a958f; --grijs-bg: #eef1ef;
+  --info: #4a6a8a; --info-bg: #e8eef4;
+  --z-nas: #edf1ee; --z-cloud: #e9eff5; --z-laptop: #f5f0e4; --z-stroke: #c9d3cd;
+  --font: "Segoe UI", system-ui, -apple-system, sans-serif;
+  --mono: "Cascadia Mono", Consolas, ui-monospace, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #121815; --surface: #1a221e; --fg: #e3ebe6; --muted: #9aaba1; --line: #8d9c93; --rule: #2e3a34;
+    --accent: #6cc39a;
+    --groen: #5cc28a; --groen-bg: #183126;
+    --oranje: #e6a04a; --oranje-bg: #3a2a14;
+    --rood: #ef6b5c; --rood-bg: #3d1e1a;
+    --grijs: #7d8a83; --grijs-bg: #222a26;
+    --info: #8fb3d6; --info-bg: #1b2733;
+    --z-nas: #18201c; --z-cloud: #172029; --z-laptop: #221f17; --z-stroke: #34423b;
+    color-scheme: dark;
+  }
+}
+body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--font); font-size: 15px; line-height: 1.5; }
+main { max-width: 1320px; margin: 0 auto; padding: 24px 20px 48px; display: grid; gap: 20px; }
+header { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: center; justify-content: space-between; }
+h1 { font-size: 24px; margin: 0; }
+h2 { font-size: 17px; margin: 0; }
+.kop-rechts { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; color: var(--muted); font-size: 14px; }
+button {
+  font: inherit; font-size: 14px; padding: 6px 14px; border-radius: 4px; cursor: pointer;
+  border: 1px solid var(--accent); background: var(--accent); color: var(--surface);
+}
+button:disabled { opacity: .6; cursor: progress; }
+button:focus-visible, .vak:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+.telling { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border-radius: 99px; font-size: 13px;
+  font-weight: 600; border: 1px solid transparent; white-space: nowrap; }
+.chip::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.k-groen { color: var(--groen); background: var(--groen-bg); }
+.k-oranje { color: var(--oranje); background: var(--oranje-bg); }
+.k-rood { color: var(--rood); background: var(--rood-bg); }
+.k-grijs { color: var(--grijs); background: var(--grijs-bg); }
+.k-info { color: var(--info); background: var(--info-bg); }
+
+.melding { padding: 10px 14px; border-radius: 4px; background: var(--rood-bg); color: var(--fg);
+  border-left: 4px solid var(--rood); }
+
+.raster { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 20px; align-items: start; }
+@media (max-width: 1000px) { .raster { grid-template-columns: minmax(0, 1fr); } }
+.doek { background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 10px; overflow-x: auto; }
+.doek svg { display: block; width: 100%; height: auto; min-width: 900px; }
+
+svg text { font-family: var(--font); fill: var(--fg); }
+.zone { stroke: var(--z-stroke); }
+.z-nas { fill: var(--z-nas); } .z-cloud { fill: var(--z-cloud); } .z-laptop { fill: var(--z-laptop); }
+.zlabel { font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; fill: var(--muted); }
+.vak { cursor: pointer; }
+.vak rect { fill: var(--surface); stroke: var(--grijs); stroke-width: 2; }
+.vak[data-kleur="groen"] rect { stroke: var(--groen); fill: var(--groen-bg); }
+.vak[data-kleur="oranje"] rect { stroke: var(--oranje); fill: var(--oranje-bg); stroke-width: 3; }
+.vak[data-kleur="rood"] rect { stroke: var(--rood); fill: var(--rood-bg); stroke-width: 3.5; }
+.vak[data-kleur="grijs"] rect { stroke: var(--grijs); fill: var(--grijs-bg); stroke-dasharray: 4 3; }
+.vak[data-kleur="info"] rect { stroke: var(--info); fill: var(--info-bg); }
+.vak.gekozen rect { stroke-width: 4; }
+.vak:hover rect { filter: brightness(.97); }
+.t { font-size: 13.5px; font-weight: 600; }
+.st { font-size: 12px; fill: var(--muted); font-variant-numeric: tabular-nums; }
+.m { font-family: var(--mono); font-size: 11px; fill: var(--muted); }
+.lijst { font-size: 12px; }
+.stip { fill: var(--grijs); }
+.stip[data-kleur="groen"] { fill: var(--groen); } .stip[data-kleur="oranje"] { fill: var(--oranje); }
+.stip[data-kleur="rood"] { fill: var(--rood); }
+.lijn { fill: none; stroke: var(--line); stroke-width: 1.3; }
+.lijn.kopie { stroke-dasharray: 5 4; }
+.pijlkop { fill: var(--line); }
+.label { font-size: 11px; fill: var(--muted); }
+.label[data-kleur="groen"] { fill: var(--groen); font-weight: 600; }
+.label[data-kleur="oranje"] { fill: var(--oranje); font-weight: 600; }
+.label[data-kleur="rood"] { fill: var(--rood); font-weight: 700; }
+
+aside { background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 16px; display: grid;
+  gap: 10px; min-width: 0; }
+aside ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: 14px; }
+aside li { overflow-wrap: anywhere; }
+.zacht { color: var(--muted); font-size: 14px; }
+
+.tabelvak { background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; min-width: 640px; font-size: 14px; }
+th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th { font-size: 12px; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+tbody tr { cursor: pointer; }
+tbody tr:hover { background: var(--bg); }
+td.tijd { font-variant-numeric: tabular-nums; white-space: nowrap; }
+td.groep { color: var(--muted); }
+.legenda { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 13px; color: var(--muted); align-items: center; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>Status teeltregistratie</h1>
+      <div class="zacht" id="gecontroleerd">Bezig met controleren…</div>
+    </div>
+    <div class="kop-rechts">
+      <div class="telling" id="telling"></div>
+      <button id="nu" type="button">Nu controleren</button>
+    </div>
+  </header>
+
+  <div class="melding" id="melding" hidden></div>
+
+  <div class="raster">
+    <div class="doek">
+      <svg viewBox="0 0 1280 680" role="img" aria-label="Flowchart van de teeltregistratie met per onderdeel de status">
+        <defs>
+          <marker id="pijl" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="pijlkop" d="M0,0 L10,5 L0,10 z"/></marker>
+        </defs>
+
+        <rect class="zone z-laptop" x="16" y="12" width="1248" height="104" rx="10"/>
+        <text class="zlabel" x="30" y="32">Werklaptop · OneDrive</text>
+        <text class="zlabel" x="30" y="152">Bronnen</text>
+        <rect class="zone z-nas" x="270" y="130" width="600" height="536" rx="10"/>
+        <text class="zlabel" x="470" y="152">Synology NAS · kantoor</text>
+        <rect class="zone z-cloud" x="880" y="130" width="190" height="378" rx="10"/>
+        <text class="zlabel" x="892" y="152">Cloud</text>
+        <text class="zlabel" x="1100" y="380">Gebruikers</text>
+
+        <!-- Pijlen eerst, zodat de kaders erbovenop liggen -->
+        <path class="lijn" d="M120 170 V104" marker-end="url(#pijl)"/>
+        <path class="lijn" d="M210 74 H330 V168" marker-end="url(#pijl)"/>
+        <path class="lijn" d="M420 102 V168" marker-end="url(#pijl)"/>
+        <path class="lijn" d="M210 288 H288" marker-end="url(#pijl)"/>
+        <path class="lijn" d="M210 358 H288" marker-end="url(#pijl)"/>
+        <path class="lijn" d="M440 202 H498" marker-end="url(#pijl)"/>
+        <path class="lijn" d="M440 325 H498" marker-end="url(#pijl)"/>
+        <path class="lijn" d="M210 448 H498" marker-end="url(#pijl)"/>
+        <path class="lijn" d="M210 548 H498" marker-end="url(#pijl)"/>
+        <path class="lijn" d="M650 620 H668 V270 M650 548 H668"/>
+        <path class="lijn" d="M650 270 H888" marker-end="url(#pijl)"/>
+        <text class="label" x="770" y="262" text-anchor="middle">schrijft naar productie</text>
+        <path class="lijn" d="M650 192 H888" marker-end="url(#pijl)"/>
+        <text class="label" x="770" y="184" text-anchor="middle">rapport Teelt afgerond</text>
+        <path class="lijn" d="M975 332 V408" marker-start="url(#pijl)" marker-end="url(#pijl)"/>
+        <path class="lijn" d="M1060 436 H1080 V424 H1098" marker-start="url(#pijl)" marker-end="url(#pijl)"/>
+        <path class="lijn" d="M1060 464 H1080 V494 H1098" marker-start="url(#pijl)" marker-end="url(#pijl)"/>
+        <path class="lijn" d="M1060 262 H1180 V104" marker-end="url(#pijl)"/>
+        <path class="lijn kopie" d="M890 312 H866 V468 H852" marker-end="url(#pijl)"/>
+        <text class="label" x="858" y="340" text-anchor="end" data-id="nas.kopie">kopie 03:00</text>
+        <path class="lijn" d="M770 418 V438" marker-start="url(#pijl)" marker-end="url(#pijl)"/>
+        <path class="lijn kopie" d="M770 496 V538" marker-end="url(#pijl)"/>
+
+        <!-- Kaders: data-id = het onderdeel uit /status.json; .st krijgt de korte status -->
+        <g class="vak" data-id="laptop.agro4all" tabindex="0" role="button"><rect x="30" y="46" width="180" height="56" rx="5"/>
+          <text class="t" x="44" y="68">Claude-taak Agro4all</text><text class="st" x="44" y="88">…</text></g>
+        <g class="vak" data-id="laptop.logboek" tabindex="0" role="button"><rect x="400" y="46" width="170" height="56" rx="5"/>
+          <text class="t" x="414" y="68">Teeltlogboek → JSON</text><text class="st" x="414" y="88">…</text></g>
+        <g class="vak" data-id="laptop.takenlijst" tabindex="0" role="button"><rect x="1100" y="46" width="160" height="56" rx="5"/>
+          <text class="t" x="1114" y="68">Claude-taak Takenlijst</text><text class="st" x="1114" y="88">…</text></g>
+
+        <g class="vak" data-id="bron.agro4all" tabindex="0" role="button"><rect x="30" y="170" width="180" height="56" rx="5"/>
+          <text class="t" x="44" y="192">Agro4all</text><text class="st" x="44" y="212">…</text></g>
+        <g class="vak" data-id="bron.priva3" tabindex="0" role="button"><rect x="30" y="260" width="180" height="56" rx="5"/>
+          <text class="t" x="44" y="282">Priva-pc tuin 3</text><text class="st" x="44" y="302">…</text></g>
+        <g class="vak" data-id="bron.priva1" tabindex="0" role="button"><rect x="30" y="330" width="180" height="56" rx="5"/>
+          <text class="t" x="44" y="352">Priva-pc tuin 1</text><text class="st" x="44" y="372">…</text></g>
+        <g class="vak" data-id="bron.pats" tabindex="0" role="button"><rect x="30" y="420" width="180" height="56" rx="5"/>
+          <text class="t" x="44" y="442">PATS</text><text class="st" x="44" y="462">…</text></g>
+        <g class="vak" data-id="bron.api" tabindex="0" role="button"><rect x="30" y="520" width="180" height="56" rx="5"/>
+          <text class="t" x="44" y="542">Priva Horti API</text><text class="st" x="44" y="562">…</text></g>
+
+        <g class="vak" data-id="nas.agro" tabindex="0" role="button"><rect x="290" y="170" width="150" height="64" rx="5"/>
+          <text class="t" x="304" y="194">Map agro4all</text><text class="st" x="304" y="214">…</text></g>
+        <g class="vak" data-id="nas.share" tabindex="0" role="button"><rect x="290" y="260" width="150" height="130" rx="5"/>
+          <text class="t" x="304" y="284">Share Priva</text><text class="st" x="304" y="306">…</text></g>
+
+        <g class="vak" data-id="nas.uurtaak" tabindex="0" role="button"><rect x="500" y="170" width="150" height="310" rx="5"/>
+          <text class="t" x="514" y="196">Uurtaak</text><text class="st" x="514" y="214">…</text>
+          <text class="m" x="514" y="232">priva_bestanden.py</text>
+          <circle class="stip" data-id="uur.pulsmeters" cx="518" cy="264" r="4.5"/><text class="lijst" x="530" y="268">warmte en gas</text>
+          <circle class="stip" data-id="uur.watergift" cx="518" cy="286" r="4.5"/><text class="lijst" x="530" y="290">watergift per vak</text>
+          <circle class="stip" data-id="uur.klimaat" cx="518" cy="308" r="4.5"/><text class="lijst" x="530" y="312">klimaat uur en dag</text>
+          <circle class="stip" data-id="uur.agro4all" cx="518" cy="330" r="4.5"/><text class="lijst" x="530" y="334">behandelingen</text>
+          <circle class="stip" data-id="uur.logboek" cx="518" cy="352" r="4.5"/><text class="lijst" x="530" y="356">teeltlogboek</text>
+          <circle class="stip" data-id="uur.pats" cx="518" cy="374" r="4.5"/><text class="lijst" x="530" y="378">vangplaten</text>
+          <circle class="stip" data-id="uur.rapport" cx="518" cy="396" r="4.5"/><text class="lijst" x="530" y="400">mail Teelt afgerond</text>
+          <text class="st" x="514" y="440">stippen: laatste run</text></g>
+        <g class="vak" data-id="nas.api" tabindex="0" role="button"><rect x="500" y="520" width="150" height="56" rx="5"/>
+          <text class="t" x="514" y="542">API-taak</text><text class="st" x="514" y="562">…</text></g>
+        <g class="vak" data-id="nas.prognose" tabindex="0" role="button"><rect x="500" y="592" width="150" height="56" rx="5"/>
+          <text class="t" x="514" y="614">Prognose loggen</text><text class="st" x="514" y="634">…</text></g>
+
+        <g class="vak" data-id="nas.app" tabindex="0" role="button"><rect x="690" y="360" width="160" height="56" rx="5"/>
+          <text class="t" x="704" y="382">vemteelt-app (test)</text><text class="st" x="704" y="402">…</text></g>
+        <g class="vak" data-id="nas.db" tabindex="0" role="button"><rect x="690" y="440" width="160" height="56" rx="5"/>
+          <text class="t" x="704" y="462">vemteelt-db</text><text class="st" x="704" y="482">…</text></g>
+        <g class="vak" data-id="nas.backup" tabindex="0" role="button"><rect x="690" y="540" width="160" height="56" rx="5"/>
+          <text class="t" x="704" y="562">Back-up op HDD</text><text class="st" x="704" y="582">…</text></g>
+
+        <g class="vak" data-id="cloud.m365" tabindex="0" role="button"><rect x="890" y="164" width="170" height="56" rx="5"/>
+          <text class="t" x="904" y="186">Microsoft 365</text><text class="st" x="904" y="206">…</text></g>
+        <g class="vak" data-id="cloud.supabase" tabindex="0" role="button"><rect x="890" y="240" width="170" height="90" rx="5"/>
+          <text class="t" x="904" y="264">Supabase</text><text class="st" x="904" y="284">…</text>
+          <text class="m" x="904" y="312">productiedatabase</text></g>
+        <g class="vak" data-id="cloud.render" tabindex="0" role="button"><rect x="890" y="410" width="170" height="80" rx="5"/>
+          <text class="t" x="904" y="434">Render</text><text class="st" x="904" y="454">…</text>
+          <text class="m" x="904" y="476">vemteelt.onrender.com</text></g>
+
+        <g class="vak" data-id="gebruiker.kantoor" tabindex="0" role="button"><rect x="1100" y="396" width="160" height="56" rx="5"/>
+          <text class="t" x="1114" y="418">Browser op kantoor</text><text class="st" x="1114" y="438">…</text></g>
+        <g class="vak" data-id="gebruiker.telefoon" tabindex="0" role="button"><rect x="1100" y="466" width="160" height="56" rx="5"/>
+          <text class="t" x="1114" y="488">Telefoon in de kas</text><text class="st" x="1114" y="508">…</text></g>
+      </svg>
+    </div>
+
+    <aside id="detail" aria-live="polite">
+      <h2 id="d-naam">Klik op een onderdeel</h2>
+      <div id="d-kleur"></div>
+      <div class="zacht" id="d-laatst">Dan zie je hier wat er gecontroleerd is en het laatste moment dat het werkte.</div>
+      <ul id="d-details"></ul>
+    </aside>
+  </div>
+
+  <div class="legenda">
+    <span class="chip k-groen">op tijd</span>
+    <span class="chip k-oranje">één keer gemist of laat</span>
+    <span class="chip k-rood">fout of te oud</span>
+    <span class="chip k-grijs">niet te meten</span>
+    <span class="chip k-info">alleen het laatste moment</span>
+  </div>
+
+  <section>
+    <div class="tabelvak">
+      <table>
+        <thead><tr><th>Status</th><th>Onderdeel</th><th>Waar</th><th>Laatst</th><th>Toelichting</th></tr></thead>
+        <tbody id="lijst"></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<script>
+const WOORD = { groen: "op tijd", oranje: "laat", rood: "fout", grijs: "onbekend", info: "info" };
+let gegevens = { onderdelen: [] };
+let gekozen = null;
+
+function chip(kleur, tekst) {
+  const s = document.createElement("span");
+  s.className = "chip k-" + kleur;
+  s.textContent = tekst || WOORD[kleur] || kleur;
+  return s;
+}
+
+function toon(data) {
+  gegevens = data;
+  const per = Object.fromEntries(data.onderdelen.map(o => [o.id, o]));
+
+  document.querySelectorAll("[data-id]").forEach(el => {
+    const o = per[el.dataset.id];
+    el.dataset.kleur = o ? o.kleur : "grijs";
+    const st = el.querySelector(":scope > .st");
+    if (st) st.textContent = o ? o.kort : "geen gegevens";
+    if (el.classList.contains("label") && o) el.textContent = "kopie " + (o.kort || "");
+    el.setAttribute("aria-label", (o ? o.naam + ": " + WOORD[o.kleur] + ", " + o.kort : el.dataset.id));
+  });
+
+  const telling = document.getElementById("telling");
+  telling.replaceChildren();
+  for (const kleur of ["rood", "oranje", "grijs", "groen"]) {
+    const n = data.onderdelen.filter(o => o.kleur === kleur).length;
+    if (n) telling.append(chip(kleur, n + " " + WOORD[kleur]));
+  }
+
+  const tijd = new Date(data.gecontroleerd);
+  document.getElementById("gecontroleerd").textContent =
+    "Gecontroleerd om " + tijd.toLocaleTimeString("nl-NL") + " · ververst elke minuut";
+
+  const melding = document.getElementById("melding");
+  melding.hidden = data.nas_bereikbaar;
+  if (!data.nas_bereikbaar) melding.textContent = "De NAS is niet bereikbaar. Staat de VPN aan? Wat via de NAS loopt is grijs.";
+
+  const lijst = document.getElementById("lijst");
+  lijst.replaceChildren();
+  for (const o of data.onderdelen) {
+    const tr = document.createElement("tr");
+    tr.dataset.id = o.id;
+    const cellen = [chip(o.kleur), o.naam, o.groep, o.laatst_tekst || o.kort, o.details[0] || ""];
+    cellen.forEach((inhoud, i) => {
+      const td = document.createElement("td");
+      if (i === 2) td.className = "groep";
+      if (i === 3) td.className = "tijd";
+      td.append(inhoud);
+      tr.append(td);
+    });
+    tr.addEventListener("click", () => kies(o.id));
+    lijst.append(tr);
+  }
+  if (gekozen) kies(gekozen);
+}
+
+function kies(id) {
+  gekozen = id;
+  document.querySelectorAll(".vak").forEach(v => v.classList.toggle("gekozen", v.dataset.id === id));
+  const o = gegevens.onderdelen.find(x => x.id === id);
+  document.getElementById("d-naam").textContent = o ? o.naam : id;
+  const kleur = document.getElementById("d-kleur");
+  kleur.replaceChildren();
+  if (o) kleur.append(chip(o.kleur));
+  document.getElementById("d-laatst").textContent = o && o.laatst
+    ? "Laatst gelukt of gezien: " + o.laatst_tekst : (o ? o.kort : "Geen gegevens");
+  const ul = document.getElementById("d-details");
+  ul.replaceChildren(...(o ? o.details : []).map(d => { const li = document.createElement("li"); li.textContent = d; return li; }));
+}
+
+async function ververs(vers) {
+  const knop = document.getElementById("nu");
+  knop.disabled = true;
+  try {
+    const antwoord = await fetch("/status.json" + (vers ? "?nu=1" : ""), { cache: "no-store" });
+    if (!antwoord.ok) throw new Error(antwoord.status);
+    toon(await antwoord.json());
+  } catch (fout) {
+    const melding = document.getElementById("melding");
+    melding.hidden = false;
+    melding.textContent = "De statusmonitor reageert niet (" + fout.message + "). Draait statusmonitor.py nog?";
+  } finally {
+    knop.disabled = false;
+  }
+}
+
+document.querySelectorAll(".vak").forEach(v => {
+  v.addEventListener("click", () => kies(v.dataset.id));
+  v.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); kies(v.dataset.id); } });
+});
+document.getElementById("nu").addEventListener("click", () => ververs(true));
+ververs(false);
+setInterval(() => ververs(false), 60000);
+</script>
+</body>
+</html>
