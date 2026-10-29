@@ -9,6 +9,13 @@ Alles wordt alleen gelezen:
 - de app op Render: of hij antwoordt.
 
 De pagina draait alleen op deze laptop (127.0.0.1), van buitenaf is hij niet bereikbaar. Hij ververst elke minuut.
+
+Dagrapport-mail van de klimaat-pc: die taak draait op een andere pc en is van hieruit niet te zien. Daarom zet de
+taak na het versturen zelf een statusbestand `dagrapport-status.json` in \\\\192.168.0.197\\Priva (of in de map
+waar die pc al naartoe kopieert, zie DAGRAPPORT_MAPPEN), gelukt of niet:
+    {"taak": "dagrapport", "pc": "KLIMAAT", "tijdstip": "2026-10-29T07:00:12+01:00", "status": "ok",
+     "melding": "verstuurd"}
+Bij een fout: "status": "fout" en de foutmelding in "melding". Groen als het bestand van na 7 uur vandaag is.
 Rekenwerk (logboeken lezen, kleuren) in logic/status.py; de pagina zelf in status/pagina.html.
 
 Gebruik:
@@ -42,6 +49,9 @@ LOGS = PROJECT / "logs"
 AGRO4ALL = PROJECT / "agro4all"
 PRIVA = Path(NAS + r"\Priva")
 BACKUP = Path(NAS + r"\backup\postgres")
+# Waar de dagrapport-taak zijn statusbestand mag zetten: de share Priva zelf, of de map waar de klimaat-pc al naartoe
+# kopieert.
+DAGRAPPORT_MAPPEN = (PRIVA, PRIVA / "bron live", PRIVA / "bron historie" / "Tuin 1")
 NAS_APP = "http://192.168.0.197:8501/_stcore/health"
 RENDER = APP_URL.rstrip("/") + "/_stcore/health"
 
@@ -95,23 +105,12 @@ def staart(pad, grootte=300_000):
         return ""
 
 
-def lees_sync_status(pad):
-    """
-    sync-status.json van een klimaat-pc als {moment, fout, tekst}, of None als het bestand er niet is.
-    Vorm: {"syncTijdstip": "2026-10-29T07:08:13+01:00", "syncStatus": "ok", "pollerStatus": "ok", "stop": false, ...}.
-    """
+def lees_statusbestand(pad):
+    """Een statusbestand van een pc (logic.status.statusbestand), of None als het er niet is of niet klopt."""
     try:
-        gegevens = json.loads(Path(pad).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        return st.statusbestand(Path(pad).read_text(encoding="utf-8"))
+    except OSError:
         return None
-    try:
-        moment = st.utc_naar_nl(datetime.fromisoformat(gegevens["syncTijdstip"]))
-    except (KeyError, TypeError, ValueError):
-        moment = None
-    statussen = {k: gegevens.get(k) for k in ("syncStatus", "pollerStatus")}
-    fout = any(v not in (None, "ok") for v in statussen.values()) or bool(gegevens.get("stop"))
-    tekst = f"sync {statussen['syncStatus']}, poller {statussen['pollerStatus']}" + (", gestopt" if gegevens.get("stop") else "")
-    return {"moment": moment, "fout": fout, "tekst": tekst}
 
 
 def antwoordt(url, wachttijd):
@@ -162,7 +161,8 @@ def controleer_nas(nu):
         ids = [("laptop.agro4all", "Claude-taak Agro4all", "Werklaptop"),
                ("laptop.logboek", "Teeltlogboek → JSON", "Werklaptop"),
                ("bron.priva3", "Priva-pc tuin 3", "Bronnen"), ("bron.priva1", "Priva-pc tuin 1", "Bronnen"),
-               ("bron.api", "Priva Horti API", "Bronnen"), ("nas.share", "Share Priva", "NAS"),
+               ("bron.api", "Priva Horti API", "Bronnen"), ("kas.dagrapport", "Dagrapport-mail", "Bronnen"),
+               ("nas.share", "Share Priva", "NAS"),
                ("nas.agro", "Map agro4all", "NAS"), ("nas.uurtaak", "Uurtaak", "NAS"),
                ("nas.api", "API-taak", "NAS"), ("nas.prognose", "Prognose loggen", "NAS"),
                ("nas.db", "vemteelt-db", "NAS"), ("nas.backup", "Back-up op HDD", "NAS"),
@@ -215,12 +215,12 @@ def controleer_nas(nu):
         moment = gewijzigd(live / "laatste.json")
         groen_tot = timedelta(minutes=20)
         details = [f"laatste.json van {PRIVA_BESTANDEN[tuin]['pcu']}: {st.leeftijd_tekst(moment, nu)}"]
-        sync = lees_sync_status(live.parent / "sync-status.json")
+        sync = lees_statusbestand(live.parent / "sync-status.json")
         if sync:
             moment, groen_tot = sync["moment"] or moment, timedelta(minutes=35)
-            details.append(f"Kopie van de klimaat-pc: {sync['tekst']}")
+            details.append(f"Kopie van de klimaat-pc: {sync['melding']}")
         kleur = st.kleur_volgens_leeftijd(moment, nu, groen_tot, timedelta(hours=1))
-        if sync and sync["fout"]:
+        if sync and not sync["ok"]:
             kleur = st.ROOD
         details.append(f"Groen tot {int(groen_tot.total_seconds() // 60)} minuten oud, oranje tot een uur")
         regelaar = priva_bron.controleer_regelaar(live, tuin) if moment else None
@@ -229,6 +229,23 @@ def controleer_nas(nu):
             details.append(regelaar)
         uit.append(onderdeel(f"bron.priva{tuin}", f"Priva-pc tuin {tuin}", "Bronnen", kleur, nu, moment,
                              details=details))
+
+    # De dagrapport-mail van de klimaat-pc: die zet na het versturen zelf een statusbestand op de share Priva.
+    gevonden = [(pad, lees_statusbestand(pad)) for map_ in DAGRAPPORT_MAPPEN if os.path.isdir(map_)
+                for pad in map_.glob("dagrapport-status*.json")]
+    # Staan er meer (bijv. één per klimaat-pc), dan telt het nieuwste.
+    gevonden = sorted(((pad, s) for pad, s in gevonden if s), key=lambda g: g[1]["moment"] or datetime.min)[-1:]
+    if not gevonden:
+        uit.append(onderdeel("kas.dagrapport", "Dagrapport-mail", "Bronnen", st.GRIJS, nu, kort="nog niet gemeten",
+                             details=["Elke dag om 7 uur vanaf de klimaat-pc",
+                                      r"Nog geen dagrapport-status.json in \\192.168.0.197\Priva; "
+                                      "zie de uitleg bovenaan statusmonitor.py"]))
+    for pad, s in gevonden:
+        kleur = st.kleur_volgens_schema(s["moment"], nu, "dagrapport") if s["ok"] else st.ROOD
+        uit.append(onderdeel("kas.dagrapport", "Dagrapport-mail", "Bronnen", kleur, nu, s["moment"],
+                             kort=None if s["ok"] else f"fout {st.leeftijd_tekst(s['moment'], nu)}",
+                             details=[f"Elke dag om 7 uur vanaf {s['pc'] or 'de klimaat-pc'}", s["melding"],
+                                      f"Statusbestand: {pad.name}"]))
 
     # Map agro4all en de Claude-taak die de export schrijft.
     export = gewijzigd(AGRO4ALL / "registraties.json")

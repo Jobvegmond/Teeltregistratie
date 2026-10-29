@@ -38,9 +38,10 @@ SCHEMA = {
     "backup": ((2,), False),                    # DSM: nas_backup_database.sh
     "bouwen": ((0,), False),                    # DSM: app-image bijwerken (vangnet; op aanvraag tussendoor)
     "agro4all": ((7, 12, 17), True),            # Claude-taak op de werklaptop, alleen als die aan staat
+    "dagrapport": ((7,), False),                # dagrapport-mail van de klimaat-pc
 }
 # Zoveel ruimte krijgt een taak na het geplande moment voordat hij als gemist telt (looptijd, jitter van Claude).
-SPELING = {"uurtaak": timedelta(minutes=10), "agro4all": timedelta(minutes=30)}
+SPELING = {"uurtaak": timedelta(minutes=10), "agro4all": timedelta(minutes=30), "dagrapport": timedelta(minutes=30)}
 STANDAARD_SPELING = timedelta(minutes=20)
 
 _KOP = re.compile(r"^--- (\d\d-\d\d-\d\d \d\d:\d\d) (.*)$")
@@ -99,6 +100,40 @@ def utc_naar_nl(moment):
     if moment.tzinfo is None:
         moment = moment.replace(tzinfo=timezone.utc)
     return moment.astimezone(NL).replace(tzinfo=None)
+
+
+def statusbestand(tekst):
+    """
+    Een statusbestand dat een pc zelf op de NAS zet, als {moment, ok, melding, pc}, of None als het geen geldig
+    bestand is. Twee vormen:
+    - sync-status.json van de klimaat-pc van tuin 1:
+      {"pc": "KLIMAAT", "syncTijdstip": "2026-10-29T07:08:13+01:00", "syncStatus": "ok", "pollerStatus": "ok",
+       "stop": false}
+    - dagrapport-status.json van de dagrapport-taak:
+      {"taak": "dagrapport", "pc": "KLIMAAT", "tijdstip": "2026-10-29T07:00:12+01:00", "status": "ok",
+       "melding": "verstuurd"}  (status "fout" met de foutmelding in melding)
+    `moment` is Nederlandse tijd; een tijd zonder zone geldt als Nederlandse tijd.
+    """
+    import json
+    try:
+        gegevens = json.loads(tekst.lstrip("﻿"))    # PowerShell 5 schrijft UTF-8 met BOM
+    except ValueError:
+        return None
+    if not isinstance(gegevens, dict):
+        return None
+    tijd = gegevens.get("tijdstip") or gegevens.get("syncTijdstip")
+    try:
+        moment = datetime.fromisoformat(tijd)
+        moment = utc_naar_nl(moment) if moment.tzinfo else moment
+    except (TypeError, ValueError):
+        moment = None
+    statussen = [gegevens[k] for k in ("status", "syncStatus", "pollerStatus") if k in gegevens]
+    ok = bool(statussen) and all(str(s).lower() == "ok" for s in statussen) and not gegevens.get("stop")
+    melding = gegevens.get("melding") or ", ".join(
+        f"{k[:-6] or 'status'} {gegevens[k]}" for k in ("syncStatus", "pollerStatus") if k in gegevens)
+    if gegevens.get("stop"):
+        melding += ", gestopt"
+    return {"moment": moment, "ok": ok, "melding": melding or str(statussen), "pc": gegevens.get("pc")}
 
 
 def lees_runs(tekst):

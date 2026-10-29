@@ -58,6 +58,38 @@ class TestLogboek(unittest.TestCase):
         self.assertIs(status.laatste_gelukte(runs), runs[0])     # de run met de fout telt niet als gelukt
 
 
+class TestStatusbestand(unittest.TestCase):
+    def test_dagrapport(self):
+        s = status.statusbestand('﻿{"taak": "dagrapport", "pc": "KLIMAAT", '
+                                 '"tijdstip": "2026-10-29T07:00:12+01:00", "status": "ok", "melding": "verstuurd"}')
+        self.assertEqual(s, {"moment": datetime(2026, 10, 29, 7, 0, 12), "ok": True, "melding": "verstuurd",
+                             "pc": "KLIMAAT"})
+        fout = status.statusbestand('{"tijdstip": "2026-10-29T07:00:12", "status": "fout", "melding": "SMTP weg"}')
+        self.assertFalse(fout["ok"])
+        self.assertEqual(fout["moment"], datetime(2026, 10, 29, 7, 0, 12))   # zonder zone: Nederlandse tijd
+        self.assertIsNone(status.statusbestand("geen json"))
+        self.assertIsNone(status.statusbestand("[1, 2]"))
+
+    def test_sync_status_tuin1(self):
+        s = status.statusbestand('{"locatie": "Tuin 1", "pc": "KLIMAAT", "syncTijdstip": "2026-10-29T07:08:13+01:00", '
+                                 '"syncStatus": "ok", "pollerStatus": "ok", "stop": false}')
+        self.assertTrue(s["ok"])
+        self.assertEqual(s["melding"], "sync ok, poller ok")
+        gestopt = status.statusbestand('{"syncTijdstip": "2026-10-29T07:08:13+01:00", "syncStatus": "ok", '
+                                       '"pollerStatus": "fout", "stop": true}')
+        self.assertFalse(gestopt["ok"])
+        self.assertEqual(gestopt["melding"], "sync ok, poller fout, gestopt")
+
+    def test_dagrapport_schema(self):
+        # Om 08:00 moet het rapport van 07:00 er zijn; om 07:20 telt dat van gisteren nog.
+        self.assertEqual(status.kleur_volgens_schema(datetime(2026, 10, 29, 7, 1), datetime(2026, 10, 29, 8, 0),
+                                                     "dagrapport"), status.GROEN)
+        self.assertEqual(status.kleur_volgens_schema(datetime(2026, 10, 28, 7, 1), datetime(2026, 10, 29, 7, 20),
+                                                     "dagrapport"), status.GROEN)
+        self.assertEqual(status.kleur_volgens_schema(datetime(2026, 10, 28, 7, 1), datetime(2026, 10, 29, 8, 0),
+                                                     "dagrapport"), status.ORANJE)
+
+
 class TestKleur(unittest.TestCase):
     def test_uurtaak(self):
         nu = datetime(2026, 10, 29, 7, 30)
