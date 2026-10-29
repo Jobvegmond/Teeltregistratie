@@ -23,6 +23,21 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class TestTeeltvensters(unittest.TestCase):
+    def test_water_voor_planten_en_na_oogst_telt_niet(self):
+        vensters = wg.teeltvensters([
+            {"vaknummer": 22, "datum_teelt_start": "2026-08-25", "datum_oogst": "2026-10-22"},
+            {"vaknummer": 21, "datum_teelt_start": "2026-10-22", "datum_oogst": None},
+            {"vaknummer": 21, "datum_teelt_start": "2026-08-24", "datum_oogst": "2026-10-21"},
+        ])
+        self.assertTrue(wg.in_teelt(vensters, 22, date(2026, 10, 22)))      # oogstdag telt mee
+        self.assertFalse(wg.in_teelt(vensters, 22, date(2026, 10, 25)))     # inwateren voor de volgende teelt
+        self.assertFalse(wg.in_teelt(vensters, 22, date(2026, 8, 24)))      # de dag voor het planten
+        self.assertTrue(wg.in_teelt(vensters, 21, date(2026, 10, 29)))      # lopende teelt
+        self.assertTrue(wg.in_teelt(vensters, 21, date(2026, 10, 21)))
+        self.assertFalse(wg.in_teelt(vensters, 5, date(2026, 10, 21)))      # vak zonder teelt
+
+
 class TestSamenvatting(unittest.TestCase):
     def test_samenvatting_leeg_vak_telt_niet_mee(self):
         gift = {(1, date(2026, 9, 28)): 4.0, (2, date(2026, 9, 28)): 0.0}
