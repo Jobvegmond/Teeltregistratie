@@ -18,7 +18,7 @@ waar die pc al naartoe kopieert, zie DAGRAPPORT_MAPPEN), gelukt of niet:
 Bij een fout: "status": "fout" en de foutmelding in "melding". Groen als het bestand van na 7 uur vandaag is.
 Rekenwerk (logboeken lezen, kleuren) in logic/status.py; de pagina zelf in status/pagina.html.
 
-Gebruik:
+Gebruik (of dubbelklik op "Status teeltregistratie.cmd", ook als kopie op het bureaublad):
     py statusmonitor.py                 # start op http://127.0.0.1:8600 en opent de browser
     py statusmonitor.py --poort 8601
     py statusmonitor.py --geen-browser
@@ -508,6 +508,12 @@ class Cache:
 CACHE = Cache()
 
 
+class Server(ThreadingHTTPServer):
+    # Zonder dit mag op Windows een tweede monitor dezelfde poort pakken (SO_REUSEADDR) en ziet hij niet dat er al
+    # één draait.
+    allow_reuse_address = False
+
+
 class Verzoek(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path in ("/", "/index.html"):
@@ -542,8 +548,15 @@ def main():
             print(f"{o['kleur']:7} {o['groep']:11} {o['naam']:28} {o['kort']}")
         return
 
-    server = ThreadingHTTPServer(("127.0.0.1", args.poort), Verzoek)
     adres = f"http://127.0.0.1:{args.poort}"
+    try:
+        server = Server(("127.0.0.1", args.poort), Verzoek)
+    except OSError:
+        # De poort is bezet: meestal draait de monitor al (bijv. twee keer op het bureaublad geklikt).
+        print(f"De statusmonitor draait al op {adres}; die wordt geopend.", flush=True)
+        if not args.geen_browser:
+            webbrowser.open(adres)
+        return
     print(f"Statusmonitor op {adres} (stoppen met Ctrl+C)", flush=True)
     if not args.geen_browser:
         webbrowser.open(adres)
