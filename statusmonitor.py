@@ -95,6 +95,25 @@ def staart(pad, grootte=300_000):
         return ""
 
 
+def lees_sync_status(pad):
+    """
+    sync-status.json van een klimaat-pc als {moment, fout, tekst}, of None als het bestand er niet is.
+    Vorm: {"syncTijdstip": "2026-10-29T07:08:13+01:00", "syncStatus": "ok", "pollerStatus": "ok", "stop": false, ...}.
+    """
+    try:
+        gegevens = json.loads(Path(pad).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    try:
+        moment = st.utc_naar_nl(datetime.fromisoformat(gegevens["syncTijdstip"]))
+    except (KeyError, TypeError, ValueError):
+        moment = None
+    statussen = {k: gegevens.get(k) for k in ("syncStatus", "pollerStatus")}
+    fout = any(v not in (None, "ok") for v in statussen.values()) or bool(gegevens.get("stop"))
+    tekst = f"sync {statussen['syncStatus']}, poller {statussen['pollerStatus']}" + (", gestopt" if gegevens.get("stop") else "")
+    return {"moment": moment, "fout": fout, "tekst": tekst}
+
+
 def antwoordt(url, wachttijd):
     """(True, tekst) als de URL met 200 antwoordt, anders (False, de fout)."""
     try:
@@ -147,7 +166,7 @@ def controleer_nas(nu):
                ("nas.agro", "Map agro4all", "NAS"), ("nas.uurtaak", "Uurtaak", "NAS"),
                ("nas.api", "API-taak", "NAS"), ("nas.prognose", "Prognose loggen", "NAS"),
                ("nas.db", "vemteelt-db", "NAS"), ("nas.backup", "Back-up op HDD", "NAS"),
-               ("nas.bouwen", "Image bouwen", "NAS"), ("cloud.m365", "Microsoft 365", "Cloud")]
+               ("nas.bouwen", "Image bouwen", "NAS"), ("cloud.m365", "Mail Teelt afgerond", "Cloud")]
         uit = [onderdeel(i, n, g, st.GRIJS, nu, kort="niet bereikbaar", details=[reden]) for i, n, g in ids]
         uit += [onderdeel(i, UUR_NAMEN[i], "NAS", st.GRIJS, nu, kort="") for i in UUR_STAPPEN]
         return uit, False
@@ -189,13 +208,21 @@ def controleer_nas(nu):
                          details=["Share bereikbaar" if share else "Share Priva niet bereikbaar",
                                   "Warmte, gas, watergift en klimaat uit de laatste uurtaak"]))
 
-    # De poller op elke Priva-pc: wanneer schreef hij laatste.json?
+    # De poller op elke Priva-pc: wanneer schreef hij laatste.json? De klimaat-pc van tuin 1 kopieert zijn
+    # bestanden elke ± 20 minuten en meldt dat in sync-status.json (naast de map live); daar geldt die melding.
     for tuin in sorted(PRIVA_BESTANDEN, reverse=True):
         live, _ = priva_bron.mappen(PRIVA, tuin)
         moment = gewijzigd(live / "laatste.json")
-        kleur = st.kleur_volgens_leeftijd(moment, nu, timedelta(minutes=20), timedelta(hours=1))
-        details = [f"laatste.json van {PRIVA_BESTANDEN[tuin]['pcu']}: {st.leeftijd_tekst(moment, nu)}",
-                   "Groen tot 20 minuten oud, oranje tot een uur"]
+        groen_tot = timedelta(minutes=20)
+        details = [f"laatste.json van {PRIVA_BESTANDEN[tuin]['pcu']}: {st.leeftijd_tekst(moment, nu)}"]
+        sync = lees_sync_status(live.parent / "sync-status.json")
+        if sync:
+            moment, groen_tot = sync["moment"] or moment, timedelta(minutes=35)
+            details.append(f"Kopie van de klimaat-pc: {sync['tekst']}")
+        kleur = st.kleur_volgens_leeftijd(moment, nu, groen_tot, timedelta(hours=1))
+        if sync and sync["fout"]:
+            kleur = st.ROOD
+        details.append(f"Groen tot {int(groen_tot.total_seconds() // 60)} minuten oud, oranje tot een uur")
         regelaar = priva_bron.controleer_regelaar(live, tuin) if moment else None
         if regelaar:
             kleur = st.ROOD
@@ -261,9 +288,12 @@ def controleer_nas(nu):
                                   "Elke nacht om 2 u, 30 dagen bewaard"]))
 
     # Microsoft 365: de mailstap van de uurtaak.
-    uit.append(onderdeel("cloud.m365", "Microsoft 365", "Cloud", stappen["uur.rapport"], nu,
+    rapport = st.stap(afgerond, "teelt_rapport.py")[1]
+    uit.append(onderdeel("cloud.m365", "Mail Teelt afgerond", "Cloud", stappen["uur.rapport"], nu,
                          afgerond["start"] if afgerond else None,
-                         details=["Mail Teelt afgerond (teelt_rapport.py in de uurtaak)"]))
+                         details=["teelt_rapport.py kijkt elk uur in de uurtaak of het laatste vak van een plantweek "
+                                  "geoogst is en mailt dan via Microsoft 365 naar info@",
+                                  f"Laatste controle: {rapport}"]))
     return uit, True
 
 
@@ -304,7 +334,8 @@ def controleer_supabase(nu):
                       "max(tijdstip), count(*) FILTER (WHERE tijdstip > now() - interval '1 day') "
                       "FROM wijzigingenlog WHERE gebruiker IS NOT NULL AND gebruiker NOT LIKE 'priva-%%' "
                       "GROUP BY 1",
-            "mail": "SELECT max(verstuurd_op) FROM teelt_rapport",
+            "mail": "SELECT plantweek, verstuurd_op, (SELECT count(*) FROM teelt_rapport WHERE verstuurd_op IS NOT NULL) "
+                    "FROM teelt_rapport WHERE verstuurd_op IS NOT NULL ORDER BY verstuurd_op DESC LIMIT 1",
             "water": "SELECT max(datum) FROM watergift_dag WHERE bron = 'priva-vandaag'",
         })
     except Exception as fout:
@@ -372,10 +403,16 @@ def verfijn_met_data(onderdelen, data, nu):
                                              f"{aantal} in de laatste 24 uur",
                                              "Een indeling naar soort invoer, niet naar apparaat"])
 
-        mail = rijen["mail"][0][0]
         o = per_id.get("cloud.m365")
-        if o and mail:
-            o["details"].append(f"Laatste rapport verstuurd: {st.leeftijd_tekst(st.utc_naar_nl(mail), nu)}")
+        if o and rijen["mail"]:
+            plantweek, verstuurd, aantal = rijen["mail"][0]
+            verstuurd = st.utc_naar_nl(verstuurd)
+            if o["kleur"] == st.GROEN:
+                o["kort"] = f"laatste mail {verstuurd:%d-%m}"
+            o["details"] += [f"Laatste mail: plantweek {plantweek}, verstuurd {st.leeftijd_tekst(verstuurd, nu)}",
+                             f"{aantal} rapporten verstuurd sinds 20-10-2026"]
+        elif o:
+            o["details"].append("Nog geen rapport verstuurd")
     else:
         for id_, naam, groep in (("bron.pats", "PATS", "Bronnen"), ("bron.agro4all", "Agro4all", "Bronnen"),
                                  ("gebruiker.kantoor", "Browser op kantoor", "Gebruikers"),
