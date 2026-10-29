@@ -41,6 +41,21 @@ def dagen(van, tot):
     return [van + timedelta(days=i) for i in range((tot - van).days + 1)]
 
 
+def teeltvensters(teelten):
+    """{vak: [(start, oogst)]} van de teelten (dicts met vaknummer, datum_teelt_start, datum_oogst); oogst None = loopt."""
+    uit = {}
+    for t in teelten:
+        start = als_datum(t["datum_teelt_start"])
+        if start:
+            uit.setdefault(int(t["vaknummer"]), []).append((start, als_datum(t.get("datum_oogst"))))
+    return uit
+
+
+def in_teelt(vensters, vak, dag):
+    """Of er op die dag een teelt in het vak staat (van planten t/m oogst). Inwateren vóór het planten telt niet."""
+    return any(start <= dag and (oogst is None or dag <= oogst) for start, oogst in vensters.get(vak, ()))
+
+
 def samenvatting(gift, vakken_afd, m2, bezet, van, tot):
     """
     Watergift van één groep vakken (bijv. een afdeling) over van..tot:

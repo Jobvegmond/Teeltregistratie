@@ -3,6 +3,13 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.24.2] - 2026-10-29
+
+### Gewijzigd
+- Overzicht: water dat een vak krijgt terwijl er geen teelt in staat (inwateren vóór het planten, ook na de
+  oogst voor de volgende ronde) staat niet meer op de tijdlijn en niet in de Excel van de watergift. Het totaal
+  achter het vaknummer telde al alleen vanaf het planten. `logic.watergift.teeltvensters` / `in_teelt` (tests).
+
 ## [2.24.1] - 2026-10-28
 
 ### Gecorrigeerd

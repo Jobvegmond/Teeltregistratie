@@ -1865,7 +1865,8 @@ def _pagina_overzicht():
             "door tot de prognose-oogst; per teelt (plantweek) wisselen donker en licht; het zwarte streepje is de "
             "plan-oogst. Hoeveel de prognose voor of achter loopt op plan staat in het vak (klik op de balk).",
             "**Weergave** *Standaard*: een driehoekje bovenin de balk op elke dag met een behandeling (kleur = "
-            "soort) en een blauw vakje op elke dag met water, met het aantal l/m² erin "
+            "soort) en een blauw vakje op elke dag met water in een teelt (inwateren vóór het planten staat er "
+            "niet bij), met het aantal l/m² erin "
             "(met een decimaal als de dag breed genoeg is, anders in hele liters; past er niets, klik dan op het "
             "vakje; dat hangt af van de periode en de breedte van het scherm).",
             "*Bespuitingen*: grotere driehoekjes met de afkortingen van de middelen erachter, zoals in de "
@@ -2112,7 +2113,8 @@ def _tl_frames(info, afdelingen, van, tot, vandaag, weken, weergave):
     balken = pd.DataFrame(balken)
     balken["lijn"] = balken["lijn"].fillna(0.12)   # dunne rand om elke balk, niet om lege plekken
     frames = [balken] + [pd.DataFrame(x) for x in (randen, florgib, plan, kopteksten, weeknummers, dagnamen)]
-    water, waarden, tabel, wgdata = _tl_watergift(tuin, volgorde, van, min(tot, vandaag), weergave == "Watergift")
+    water, waarden, tabel, wgdata = _tl_watergift(tuin, volgorde, van, min(tot, vandaag), eigen,
+                                                weergave == "Watergift")
     if waarnemingen:
         water = pd.DataFrame()
         vangst = _tl_vangst(tuin, volgorde, van, min(tot, vandaag))
@@ -2138,16 +2140,19 @@ def _tl_water_totaal(tuin, statussen, vandaag):
     return totaal
 
 
-def _tl_watergift(tuin, volgorde, van, tot, met_ecph=False):
+def _tl_watergift(tuin, volgorde, van, tot, teelten, met_ecph=False):
     """
     Per vak per dag met watergift één vakje (dekking naar de liters, met het getal), met_ecph: ook de EC en pH
     van de gift per vak en de EC van de voorregeling als tekst ("waarden"). Plus de tabel vak × dag voor Excel
-    en de watergiftdata (voor het dagvenster).
+    en de watergiftdata (voor het dagvenster). Alleen water op dagen dat er een teelt in het vak staat (van
+    planten t/m oogst; teelten = die van deze tuin): inwateren vóór het planten staat er niet bij.
     """
     d = _wg_data(tuin["id"], van, tot, vakstatus_dataversie()) if van <= tot else {
         "gift": [], "kwaliteit": [], "beurten": []}
     zichtbaar = set(volgorde)
-    gegeven = [r for r in d["gift"] if r["liter_per_m2"] and f"Vak {int(r['vaknummer'])}" in zichtbaar]
+    vensters = wg.teeltvensters(teelten)
+    gegeven = [r for r in d["gift"] if r["liter_per_m2"] and f"Vak {int(r['vaknummer'])}" in zichtbaar
+               and wg.in_teelt(vensters, int(r["vaknummer"]), wg.als_datum(r["datum"]))]
     rijen, waarden, tabel = [], [], {}
     for r in gegeven:
         dag, vak, liter = wg.als_datum(r["datum"]), int(r["vaknummer"]), r["liter_per_m2"]
