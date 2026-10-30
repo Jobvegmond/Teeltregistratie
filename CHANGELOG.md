@@ -3,6 +3,12 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.24.3] - 2026-10-30
+
+### Gewijzigd
+- Overzicht: de regels op de tijdlijn zijn lager (17 px in plaats van 22), de balken blijven even hoog. Er passen
+  zo meer vakken op het scherm.
+
 ## [2.24.2] - 2026-10-29
 
 ### Gewijzigd
