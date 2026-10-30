@@ -1968,7 +1968,8 @@ TL_WATER = "#2a6fb5"           # watergift: blauw, dekking naar de liters
 TL_WATER_LICHT = "#9cc4ec"     # watergift in de weergave Bespuitingen: licht blauw, zodat de middelen opvallen
 TL_PATS, TL_PATS_NUL = "#6b4f2a", "#b5b5b0"   # PATS-tellingen (weergave Waarnemingen): bruin, 0 in grijs
 TL_METING = "#1f1f1f"                            # gewasmetingen (weergave Waarnemingen)
-TL_RIJ = 22   # hoogte van een regel (px)
+TL_RIJ = 17   # hoogte van een regel (px)
+TL_BALK = 14  # hoogte van de balk in een regel (px)
 TL_RIJ_PLAAT = 12   # de regel "plaat" onder een vak (weergave Waarnemingen) is lager
 
 
@@ -2335,8 +2336,8 @@ def _tl_grafiek(volgorde, frames, van, tot, vandaag, weken, weergave, water_tota
             f["b2"] = f["pos"] + midden + hoogte / 2
         return {"y": alt.Y("b1:Q", title=None, scale=y_schaal, axis=y_as), "y2": "b2:Q"}
 
-    balk_y = balk(balken, TL_RIJ - 8)
-    randen_y = balk(randen, TL_RIJ - 8)
+    balk_y = balk(balken, TL_BALK)
+    randen_y = balk(randen, TL_BALK)
     klik = alt.selection_point(name="tl_klik", fields=["sleutel"], on="click")
     lagen = [
         alt.Chart(balken).mark_bar(tooltip=None, cornerRadius=2, stroke="#000000", clip=True, cursor="pointer")
@@ -2358,7 +2359,7 @@ def _tl_grafiek(volgorde, frames, van, tot, vandaag, weken, weergave, water_tota
                                             opacity=alt.expr(f"{px} >= 6 ? 0.25 : 0"))
                  .encode(x="d:T"))
     if not plan.empty:
-        lagen.append(alt.Chart(plan).mark_tick(tooltip=None, orient="vertical", thickness=2, size=TL_RIJ - 4,
+        lagen.append(alt.Chart(plan).mark_tick(tooltip=None, orient="vertical", thickness=2, size=TL_BALK + 2,
                                                color="#1f1f1f")
                      .encode(x="x:T", y=y))
     if not florgib.empty:
@@ -2369,8 +2370,8 @@ def _tl_grafiek(volgorde, frames, van, tot, vandaag, weken, weergave, water_tota
         # Watergift: een blauw vakje per dag met water (één kleur), met de liters erin (met een decimaal als de dag
         # breed genoeg is, anders in hele liters). Bij Bespuitingen een dun licht streepje onderin, zonder getal.
         groot = weergave != "Bespuitingen"
-        hoogte = TL_RIJ - 8 if groot else 4
-        water_y = balk(water, hoogte, 0 if groot else (TL_RIJ - 8) / 2 - hoogte / 2)
+        hoogte = TL_BALK if groot else 4
+        water_y = balk(water, hoogte, 0 if groot else TL_BALK / 2 - hoogte / 2)
         lagen.append(alt.Chart(water).mark_bar(tooltip=None, color=TL_WATER if groot else TL_WATER_LICHT,
                                                cursor="pointer")
                      .encode(x="start:T", x2="eind:T", **water_y)
@@ -2447,7 +2448,7 @@ def _tl_grafiek(volgorde, frames, van, tot, vandaag, weken, weergave, water_tota
         groot = weergave == "Bespuitingen"
         lagen.append(alt.Chart(behandelingen).mark_point(tooltip=None, shape="triangle-down", size=130 if groot else 55,
                                                          filled=True, opacity=1, stroke="white", strokeWidth=1,
-                                                         yOffset=-(TL_RIJ - 8) / 2 + (1 if groot else 0),
+                                                         yOffset=-TL_BALK / 2 + (1 if groot else 0),
                                                          cursor="pointer")
                      .encode(x="x:T", y=y, color=alt.Color("kleur:N", scale=None))
                      .add_params(alt.selection_point(name="tl_beh", fields=["sleutel"], on="click")))
