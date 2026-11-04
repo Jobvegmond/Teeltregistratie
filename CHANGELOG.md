@@ -3,6 +3,22 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.25.0] - 2026-11-04
+
+### Toegevoegd
+- **Eén verzendweg voor alle mail** (`integrations/mail.py`): Microsoft Graph, Direct Send of SMTP met inloggen,
+  in die volgorde, met bijlagen en afbeeldingen in de tekst (voor het dagrapport dat naar de NAS komt). Direct
+  Send kwam in de spam (het IP-adres van de NAS staat niet in het SPF-record); sinds 04-11-2026 staat Graph in
+  `.env.taak`, met klimaat@tanacetum.nl als afzender. Een kopie staat in Verzonden items van die mailbox.
+- Tabel **`mail_log`**: elke mailpoging (soort, sleutel, onderwerp, ontvangers, verzendweg, ok/fout met de
+  melding), zodat de statusmonitor straks alle mails op één plek ziet.
+- `GRAPH_GEHEIM_VERLOOPT` (jjjj-mm-dd): vanaf een maand voor het verlopen van het Graph-geheim een regel
+  "LET OP: …" in het logboek van de uurtaak.
+
+### Gewijzigd
+- `teelt_rapport.py` verstuurt via de nieuwe module en logt in `mail_log`; de tabel `teelt_rapport` blijft
+  bijhouden welke plantweken al gemaild zijn.
+
 ## [2.24.3] - 2026-10-30
 
 ### Gewijzigd

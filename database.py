@@ -609,6 +609,8 @@ def init_db():
                 verstuurd_op TIMESTAMPTZ DEFAULT now()
             )
         """)
+        # Elke verstuurde of mislukte mail (integrations/mail.py, sinds 2.25.0).
+        cursor.execute(MAIL_LOG_TABEL)
         # Gewasbescherming, biologie en voeding per vak (sinds 2.14.0 uit Agro4all, agro4all_import.py).
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS middel (
@@ -1542,6 +1544,35 @@ def markeer_teelt_rapport(plantweek, laatste_oogst, aan):
             ON CONFLICT (plantweek) DO UPDATE SET laatste_oogst = EXCLUDED.laatste_oogst, aan = EXCLUDED.aan,
                 verstuurd_op = now()
         """, (plantweek, str(laatste_oogst), aan))
+        conn.commit()
+
+
+MAIL_LOG_TABEL = """
+    CREATE TABLE IF NOT EXISTS mail_log (
+        id SERIAL PRIMARY KEY,
+        soort TEXT NOT NULL,
+        sleutel TEXT,
+        onderwerp TEXT,
+        aan TEXT,
+        weg TEXT,
+        status TEXT NOT NULL CHECK (status IN ('ok', 'fout')),
+        melding TEXT,
+        tijdstip TIMESTAMPTZ DEFAULT now()
+    )
+"""
+
+
+def log_mail(soort, sleutel, onderwerp, aan, weg, status, melding=None):
+    """
+    Eén mailpoging in de mail-log: soort ("teelt_rapport", "dagrapport"), sleutel (bijv. de plantweek),
+    verzendweg ("graph", …) en status "ok" of "fout" met de foutmelding.
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO mail_log (soort, sleutel, onderwerp, aan, weg, status, melding)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """, (soort, sleutel, onderwerp, aan, weg, status, melding))
         conn.commit()
 
 
