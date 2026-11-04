@@ -11,12 +11,12 @@ niet", "bewust zo") hetzelfde signaal een tijd kan dempen.
 De duiding (samenvatting en conclusies) schrijft Claude met de wiki erbij (geplande taak op de werklaptop); dit is
 alleen het rekenwerk en de opmaak. dagrapport.py haalt de gegevens op en verstuurt. Tests in tests/test_dagrapport.py.
 """
-import html
 from datetime import date, timedelta
 from statistics import median
 
 from config import (DIF_MIN, EC_BEREIK, FLORGIB_ACHTERSTAND_DAGEN, INWATER_DAGEN, PATS_STIJGING, PATS_STIJGING_MIN,
                     PH_BEREIK, PH_REGELING, RV_HOOG_UREN, STOOK_MAX, STOOKADVIES_MARGE)
+from logic import mailopmaak as mo
 from utils.format import fmt_getal, fmt_kort, fmt_verschil
 
 SOORTEN = ("data", "registratie", "bespuiting", "klimaat", "water", "plaag")
@@ -281,15 +281,85 @@ def sorteer(signalen):
                                            s["vak"] or 0, s["afdeling"] or 0))
 
 
+def _e(tekst):
+    return mo.e(tekst)
+
+
+# --- Reeksen per dag (voor de grafiekjes) ---
+
+REEKS_DAGEN = {"dag": 14, "week": 28}
+HELE_TUIN = "Hele tuin"
+
+
+def dagenlijst(tot, aantal):
+    """De `aantal` dagen die op `tot` eindigen, oplopend."""
+    return [tot - timedelta(days=aantal - 1 - i) for i in range(aantal)]
+
+
+def _gewogen_per_dag(waarden, dagen):
+    """waarden: [(dag-tekst, m², waarde)] → [gewogen gemiddelde per dag of None], op de volgorde van `dagen`."""
+    som, gewicht = {}, {}
+    for dag, m2, w in waarden:
+        som[dag] = som.get(dag, 0.0) + m2 * w
+        gewicht[dag] = gewicht.get(dag, 0.0) + m2
+    return [som[str(d)] / gewicht[str(d)] if gewicht.get(str(d)) else None for d in dagen]
+
+
+def reeks_afwijking(klimaat, afd_m2, dagen):
+    """
+    De afwijking van de lichtlijn per dag (°C, positief = warmer gestookt), gewogen naar de m² van de afdeling.
+    klimaat: DataFrame (van één tuin) met afdeling, datum, temp_24h en lichtsom; afd_m2: {afdeling: m²}.
+    """
+    from logic.lichtlijn import afwijking
+    waarden = []
+    for r in klimaat.itertuples():
+        a = afwijking(r.temp_24h, r.lichtsom)
+        m2 = afd_m2.get(int(r.afdeling), 0.0) if r.afdeling == r.afdeling and r.afdeling is not None else 0.0
+        if a is not None and a == a and m2:
+            waarden.append((str(r.datum)[:10], m2, a))
+    return _gewogen_per_dag(waarden, dagen)
+
+
+def reeks_rv_uren(uur, afd_m2, dagen, grens=90, minimaal=12):
+    """
+    Uren per etmaal met RV ≥ `grens` %, gewogen naar de m² van de afdeling (zoals de kengetallen: geschaald naar 24
+    gemeten uren); een dag met minder dan `minimaal` gemeten uren telt niet. uur: DataFrame met afdeling, tijdstip
+    ("jjjj-mm-dd uu:mm") en rv.
+    """
+    if uur is None or uur.empty:
+        return [None] * len(dagen)
+    per = {}
+    for r in uur.itertuples():
+        if r.rv is None or r.rv != r.rv:
+            continue
+        d = per.setdefault((int(r.afdeling), str(r.tijdstip)[:10]), [0, 0])
+        d[0] += r.rv >= grens
+        d[1] += 1
+    waarden = [(dag, afd_m2.get(afd, 0.0), hoog * 24 / n) for (afd, dag), (hoog, n) in per.items()
+               if n >= minimaal and afd_m2.get(afd)]
+    return _gewogen_per_dag(waarden, dagen)
+
+
+def reeks_pats(dagtotalen, dagen):
+    """{insect: [nieuw gevangen per dag of None als er die dag niet geteld is]} uit logic.pats.dagtotalen."""
+    uit = {}
+    for r in dagtotalen:
+        uit.setdefault(r["insect"], {})[r["datum"]] = r["totaal"]
+    return {insect: [per_dag.get(d) for d in dagen] for insect, per_dag in uit.items()}
+
+
 # --- Mail ---
 
-GROEN, GRIJS, RAND = "#2E6A4C", "#6f6f6a", "#e3e3e0"
-ERNST_KLEUR = {"fout": "#c0392b", "let op": "#d68910", "info": "#6f6f6a"}
 KENGETALLEN = [("temp", "Etmaal", 1, "°C"), ("temp_dag", "Dag", 1, "°C"), ("temp_nacht", "Nacht", 1, "°C"),
                ("dif", "DIF", 1, "°C"), ("afwijking", "Afw. lichtlijn", 1, "°C"), ("lichtsom", "Licht", 0, "J/cm²"),
                ("rv", "RV", 0, "%"), ("rv_hoog", "Uren RV ≥ 90", 0, ""), ("stook_max", "Stooklijn max", 1, "°C"),
                ("water", "Water", 1, "l/m²"), ("ec", "EC", 2, ""), ("ph", "pH", 1, ""), ("energie", "Energie", 1,
                                                                                          "MJ/m²")]
+# De tegels bovenaan: (sleutel, kop, decimalen, eenheid).
+TEGELS = [("temp", "Etmaal", 1, "°C"), ("afwijking", "Afw. lichtlijn", 1, "°C"), ("rv", "RV", 0, "%"),
+          ("water", "Water", 1, "l/m²"), ("energie", "Energie", 1, "MJ/m²"), ("geoogst", "Geoogst", 0, "stelen")]
+AFWIJKING_GRENS = 0.5            # |afwijking van de lichtlijn| die als te warm of te koud kleurt
+ERNST_KLEUR = {"fout": mo.ROOD, "let op": mo.ORANJE, "info": mo.GRIJS}
 
 
 def onderwerp(bundel):
@@ -305,97 +375,165 @@ def link(app_url, rapport, conclusie=None):
     return f"{app_url.rstrip('/')}/rapporten?rapport={rapport}" + (f"&conclusie={conclusie}" if conclusie else "")
 
 
-def _e(tekst):
-    return html.escape(str(tekst))
+def _tegels_tuin(t, vergelijk):
+    """De tegels van één tuin uit de kengetallen van de hele tuin, met het verschil met de vorige periode."""
+    nu = (t.get("kengetallen") or {}).get(HELE_TUIN) or {}
+    toen = (t.get("kengetallen_vorige") or {}).get(HELE_TUIN) or {}
+    rij = []
+    for sleutel, naam, dec, eenheid in TEGELS:
+        w = nu.get(sleutel)
+        if w is None and sleutel != "geoogst":
+            continue
+        if sleutel == "afwijking":
+            waarde = fmt_verschil(w, dec)
+            toon = "let op" if w is not None and abs(w) >= AFWIJKING_GRENS else None
+        else:
+            waarde, toon = fmt_getal(w if w is not None else 0, dec), None
+        verschil = mo.verschil_tekst(w if w is not None else 0, toen.get(sleutel), dec)
+        rij.append({"label": naam, "waarde": waarde, "eenheid": eenheid, "toon": toon,
+                    "sub": f"{verschil} {vergelijk}" if verschil else None})
+    return rij
 
 
-def _tabel(koppen, rijen, rechts_vanaf=1):
-    def cel(tag, i, w, kop=False):
-        stijl = (f"padding:3px 8px;border-bottom:{'2px solid ' + GROEN if kop else '1px solid ' + RAND};"
-                 f"text-align:{'left' if i < rechts_vanaf else 'right'};white-space:nowrap;font-size:12px")
-        return f'<{tag} style="{stijl}">{_e(w)}</{tag}>'
-    kop = "".join(cel("th", i, k, True) for i, k in enumerate(koppen))
-    body = "".join("<tr>" + "".join(cel("td", i, w) for i, w in enumerate(r)) + "</tr>" for r in rijen)
-    return f'<table style="border-collapse:collapse;font-family:Arial,sans-serif"><tr>{kop}</tr>{body}</table>'
+def _grafieken(bundel):
+    """De staafgrafiekjes (afwijking, RV, PATS) uit de reeksen van de tuinen; leeg voor een bundel zonder reeksen."""
+    tuinen = [t for t in bundel.get("tuinen", []) if t.get("reeksen")]
+    if not tuinen:
+        return ""
+    dagen = [date.fromisoformat(d) for d in tuinen[0]["reeksen"]["dagen"]]
+    delen = [mo.sectiekop("Verloop")]
+
+    def kleur_afwijking(v):
+        return mo.ORANJE if v >= AFWIJKING_GRENS else mo.BLAUW if v <= -AFWIJKING_GRENS else mo.GROEN
+
+    def kleur_rv(v):
+        return mo.ROOD if v >= RV_HOOG_UREN[1] else mo.ORANJE if v >= RV_HOOG_UREN[0] else mo.GROEN
+
+    delen.append(mo.staafgrafiek(
+        "Afwijking van de lichtlijn", dagen, [(t["naam"], t["reeksen"]["afwijking"]) for t in tuinen],
+        kleur_afwijking, "°C", 1, minimum=1.0, tweezijdig=True,
+        uitleg=f"Boven de streep = warmer gestookt dan de lichtlijn, eronder kouder; groen = binnen "
+               f"{fmt_kort(AFWIJKING_GRENS, 1)} °C."))
+    delen.append(mo.staafgrafiek(
+        "Uren per etmaal met RV ≥ 90 %", dagen, [(t["naam"], t["reeksen"]["rv_uren"]) for t in tuinen],
+        kleur_rv, "uur", 0, minimum=24,
+        uitleg=f"Kans op roest en schimmel; oranje vanaf {RV_HOOG_UREN[0]} uur, rood vanaf {RV_HOOG_UREN[1]} uur."))
+    pats = [(f"{t['naam']} {insect.lower()}", waarden) for t in tuinen
+            for insect, waarden in (t["reeksen"].get("pats") or {}).items()]
+    if pats:
+        delen.append(mo.staafgrafiek(
+            "Plaagdruk (PATS)", dagen, pats, lambda v: mo.BLAUW, "nieuw", 0, minimum=5,
+            uitleg="Nieuw gevangen insecten per teldag; een korte grijze streep = die dag niet geteld."))
+    return "".join(delen)
 
 
-def _h(tekst, niveau=3):
-    return f'<h{niveau} style="color:{GROEN};margin:16px 0 4px">{_e(tekst)}</h{niveau}>'
+def _gebeurd(bundel):
+    """Per tuin wat er gebeurde: de aantallen, de behandelingen en de PATS-totalen, als kleine regels."""
+    delen = []
+    for t in bundel.get("tuinen", []):
+        regels = []
+        if t.get("samenvatting"):
+            regels.append(_e(t["samenvatting"]))
+        if t.get("behandelingen"):
+            regels.append("Behandelingen: " + "; ".join(
+                f"{_d(date.fromisoformat(b['datum']))} {_e(b['middel'])} (vak {_e(b['vakken'])})"
+                for b in t["behandelingen"]))
+        if t.get("pats"):
+            regels.append("PATS: " + "; ".join(
+                f"{_e(p['insect'])} {fmt_getal(p['totaal'], 0)}"
+                + (f" (vorige {fmt_getal(p['vorige'], 0)})" if p.get("vorige") is not None else "")
+                for p in t["pats"]))
+        if regels:
+            delen.append(f'<p style="margin:3px 0"><b>{_e(t["naam"])}</b>: ' + " · ".join(regels) + "</p>")
+    return mo.sectiekop("Wat er gebeurde") + "".join(delen) if delen else ""
+
+
+def _afdelingstabellen(bundel):
+    delen = []
+    for t in bundel.get("tuinen", []):
+        kolommen = t.get("kolommen") or []
+        rijen = []
+        for s, naam, dec, eenheid in KENGETALLEN:
+            rij = [f"{naam}{' ' + eenheid if eenheid else ''}"]
+            for k in kolommen:
+                w = (t["kengetallen"].get(k) or {}).get(s)
+                rij.append(fmt_verschil(w, dec) if s == "afwijking" else fmt_getal(w, dec))
+            if any(r != "–" for r in rij[1:]):
+                rijen.append(rij)
+        if rijen:
+            delen.append(f'<div style="font-weight:bold;font-size:12px;margin:10px 0 2px">{_e(t["naam"])}</div>'
+                         + mo.tabel(["Kengetal"] + kolommen, rijen, klein=True))
+    return mo.sectiekop("Per afdeling") + "".join(delen) if delen else ""
 
 
 def _signaal_html(s):
     kleur = ERNST_KLEUR[s["ernst"]]
     waar = f"T{s['tuin']}" + (f" vak {s['vak']}" if s["vak"] is not None else "")
-    extra = f" <span style=\"color:{GRIJS}\">(ook {s['eerder']}× eerder)</span>" if s.get("eerder") else ""
-    return (f'<li style="margin:2px 0"><b style="color:{kleur}">{_e(s["ernst"])}</b> · {_e(SOORT_NAAM[s["soort"]])} · '
+    extra = f" <span style=\"color:{mo.GRIJS}\">(ook {s['eerder']}× eerder)</span>" if s.get("eerder") else ""
+    return (f'<li style="margin:1px 0"><b style="color:{kleur}">{_e(s["ernst"])}</b> · {_e(SOORT_NAAM[s["soort"]])} · '
             f"{_e(waar)}: {_e(s['tekst'])}{extra}</li>")
+
+
+def _controles(bundel):
+    signalen = bundel["signalen"]
+    actief = [s for s in signalen if not s.get("feedback")]
+    gedempt = [s for s in signalen if s.get("feedback")]
+    delen = [mo.sectiekop(f"Controles ({len(actief)})", klein=True)]
+    if actief:
+        delen.append(f'<ul style="padding-left:18px;margin:0;font-size:11px">'
+                     + "".join(_signaal_html(s) for s in actief) + "</ul>")
+    else:
+        delen.append('<p style="font-size:11px;margin:2px 0">Niets gevonden.</p>')
+    if gedempt:
+        delen.append(mo.voetnoot("Gedempt door feedback: " + "; ".join(
+            f"T{s['tuin']}{' vak ' + str(s['vak']) if s['vak'] is not None else ''} {_e(s['tekst'])} "
+            f"({_e(s['feedback']['oordeel'])})" for s in gedempt)))
+    return "".join(delen)
+
+
+def _duiding(bundel, duiding, app_url):
+    sleutel = bundel["sleutel"]
+    if not duiding:
+        return mo.voetnoot("Geen duiding van Claude ontvangen (stond de werklaptop uit?): alleen de cijfers en de "
+                           "controles.")
+    delen = [f'<p style="margin:10px 0 4px;font-size:13px">{_e(duiding.get("samenvatting", ""))}</p>']
+    conclusies = duiding.get("conclusies") or []
+    if conclusies:
+        delen.append(mo.sectiekop("Conclusies"))
+        delen.append('<ol style="padding-left:20px;margin:4px 0">')
+        for c in conclusies:
+            url = link(app_url, sleutel, c["id"])
+            feedback = (f' <a href="{_e(url)}" style="color:{mo.GROEN};font-size:11px">feedback geven</a>'
+                        if url else "")
+            wat = " · ".join(x for x in (c.get("soort"), f"tuin {c['tuin']}" if c.get("tuin") else None) if x)
+            delen.append(f'<li style="margin:6px 0"><b>{_e(c.get("titel", ""))}</b>'
+                         + (f' <span style="color:{mo.GRIJS}">({_e(wat)})</span>' if wat else "")
+                         + f"<br>{_e(c.get('tekst', ''))}{feedback}</li>")
+        delen.append("</ol>")
+    return "".join(delen)
 
 
 def bericht(bundel, duiding, app_url=None):
     """(onderwerp, html) van het rapport. duiding: {samenvatting, conclusies: [{id, soort, tuin, titel, tekst}]} of None."""
-    sleutel = bundel["sleutel"]
-    delen = [f'<div style="font-family:Arial,sans-serif;font-size:13px;color:#1f1f1f;max-width:900px">',
-             _h(onderwerp(bundel), 2)]
-    if duiding:
-        delen.append(f"<p>{_e(duiding.get('samenvatting', ''))}</p>")
-        conclusies = duiding.get("conclusies") or []
-        if conclusies:
-            delen.append(_h("Conclusies"))
-            delen.append("<ol style=\"padding-left:20px\">")
-            for c in conclusies:
-                url = link(app_url, sleutel, c["id"])
-                feedback = (f' <a href="{_e(url)}" style="color:{GROEN};font-size:11px">feedback geven</a>'
-                            if url else "")
-                delen.append(f'<li style="margin:6px 0"><b>{_e(c.get("titel", ""))}</b>'
-                             + (f" <span style=\"color:{GRIJS}\">({_e(c['soort'])}"
-                                + (f", tuin {c['tuin']}" if c.get("tuin") else "") + ")</span>" if c.get("soort") else "")
-                             + f"<br>{_e(c.get('tekst', ''))}{feedback}</li>")
-            delen.append("</ol>")
-    else:
-        delen.append(f'<p style="color:{GRIJS}">Geen duiding van Claude ontvangen (stond de werklaptop uit?): '
-                     "alleen de cijfers en de controles.</p>")
-
-    signalen = bundel["signalen"]
-    actief = [s for s in signalen if not s.get("feedback")]
-    gedempt = [s for s in signalen if s.get("feedback")]
-    delen.append(_h(f"Controles ({len(actief)})"))
-    if actief:
-        delen.append('<ul style="padding-left:18px;margin:0">' + "".join(_signaal_html(s) for s in actief) + "</ul>")
-    else:
-        delen.append("<p>Niets gevonden.</p>")
-    if gedempt:
-        delen.append(f'<p style="color:{GRIJS};font-size:11px">Gedempt door feedback: '
-                     + "; ".join(f"T{s['tuin']}{' vak ' + str(s['vak']) if s['vak'] is not None else ''} "
-                                 f"{_e(s['tekst'])} ({_e(s['feedback']['oordeel'])})" for s in gedempt) + "</p>")
-
-    for t in bundel["tuinen"]:
-        delen.append(_h(t["naam"]))
-        if t.get("samenvatting"):
-            delen.append(f"<p style=\"margin:2px 0\">{_e(t['samenvatting'])}</p>")
-        if t.get("behandelingen"):
-            delen.append("<p style=\"margin:2px 0\">Behandelingen: " + "; ".join(
-                f"{_d(date.fromisoformat(b['datum']))} {_e(b['middel'])} ({_e(b['vakken'])})"
-                for b in t["behandelingen"]) + "</p>")
-        if t.get("pats"):
-            delen.append("<p style=\"margin:2px 0\">PATS: " + "; ".join(
-                f"{_e(p['insect'])} {fmt_getal(p['totaal'], 0)}" + (f" (vorige {fmt_getal(p['vorige'], 0)})"
-                                                                     if p.get("vorige") is not None else "")
-                for p in t["pats"]) + "</p>")
-        kolommen = t.get("kolommen") or []
-        if kolommen:
-            rijen = []
-            for s, naam, dec, eenheid in KENGETALLEN:
-                rij = [f"{naam}{' ' + eenheid if eenheid else ''}"]
-                for k in kolommen:
-                    nu = (t["kengetallen"].get(k) or {}).get(s)
-                    rij.append(fmt_verschil(nu, dec) if s == "afwijking" else fmt_getal(nu, dec))
-                if any(r != "–" for r in rij[1:]):
-                    rijen.append(rij)
-            if rijen:
-                delen.append(_tabel(["Kengetal"] + kolommen, rijen))
-    url = link(app_url, sleutel)
-    delen.append(f'<p style="color:{GRIJS};font-size:11px">Periode {bundel["van"]} t/m {bundel["tot"]}. Controles en '
-                 "cijfers uit de teeltregistratie (Priva-bestanden, Agro4all, PATS); de duiding is van Claude met de "
-                 "bedrijfswiki erbij."
-                 + (f' <a href="{_e(url)}">Open het rapport en geef feedback</a>.' if url else "") + "</p></div>")
-    return onderwerp(bundel), "".join(delen)
+    week = bundel["soort"] == "week"
+    vergelijk = "t.o.v. vorige week" if week else "t.o.v. vorige dag"
+    periode = (f"Week {bundel['week']}, {_d(date.fromisoformat(bundel['van']))} t/m "
+               f"{_d(date.fromisoformat(bundel['tot']))}" if week else f"{_d(date.fromisoformat(bundel['van']))}"
+               f"-{bundel['van'][:4]}")
+    delen = [mo.kop(onderwerp(bundel).split(" (")[0] if week else onderwerp(bundel), periode)]
+    for t in bundel.get("tuinen", []):
+        rij = _tegels_tuin(t, vergelijk)
+        if rij:
+            delen.append(mo.tegels(rij, label=t["naam"]))
+    delen.append(mo.voetnoot(f"Kleine regel onder een tegel = verschil {vergelijk}; cijfers voor de hele tuin."))
+    delen.append(_duiding(bundel, duiding, app_url))
+    delen.append(_gebeurd(bundel))
+    delen.append(_grafieken(bundel))
+    delen.append(_afdelingstabellen(bundel))
+    delen.append(_controles(bundel))
+    url = link(app_url, bundel["sleutel"])
+    delen.append(mo.voetnoot(
+        f"Periode {bundel['van']} t/m {bundel['tot']}. Controles en cijfers uit de teeltregistratie (Priva-bestanden, "
+        "Agro4all, PATS); de duiding is van Claude met de bedrijfswiki erbij."
+        + (f' <a href="{_e(url)}">Open het rapport en geef feedback</a>.' if url else "")))
+    return onderwerp(bundel), mo.omhulsel("".join(delen))

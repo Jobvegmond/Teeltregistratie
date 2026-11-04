@@ -6,8 +6,7 @@ dezelfde plantweek van vorig jaar ernaast, en daaronder elk vak.
 De vakken komen uit logic.teeltvergelijking (teelt + met_dagdata), dus dezelfde cijfers als in de app.
 Alleen rekenwerk en opmaak; versturen doet teelt_rapport.py. Tests in tests/test_teelt_rapport.py.
 """
-import html
-
+from logic import mailopmaak as mo
 from logic import teeltvergelijking as teeltvgl
 from logic.weken import weeknummer
 from utils.format import LEEG, fmt_getal, fmt_verschil
@@ -99,15 +98,23 @@ def per_vak(vakken, tuinnaam, afdeling_volgorde=None):
     return uit
 
 
-def _tabel_html(koppen, rijen, eerste_links=1):
-    stijl_kop = "padding:4px 8px;border-bottom:2px solid #2E6A4C;text-align:{};white-space:nowrap;font-size:12px"
-    stijl_cel = "padding:3px 8px;border-bottom:1px solid #e3e3e0;text-align:{};white-space:nowrap;font-size:12px"
-    kop = "".join(f'<th style="{stijl_kop.format("left" if i < eerste_links else "right")}">{html.escape(k)}</th>'
-                  for i, k in enumerate(koppen))
-    body = "".join("<tr>" + "".join(
-        f'<td style="{stijl_cel.format("left" if i < eerste_links else "right")}">{html.escape(str(rij.get(k, "")))}</td>'
-        for i, k in enumerate(koppen)) + "</tr>" for rij in rijen)
-    return f'<table style="border-collapse:collapse;font-family:Arial,sans-serif">{kop and f"<tr>{kop}</tr>"}{body}</table>'
+# De tegels bovenaan: de belangrijkste kengetallen van de hele teelt, met de plantweek van vorig jaar eronder.
+TEGELS = ("Stelen", "Uitval", "Teeltduur", "Oogstlengte", "Oogstgewicht", "Energie (warmte + gas)")
+
+
+def tegels(samen, kolommen):
+    """De tegels uit de samenvatting: het Totaal (of de ene tuin), met "vorig jaar …" eronder."""
+    kolom = "Totaal" if "Totaal" in kolommen else kolommen[0]
+    rijen = dict(samen)
+    uit = []
+    for naam in TEGELS:
+        rij = rijen.get(naam)
+        if not rij or rij.get(kolom, LEEG) == LEEG:
+            continue
+        vorig = rij.get("Vorig jaar", LEEG)
+        uit.append({"label": naam.split(" (")[0], "waarde": rij[kolom],
+                    "sub": f"vorig jaar {vorig}" if vorig != LEEG else None})
+    return uit
 
 
 def bericht(plantweek, vakken, vorig_jaar, tuinen, laatste_oogst, app_url=None, afdeling_volgorde=None):
@@ -133,13 +140,14 @@ def bericht(plantweek, vakken, vorig_jaar, tuinen, laatste_oogst, app_url=None, 
     tekst += ["  " + " ; ".join(rij[k] for k in vak_koppen) for rij in vak_rijen]
     tekst += ["", voet] + ([f"Teeltregistratie: {app_url}"] if app_url else [])
 
-    samen_html = _tabel_html(["Kengetal"] + kolommen, [{"Kengetal": kop, **rij} for kop, rij in samen])
-    html_tekst = (
-        '<div style="font-family:Arial,sans-serif;font-size:13px;color:#1f1f1f">'
-        f'<h2 style="color:#2E6A4C;margin:0 0 6px">Teelt afgerond: plantweek {week} ({jaar})</h2>'
-        f"<p>{html.escape(inleiding)}</p><h3 style=\"margin:14px 0 4px\">Samenvatting</h3>{samen_html}"
-        f'<h3 style="margin:14px 0 4px">Per vak</h3>{_tabel_html(vak_koppen, vak_rijen, eerste_links=5)}'
-        f'<p style="color:#6f6f6a;font-size:11px">{html.escape(voet)}</p>'
-        + (f'<p><a href="{html.escape(app_url)}">Open de teeltregistratie</a></p>' if app_url else "")
-        + "</div>")
+    html_tekst = mo.omhulsel(
+        mo.kop(f"Teelt afgerond: plantweek {week} ({jaar})", inleiding)
+        + mo.tegels(tegels(samen, kolommen))
+        + mo.sectiekop("Samenvatting")
+        + mo.tabel(["Kengetal"] + kolommen, [{"Kengetal": kop, **rij} for kop, rij in samen])
+        + mo.sectiekop("Per vak")
+        + mo.tabel(vak_koppen, vak_rijen, eerste_links=5)
+        + mo.voetnoot(mo.e(voet))
+        + (f'<p><a href="{mo.e(app_url)}" style="color:{mo.GROEN}">Open de teeltregistratie</a></p>' if app_url else ""),
+        breedte=900)
     return onderwerp(plantweek), "\n".join(tekst), html_tekst

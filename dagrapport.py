@@ -118,6 +118,7 @@ def maak_bundel(soort, vandaag):
 
     sleutel, van, tot, week = periode(soort, vandaag)
     lengte = (tot - van).days + 1
+    dagen = dr.dagenlijst(tot, dr.REEKS_DAGEN[soort])         # voor de grafiekjes
     v_van, v_tot = van - timedelta(days=lengte), tot - timedelta(days=lengte)
 
     def plandatum(start):
@@ -207,8 +208,14 @@ def maak_bundel(soort, vandaag):
                    "datum": _datum(w.datum), "liter": float(w.liter_per_m2)}
                   for w in water.itertuples() if (w.liter_per_m2 or 0) > 0]
 
-        tellingen = database.get_pats_tellingen(tid, min(v_van, vandaag - timedelta(days=17)), vandaag)
+        tellingen = database.get_pats_tellingen(tid, min(v_van, dagen[0], vandaag - timedelta(days=17)), vandaag)
         dagtotalen = pats.dagtotalen(tellingen)
+        afd_m2 = {a: m2 for (t_id, a), m2 in g.afd_m2.items() if t_id == tid}
+        uur_reeks, _meteo = database.get_klimaat_uur(tid, dagen[0], tot)
+        reeksen = {"dagen": [str(d) for d in dagen],
+                   "afwijking": dr.reeks_afwijking(g.klimaat[g.klimaat["tuin_id"] == tid], afd_m2, dagen),
+                   "rv_uren": dr.reeks_rv_uren(uur_reeks, afd_m2, dagen),
+                   "pats": dr.reeks_pats(dagtotalen, dagen)}
         pats_feit = []
         for insect in dict.fromkeys(r["insect"] for r in dagtotalen):
             pats_feit.append({"insect": insect,
@@ -239,7 +246,7 @@ def maak_bundel(soort, vandaag):
                         for r in gebeurd],
             "behandelingen": [{"datum": d, "middel": m, "vakken": ", ".join(str(v) for v in sorted(set(vakken)))}
                               for (d, m), vakken in sorted(per_middel.items())],
-            "pats": pats_feit, "kolommen": kolommen,
+            "pats": pats_feit, "reeksen": reeksen, "kolommen": kolommen,
             "kengetallen": {k: nu["waarden"].get(k, {}) for k in kolommen},
             "kengetallen_vorige": {k: toen["waarden"].get(k, {}) for k in kolommen},
             "stookadvies": {f"Afd. {a}": v for a, v in sorted(advies.items())},

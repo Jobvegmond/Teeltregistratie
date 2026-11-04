@@ -125,7 +125,13 @@ class TestHerhalingFeedbackMail(unittest.TestCase):
         bundel = {"sleutel": "2026-11-03-dag", "soort": "dag", "van": "2026-11-03", "tot": "2026-11-03",
                   "signalen": dr.sorteer(signalen),
                   "tuinen": [{"naam": "Tuin 3", "samenvatting": "1 vak geplant", "kolommen": ["Afd. 1"],
-                              "kengetallen": {"Afd. 1": {"temp": 14.2, "afwijking": 0.8}},
+                              "kengetallen": {"Afd. 1": {"temp": 14.2, "afwijking": 0.8},
+                                              "Hele tuin": {"temp": 14.2, "afwijking": 0.8, "rv": 91.0, "geoogst": 7800.0}},
+                              "kengetallen_vorige": {"Hele tuin": {"temp": 13.9, "afwijking": 0.2, "rv": 90.0,
+                                                                   "geoogst": 0.0}},
+                              "reeksen": {"dagen": [str(VANDAAG - timedelta(days=3 - i)) for i in range(3)],
+                                          "afwijking": [0.2, None, 0.8], "rv_uren": [10, 14, 22],
+                                          "pats": {"Trips": [1.0, None, 3.0]}},
                               "behandelingen": [{"datum": "2026-11-03", "middel": "ConSecta", "vakken": "11, 12"}],
                               "pats": [{"insect": "Trips", "totaal": 3, "vorige": 1}]}]}
         duiding = {"samenvatting": "Rustige dag.", "conclusies": [
@@ -136,9 +142,40 @@ class TestHerhalingFeedbackMail(unittest.TestCase):
         self.assertIn("&lt;0,8&gt;", tekst)
         self.assertIn("ook 2× eerder", tekst)
         self.assertIn("+0,8", tekst)
-        self.assertIn("di 03-11 ConSecta (11, 12)", tekst)
+        self.assertIn("+0,3 t.o.v. vorige dag", tekst)            # tegel Etmaal: 14,2 tegen 13,9
+        self.assertIn("Afwijking van de lichtlijn", tekst)           # grafiekjes uit de reeksen
+        self.assertIn("Plaagdruk (PATS)", tekst)
+        self.assertLess(tekst.index("Etmaal"), tekst.index("Conclusies"))        # cijfers eerst
+        self.assertLess(tekst.index("Conclusies"), tekst.index("Controles (2)"))   # controles onderaan
+        self.assertIn("di 03-11 ConSecta (vak 11, 12)", tekst)
         _, zonder = dr.bericht(bundel, None)
         self.assertIn("Geen duiding", zonder)
+
+
+class TestReeksen(unittest.TestCase):
+    def test_afwijking_gewogen_naar_m2(self):
+        import pandas as pd
+        klimaat = pd.DataFrame([
+            {"afdeling": 1, "datum": "2026-11-03", "temp_24h": 14.0, "lichtsom": 200.0},    # lijn 13,14 → +0,86
+            {"afdeling": 2, "datum": "2026-11-03", "temp_24h": 13.0, "lichtsom": 200.0},    # → −0,14
+            {"afdeling": 1, "datum": "2026-11-02", "temp_24h": None, "lichtsom": 200.0}])
+        dagen = dr.dagenlijst(date(2026, 11, 3), 3)
+        uit = dr.reeks_afwijking(klimaat, {1: 3000.0, 2: 1000.0}, dagen)
+        self.assertEqual([round(x, 3) if x is not None else None for x in uit], [None, None, 0.61])
+
+    def test_rv_uren_geschaald_en_minimum_metingen(self):
+        import pandas as pd
+        rijen = [{"afdeling": 1, "tijdstip": f"2026-11-03 {u:02d}:00", "rv": 95.0 if u < 6 else 80.0} for u in range(24)]
+        rijen += [{"afdeling": 1, "tijdstip": f"2026-11-02 {u:02d}:00", "rv": 95.0} for u in range(5)]     # te weinig uren
+        dagen = dr.dagenlijst(date(2026, 11, 3), 2)
+        self.assertEqual(dr.reeks_rv_uren(pd.DataFrame(rijen), {1: 5000.0}, dagen), [None, 6.0])
+        self.assertEqual(dr.reeks_rv_uren(None, {1: 5000.0}, dagen), [None, None])
+
+    def test_pats_per_dag(self):
+        dagen = dr.dagenlijst(date(2026, 11, 3), 3)
+        totalen = [{"insect": "Trips", "datum": date(2026, 11, 1), "totaal": 4.0},
+                   {"insect": "Trips", "datum": date(2026, 11, 3), "totaal": 2.0}]
+        self.assertEqual(dr.reeks_pats(totalen, dagen), {"Trips": [4.0, None, 2.0]})
 
 
 class TestOntvangers(unittest.TestCase):
