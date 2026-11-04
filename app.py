@@ -21,6 +21,9 @@ from utils.format import (
 )
 from database import (
     init_db,
+    get_rapporten,
+    get_rapport_feedback,
+    voeg_rapport_feedback_toe,
     get_lopende_teelten,
     update_halverwege,
     update_oogst,
@@ -118,6 +121,7 @@ from logic import opzoeken
 from logic import selectie
 from logic import watergift as wg
 from logic import pats as pats_logic
+from logic import dagrapport as rap_logic
 from logic import weken as kalender
 from logic import tuinvergelijking as tuinvgl
 from logic import tuin_overzicht as tuin_ov
@@ -592,6 +596,7 @@ PAGINA_DEFINITIES = [
     ("pagina_tuinvergelijking", "Tuin", "tuinvergelijking"),
     ("pagina_opmerkingen", "Opmerkingen", "opmerkingen"),
     ("pagina_meer", "Meer", "meer"),
+    ("pagina_rapporten", "Rapporten", "rapporten"),
 ]
 
 
@@ -5192,6 +5197,174 @@ def _pagina_prognosekwaliteit():
 # uit, niet die van alle tabbladen. Elke pagina heeft een eigen adres
 # (bijv. /stek) voor links en bladwijzers; de app opent op Overzicht.
 
+# --- RAPPORTEN ---
+# Het dag- en weekrapport (dagrapport.py): de duiding van Claude, de controles en de feedback per conclusie.
+
+RAP_SIGNAAL_KOLOMMEN = [
+    ("Ernst", "Ernst", "tekst", None, "small"), ("Soort", "Soort", "tekst", None, 95),
+    ("Tuin", "Tuin", "getal", "%d", "small"), ("Vak", "Vak", "getal", "%d", "small"),
+    ("Wat", "Wat", "tekst", None, "large"), ("Eerder", "Eerder", "getal", "%d", "small"),
+    ("Feedback", "Feedback", "tekst", None, "medium"),
+]
+RAP_FEEDBACK_KOLOMMEN = [
+    ("Datum", "Datum", "datum", None, "small"), ("Rapport", "Rapport", "tekst", None, "medium"),
+    ("Conclusie", "Conclusie", "tekst", None, "large"), ("Oordeel", "Oordeel", "tekst", None, 95),
+    ("Toelichting", "Toelichting", "tekst", None, "large"), ("Door", "Door", "tekst", None, "small"),
+]
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _rap_gegevens(versie):
+    """(rapporten, feedback); `versie` is alleen een cachesleutel (na het opslaan van feedback opnieuw)."""
+    rapporten = [{**r, "bundel": json.loads(r["bundel"]), "duiding": json.loads(r["duiding"]) if r["duiding"] else None}
+                 for r in get_rapporten(120)]
+    return rapporten, get_rapport_feedback()
+
+
+def _rap_datum(tekst):
+    return date.fromisoformat(str(tekst)[:10])
+
+
+def _rap_label(r):
+    if r["soort"] == "week":
+        return (f"Week {r['bundel'].get('week')} ({format_datum(_rap_datum(r['van']))} t/m "
+                f"{format_datum(_rap_datum(r['tot']))})")
+    d = _rap_datum(r["van"])
+    return f"Dag {_DAGEN_KORT[d.weekday()]} {format_datum(d)}"
+
+
+def _rap_in_tuin(tuin):
+    return tuin is None or TUIN_WEERGAVE == "beide" or tuin == TUIN_WEERGAVE
+
+
+def _rap_conclusie(rapport, c, feedback, uit_mail):
+    """Eén conclusie met de feedback die er al op is, en een formulier voor nieuwe feedback."""
+    wat = " · ".join(x for x in (c.get("soort"), f"tuin {c['tuin']}" if c.get("tuin") else None) if x)
+    with st.container(border=True, key=f"rap_c_{c['id']}"):
+        st.markdown(f"**{c.get('titel', '')}**" + (f" :gray[{wat}]" if wat else "")
+                    + (" :green-badge[uit de mail]" if uit_mail else ""))
+        st.write(c.get("tekst", ""))
+        for f in feedback:
+            if f["rapport"] == rapport and f["conclusie"] == c["id"]:
+                st.caption(f"{format_datum(f['tijdstip'].date())} · {f['gebruiker'] or '-'}: **{f['oordeel']}**"
+                           + (f" — {f['tekst']}" if f["tekst"] else ""))
+        with st.form(f"rap_form_{rapport}_{c['id']}", clear_on_submit=True, border=False):
+            rij = st.container(horizontal=True, vertical_alignment="bottom", gap="small")
+            with rij:
+                oordeel = st.segmented_control("Klopt dit?", rap_logic.OORDELEN, key=f"rap_o_{rapport}_{c['id']}")
+                tekst = st.text_input("Toelichting", key=f"rap_t_{rapport}_{c['id']}", width=420,
+                                      placeholder="Waarom niet, of wat er echt aan de hand was")
+                opslaan = st.form_submit_button("Opslaan")
+            if opslaan:
+                if not oordeel:
+                    st.warning("Kies eerst of het klopt.")
+                else:
+                    voeg_rapport_feedback_toe(rapport, c["id"], oordeel, tekst, huidige_gebruiker())
+                    st.session_state["rap_versie"] = st.session_state.get("rap_versie", 0) + 1
+                    st.toast("Feedback opgeslagen; het volgende rapport houdt er rekening mee.")
+                    st.rerun()
+
+
+def _rap_kengetallen(t):
+    """De kengetallen van één tuin per afdeling als DataFrame (alleen regels met een waarde)."""
+    rijen = []
+    for s, naam, dec, eenheid in rap_logic.KENGETALLEN:
+        rij = {"Kengetal": f"{naam}{' ' + eenheid if eenheid else ''}"}
+        for k in t.get("kolommen", []):
+            w = (t["kengetallen"].get(k) or {}).get(s)
+            rij[k] = fmt_verschil(w, dec) if s == "afwijking" else fmt_getal(w, dec)
+        if any(v != LEEG for k, v in rij.items() if k != "Kengetal"):
+            rijen.append(rij)
+    return pd.DataFrame(rijen)
+
+
+def _pagina_rapporten():
+    layout.pagina_kop(
+        "Rapporten",
+        wat="Het dagrapport (elke ochtend, over gisteren) en het weekrapport (maandag, over de afgelopen week) dat "
+            "ook gemaild wordt: de conclusies van Claude, de controles en jouw feedback daarop.",
+        lezen=["Kies het rapport met ◀ ▶. De tuin bovenaan filtert de conclusies en controles (Beide = alles).",
+               "Geef bij een conclusie aan of die **klopt**, **niet klopt** of **bewust zo** is, met een korte "
+               "toelichting. Het volgende rapport leest dat mee: wat niet klopt of bewust zo is, komt 30 dagen "
+               "niet terug als controle, en de toelichting gaat als les naar de wiki (map rapporten).",
+               "**Controles**: *fout* = de data of een registratie klopt niet; *let op* = iets doen of nakijken; "
+               "*info* = ter kennisgeving. *Eerder* = in hoeveel dagrapporten van de laatste 14 dagen hetzelfde "
+               "stond."],
+        bron="De controles rekent de teeltregistratie uit (Priva-bestanden, Agro4all, PATS, de registraties en het "
+             "teeltmodel); de duiding schrijft Claude met de bedrijfswiki erbij (geplande taak op de werklaptop). "
+             "De NAS mailt het rapport; staat er om 9 uur nog geen duiding klaar, dan gaan alleen de cijfers.",
+    )
+    rapporten, feedback = _rap_gegevens(st.session_state.get("rap_versie", 0))
+    if not rapporten:
+        st.info("Nog geen rapporten. Het eerste komt na de eerste ochtend dat de NAS het dagrapport mailt.")
+        return
+    per_sleutel = {r["sleutel"]: r for r in rapporten}
+    opties = [r["sleutel"] for r in sorted(rapporten, key=lambda r: (r["van"], r["soort"]))]
+    # Uit de mail: ?rapport=…&conclusie=… kiest het rapport (één keer; daarna gewoon bladeren).
+    vraag = st.query_params.to_dict()
+    if vraag.get("rapport") in per_sleutel:
+        filters.bewaar("rap_rapport", vraag["rapport"])
+        st.session_state["rap_uit_mail"] = vraag.get("conclusie")
+        st.query_params.clear()
+
+    balk = layout.filterbalk("rapporten")
+    sleutel = filters.bladeraar("rap_rapport", opties, opties[-1], format_func=lambda k: _rap_label(per_sleutel[k]),
+                                naam="rapport", plek=balk)
+    r = per_sleutel[sleutel]
+    bundel, duiding = r["bundel"], r["duiding"] or {}
+
+    layout.sectie("Samenvatting")
+    if duiding:
+        st.write(duiding.get("samenvatting", ""))
+    else:
+        st.caption("Dit rapport is zonder duiding van Claude verstuurd (alleen de cijfers en de controles).")
+    if duiding:
+        conclusies = [c for c in duiding.get("conclusies", []) if _rap_in_tuin(c.get("tuin"))]
+        layout.sectie("Conclusies", len(conclusies))
+        for c in conclusies:
+            _rap_conclusie(sleutel, c, feedback, c["id"] == st.session_state.get("rap_uit_mail"))
+
+    signalen = [s for s in bundel.get("signalen", []) if _rap_in_tuin(s["tuin"])]
+    layout.sectie("Controles", len(signalen))
+    sig_df = pd.DataFrame([{
+        "Ernst": s["ernst"], "Soort": rap_logic.SOORT_NAAM[s["soort"]], "Tuin": s["tuin"], "Vak": s["vak"],
+        "Wat": s["tekst"], "Eerder": s.get("eerder") or None,
+        "Feedback": (s.get("feedback") or {}).get("oordeel", "")} for s in signalen])
+    if signalen:
+        toon_tabel(sig_df, RAP_SIGNAAL_KOLOMMEN, verberg_leeg=True)
+        uitleg_help.voetnoot("Een controle met feedback *klopt niet* of *bewust zo* staat in de mail onderaan, "
+                             "als gedempt.")
+    else:
+        st.caption("Geen controles die iets vonden.")
+
+    for t in bundel.get("tuinen", []):
+        if _rap_in_tuin(t["nummer"]):
+            with layout.uitklap(f"{t['naam']}: wat er gebeurde en de kengetallen"):
+                st.caption(t.get("samenvatting") or "Niets geregistreerd.")
+                if t.get("behandelingen"):
+                    st.caption("Behandelingen: " + "; ".join(
+                        f"{format_datum(_rap_datum(b['datum']))} {b['middel']} (vak {b['vakken']})"
+                        for b in t["behandelingen"]))
+                kengetallen = _rap_kengetallen(t)
+                if not kengetallen.empty:
+                    st.dataframe(kengetallen, hide_index=True)
+
+    titels = {(x["sleutel"], c["id"]): c.get("titel", c["id"]) for x in rapporten if x["duiding"]
+              for c in x["duiding"].get("conclusies", [])}
+    with layout.uitklap("Alle feedback", len(feedback)):
+        if feedback:
+            toon_tabel(pd.DataFrame([{
+                "Datum": f["tijdstip"].strftime("%d-%m-%y"),
+                "Rapport": _rap_label(per_sleutel[f["rapport"]]) if f["rapport"] in per_sleutel else f["rapport"],
+                "Conclusie": titels.get((f["rapport"], f["conclusie"]), f["conclusie"]), "Oordeel": f["oordeel"],
+                "Toelichting": f["tekst"] or "", "Door": f["gebruiker"] or "-"} for f in feedback]),
+                RAP_FEEDBACK_KOLOMMEN)
+        else:
+            st.caption("Nog geen feedback gegeven.")
+    if signalen:
+        layout.export(excel_bestand({"Controles": sig_df}), f"rapport_{sleutel}.xlsx", sleutel="rap_excel")
+
+
 def pagina_registreren():
     _pagina_registreren()
 
@@ -5211,6 +5384,10 @@ def pagina_tuinvergelijking():
 def pagina_opmerkingen():
     _pagina_opmerkingen_1()
 
+
+
+def pagina_rapporten():
+    _pagina_rapporten()
 
 
 def pagina_meer():
