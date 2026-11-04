@@ -1,7 +1,11 @@
 """Tests voor logic/dagrapport.py: de controles, herhaling en feedback, en de mail."""
+import os
 import unittest
 from datetime import date, timedelta
+from unittest import mock
 
+import dagrapport as script
+from integrations import mail
 from logic import dagrapport as dr
 
 VANDAAG = date(2026, 11, 4)
@@ -135,6 +139,20 @@ class TestHerhalingFeedbackMail(unittest.TestCase):
         self.assertIn("di 03-11 ConSecta (11, 12)", tekst)
         _, zonder = dr.bericht(bundel, None)
         self.assertIn("Geen duiding", zonder)
+
+
+class TestOntvangers(unittest.TestCase):
+    def test_dag_naar_job_en_week_naar_info(self):
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("DAGRAPPORT_AAN", None)
+            os.environ.pop("WEEKRAPPORT_AAN", None)
+            self.assertEqual(script.ontvangers(mail, "dag"), ["job@tanacetum.nl"])
+            self.assertEqual(script.ontvangers(mail, "week"), ["info@tanacetum.nl"])
+
+    def test_omgeving_overschrijft_en_proefmail_gaat_naar_het_proefadres(self):
+        with mock.patch.dict(os.environ, {"DAGRAPPORT_AAN": "a@x.nl, b@x.nl"}):
+            self.assertEqual(script.ontvangers(mail, "dag"), ["a@x.nl", "b@x.nl"])
+            self.assertEqual(script.ontvangers(mail, "dag", "test@x.nl"), ["test@x.nl"])
 
 
 if __name__ == "__main__":

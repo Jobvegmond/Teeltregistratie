@@ -32,6 +32,9 @@ APP_URL = "https://vemteelt.onrender.com"
 # gebeurde, de controles hieronder en de duiding van Claude (geplande taak op de werklaptop). De NAS mailt.
 # Zonder duiding gaat het rapport vanaf RAPPORT_UITERLIJK uur toch, met alleen de cijfers.
 RAPPORT_UITERLIJK = 9
+# Ontvangers (meer adressen met komma's); de omgeving (.env.taak) kan ze overschrijven met dezelfde naam.
+DAGRAPPORT_AAN = "job@tanacetum.nl"
+WEEKRAPPORT_AAN = "info@tanacetum.nl"
 RV_HOOG_UREN = (12, 20)         # uren RV ≥ 90 % per etmaal: vanaf 12 info, vanaf 20 let op (roest, schimmel)
 STOOKADVIES_MARGE = 0.5         # huidige stooklijn wijkt zoveel °C of meer af van het advies: let op
 PH_REGELING = {1}               # tuinen met een pH-regeling (tuin 3 heeft die niet: pH daar alleen ter info)
@@ -112,4 +115,4 @@ PATS_MODEL = "beedrill"
 # --- VERSIE ---
 # Staat rechtsboven in de app. Ophogen bij elke wijziging op main (zie CHANGELOG.md):
 # derde getal bij een correctie, tweede bij iets nieuws, eerste bij een grote omzetting.
-APP_VERSIE = "2.26.0"
+APP_VERSIE = "2.26.1"

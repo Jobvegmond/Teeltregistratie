@@ -14,7 +14,8 @@ Zo loopt het:
    vandaag, dan maakt de NAS de bundel zelf en mailt die zonder duiding.
 
 Sleutel: "2026-11-03-dag" (de dag waarover het gaat) of "2026-w45" (de week, zondag t/m zaterdag).
-Ontvangers: DAGRAPPORT_AAN, anders RAPPORT_AAN (omgeving), anders config.RAPPORT_AAN.
+Ontvangers: het dagrapport naar DAGRAPPORT_AAN, het weekrapport naar WEEKRAPPORT_AAN (omgeving, anders
+config.py).
 
 Gebruik:
     python dagrapport.py bundel [--soort week] [--datum 2026-11-04] [--doel productie] [--uit bundel.json]
@@ -310,8 +311,16 @@ def controleer_duiding(duiding, bundel):
     return fouten
 
 
-def verstuur_rapport(database, mail, bundel, duiding, aan, args, stempel):
+def ontvangers(mail, soort, test=None):
+    """De adressen van een dagrapport of weekrapport; bij een proefmail alleen het opgegeven adres."""
+    from config import DAGRAPPORT_AAN, WEEKRAPPORT_AAN
+    naam, standaard = ("WEEKRAPPORT_AAN", WEEKRAPPORT_AAN) if soort == "week" else ("DAGRAPPORT_AAN", DAGRAPPORT_AAN)
+    return mail.ontvangers(test or mail.instelling(naam, standaard))
+
+
+def verstuur_rapport(database, mail, bundel, duiding, args, stempel):
     from config import APP_URL
+    aan = ontvangers(mail, bundel["soort"], args.test)
     from logic import dagrapport as dr
     onderwerp, html_tekst = dr.bericht(bundel, duiding, APP_URL)
     if args.droog:
@@ -330,7 +339,7 @@ def verstuur_rapport(database, mail, bundel, duiding, aan, args, stempel):
 
 def verstuur(args):
     import database
-    from config import RAPPORT_AAN, RAPPORT_UITERLIJK
+    from config import RAPPORT_UITERLIJK
     from integrations import mail
 
     nu = datetime.now(NL)
@@ -339,7 +348,6 @@ def verstuur(args):
     if not args.droog:
         database.init_db()          # tabellen rapport en rapport_feedback (nieuw in 2.26.0)
     verstuurd = set() if args.test else {r["sleutel"] for r in _veilig(lambda: database.get_rapporten(200), [])}
-    aan = mail.ontvangers(args.test or mail.instelling("DAGRAPPORT_AAN") or mail.instelling("RAPPORT_AAN", RAPPORT_AAN))
     if not mail.verzendweg() and not args.droog:
         print(f"[{stempel}] Het versturen is nog niet ingesteld (GRAPH_… of SMTP_… in .env.taak); niets gedaan.")
         return
@@ -357,7 +365,7 @@ def verstuur(args):
         if bundel["sleutel"] in verstuurd or date.fromisoformat(bundel["tot"]) < vandaag - timedelta(days=8):
             continue
         try:
-            verstuur_rapport(database, mail, bundel, duiding, aan, args, stempel)
+            verstuur_rapport(database, mail, bundel, duiding, args, stempel)
             gedaan.add(bundel["sleutel"])
         except mail.MailFout as e:
             print(f"[{stempel}] FOUT bij mailen {bundel['sleutel']}: {e}", file=sys.stderr)
@@ -369,8 +377,7 @@ def verstuur(args):
             if sleutel in verstuurd or sleutel in gedaan:
                 continue
             try:
-                verstuur_rapport(database, mail, json.loads(als_json(maak_bundel(soort, vandaag))), None, aan, args,
-                                 stempel)
+                verstuur_rapport(database, mail, json.loads(als_json(maak_bundel(soort, vandaag))), None, args, stempel)
             except mail.MailFout as e:
                 print(f"[{stempel}] FOUT bij mailen {sleutel}: {e}", file=sys.stderr)
                 fout = True

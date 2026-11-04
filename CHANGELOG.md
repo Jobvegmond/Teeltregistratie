@@ -3,6 +3,13 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.26.1] - 2026-11-04
+
+### Gewijzigd
+- **Dagrapport en weekrapport gaan naar andere adressen**: het dagrapport naar job@tanacetum.nl, het weekrapport
+  (maandag) naar info@tanacetum.nl (`config.DAGRAPPORT_AAN` en `WEEKRAPPORT_AAN`; `.env.taak` kan ze overschrijven
+  met dezelfde namen, meer adressen met komma's). Het rapport "Teelt afgerond" blijft naar `RAPPORT_AAN`.
+
 ## [2.26.0] - 2026-11-04
 
 ### Toegevoegd
