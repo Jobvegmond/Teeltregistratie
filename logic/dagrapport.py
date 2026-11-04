@@ -17,7 +17,7 @@ from statistics import median
 from config import (DIF_MIN, EC_BEREIK, FLORGIB_ACHTERSTAND_DAGEN, INWATER_DAGEN, PATS_STIJGING, PATS_STIJGING_MIN,
                     PH_BEREIK, PH_REGELING, RV_HOOG_UREN, STOOK_MAX, STOOKADVIES_MARGE)
 from logic import mailopmaak as mo
-from utils.format import fmt_getal, fmt_kort, fmt_verschil
+from utils.format import LEEG, fmt_getal, fmt_kort, fmt_verschil
 
 SOORTEN = ("data", "registratie", "bespuiting", "klimaat", "water", "plaag")
 SOORT_NAAM = {"data": "Data", "registratie": "Registraties", "bespuiting": "Bespuitingen", "klimaat": "Klimaat",
@@ -320,6 +320,21 @@ def reeks_afwijking(klimaat, afd_m2, dagen):
     return _gewogen_per_dag(waarden, dagen)
 
 
+def reeks_temp(klimaat, afd_m2, dagen):
+    """De etmaaltemperatuur per dag (°C), gewogen naar de m² van de afdeling; zelfde invoer als reeks_afwijking."""
+    waarden = []
+    for r in klimaat.itertuples():
+        m2 = afd_m2.get(int(r.afdeling), 0.0) if r.afdeling == r.afdeling and r.afdeling is not None else 0.0
+        if r.temp_24h is not None and r.temp_24h == r.temp_24h and m2:
+            waarden.append((str(r.datum)[:10], m2, float(r.temp_24h)))
+    return _gewogen_per_dag(waarden, dagen)
+
+
+def reeks_verschil(eerste, tweede):
+    """Per dag eerste − tweede; None als een van beide ontbreekt."""
+    return [a - b if a is not None and b is not None else None for a, b in zip(eerste, tweede)]
+
+
 def reeks_rv_uren(uur, afd_m2, dagen, grens=90, minimaal=12):
     """
     Uren per etmaal met RV ≥ `grens` %, gewogen naar de m² van de afdeling (zoals de kengetallen: geschaald naar 24
@@ -358,6 +373,9 @@ KENGETALLEN = [("temp", "Etmaal", 1, "°C"), ("temp_dag", "Dag", 1, "°C"), ("te
 # De tegels bovenaan: (sleutel, kop, decimalen, eenheid).
 TEGELS = [("temp", "Etmaal", 1, "°C"), ("afwijking", "Afw. lichtlijn", 1, "°C"), ("rv", "RV", 0, "%"),
           ("water", "Water", 1, "l/m²"), ("energie", "Energie", 1, "MJ/m²"), ("geoogst", "Geoogst", 0, "stelen")]
+# Het weekrapport vergelijkt de tuinen en gaat niet over de lichtlijn of Agro4all (oogst).
+WEEK_NIET = {"afwijking", "geoogst"}
+VERGELIJK_NIET = {"afwijking"}
 AFWIJKING_GRENS = 0.5            # |afwijking van de lichtlijn| die als te warm of te koud kleurt
 ERNST_KLEUR = {"fout": mo.ROOD, "let op": mo.ORANJE, "info": mo.GRIJS}
 
@@ -375,12 +393,14 @@ def link(app_url, rapport, conclusie=None):
     return f"{app_url.rstrip('/')}/rapporten?rapport={rapport}" + (f"&conclusie={conclusie}" if conclusie else "")
 
 
-def _tegels_tuin(t, vergelijk):
+def _tegels_tuin(t, vergelijk, week=False):
     """De tegels van één tuin uit de kengetallen van de hele tuin, met het verschil met de vorige periode."""
     nu = (t.get("kengetallen") or {}).get(HELE_TUIN) or {}
     toen = (t.get("kengetallen_vorige") or {}).get(HELE_TUIN) or {}
     rij = []
     for sleutel, naam, dec, eenheid in TEGELS:
+        if week and sleutel in WEEK_NIET:
+            continue
         w = nu.get(sleutel)
         if w is None and sleutel != "geoogst":
             continue
@@ -396,10 +416,14 @@ def _tegels_tuin(t, vergelijk):
 
 
 def _grafieken(bundel):
-    """De staafgrafiekjes (afwijking, RV, PATS) uit de reeksen van de tuinen; leeg voor een bundel zonder reeksen."""
+    """
+    De staafgrafiekjes uit de reeksen van de tuinen; leeg voor een bundel zonder reeksen. Het dagrapport toont de
+    afwijking van de lichtlijn, het weekrapport het verschil in etmaaltemperatuur tussen de tuinen.
+    """
     tuinen = [t for t in bundel.get("tuinen", []) if t.get("reeksen")]
     if not tuinen:
         return ""
+    week = bundel["soort"] == "week"
     dagen = [date.fromisoformat(d) for d in tuinen[0]["reeksen"]["dagen"]]
     delen = [mo.sectiekop("Verloop")]
 
@@ -409,17 +433,25 @@ def _grafieken(bundel):
     def kleur_rv(v):
         return mo.ROOD if v >= RV_HOOG_UREN[1] else mo.ORANJE if v >= RV_HOOG_UREN[0] else mo.GROEN
 
-    delen.append(mo.staafgrafiek(
-        "Afwijking van de lichtlijn", dagen, [(t["naam"], t["reeksen"]["afwijking"]) for t in tuinen],
-        kleur_afwijking, "°C", 1, minimum=1.0, tweezijdig=True,
-        uitleg=f"Boven de streep = warmer gestookt dan de lichtlijn, eronder kouder; groen = binnen "
-               f"{fmt_kort(AFWIJKING_GRENS, 1)} °C."))
+    if week and len(tuinen) == 2 and all(t["reeksen"].get("temp") for t in tuinen):
+        eerste, tweede = tuinen
+        delen.append(mo.staafgrafiek(
+            f"Etmaaltemperatuur: {eerste['naam']} min {tweede['naam']}", dagen,
+            [("Verschil", reeks_verschil(eerste["reeksen"]["temp"], tweede["reeksen"]["temp"]))],
+            lambda v: mo.BLAUW if v < 0 else mo.ORANJE, "°C", 1, minimum=1.0, tweezijdig=True,
+            uitleg=f"Boven de streep = {eerste['naam']} warmer dan {tweede['naam']}, eronder kouder."))
+    elif not week:
+        delen.append(mo.staafgrafiek(
+            "Afwijking van de lichtlijn", dagen, [(t["naam"], t["reeksen"]["afwijking"]) for t in tuinen],
+            kleur_afwijking, "°C", 1, minimum=1.0, tweezijdig=True,
+            uitleg=f"Boven de streep = warmer gestookt dan de lichtlijn, eronder kouder; groen = binnen "
+                   f"{fmt_kort(AFWIJKING_GRENS, 1)} °C."))
     delen.append(mo.staafgrafiek(
         "Uren per etmaal met RV ≥ 90 %", dagen, [(t["naam"], t["reeksen"]["rv_uren"]) for t in tuinen],
         kleur_rv, "uur", 0, minimum=24,
         uitleg=f"Kans op roest en schimmel; oranje vanaf {RV_HOOG_UREN[0]} uur, rood vanaf {RV_HOOG_UREN[1]} uur."))
     pats = [(f"{t['naam']} {insect.lower()}", waarden) for t in tuinen
-            for insect, waarden in (t["reeksen"].get("pats") or {}).items()]
+            for insect, waarden in (t["reeksen"].get("pats") or {}).items() if any(waarden)]
     if pats:
         delen.append(mo.staafgrafiek(
             "Plaagdruk (PATS)", dagen, pats, lambda v: mo.BLAUW, "nieuw", 0, minimum=5,
@@ -427,25 +459,27 @@ def _grafieken(bundel):
     return "".join(delen)
 
 
-def _gebeurd(bundel):
-    """Per tuin wat er gebeurde: de aantallen, de behandelingen en de PATS-totalen, als kleine regels."""
-    delen = []
-    for t in bundel.get("tuinen", []):
-        regels = []
-        if t.get("samenvatting"):
-            regels.append(_e(t["samenvatting"]))
-        if t.get("behandelingen"):
-            regels.append("Behandelingen: " + "; ".join(
-                f"{_d(date.fromisoformat(b['datum']))} {_e(b['middel'])} (vak {_e(b['vakken'])})"
-                for b in t["behandelingen"]))
-        if t.get("pats"):
-            regels.append("PATS: " + "; ".join(
-                f"{_e(p['insect'])} {fmt_getal(p['totaal'], 0)}"
-                + (f" (vorige {fmt_getal(p['vorige'], 0)})" if p.get("vorige") is not None else "")
-                for p in t["pats"]))
-        if regels:
-            delen.append(f'<p style="margin:3px 0"><b>{_e(t["naam"])}</b>: ' + " · ".join(regels) + "</p>")
-    return mo.sectiekop("Wat er gebeurde") + "".join(delen) if delen else ""
+def _vergelijking(bundel):
+    """Het weekrapport: de kengetallen van de hele tuin naast elkaar, met het verschil tussen de eerste en de tweede."""
+    tuinen = bundel.get("tuinen", [])
+    if len(tuinen) < 2:
+        return ""
+    eerste, tweede = tuinen[0], tuinen[1]
+    rijen = []
+    for s, naam, dec, eenheid in KENGETALLEN:
+        if s in VERGELIJK_NIET:
+            continue
+        a = (eerste["kengetallen"].get(HELE_TUIN) or {}).get(s)
+        b = (tweede["kengetallen"].get(HELE_TUIN) or {}).get(s)
+        if a is None and b is None:
+            continue
+        rijen.append([f"{naam}{' ' + eenheid if eenheid else ''}", fmt_getal(a, dec), fmt_getal(b, dec),
+                      fmt_verschil(a - b, dec) if a is not None and b is not None else LEEG])
+    if not rijen:
+        return ""
+    return (mo.sectiekop(f"{eerste['naam']} naast {tweede['naam']}")
+            + mo.tabel(["Kengetal", eerste["naam"], tweede["naam"], "Verschil"], rijen)
+            + mo.voetnoot(f"Hele tuin, deze week; verschil = {eerste['naam']} min {tweede['naam']}."))
 
 
 def _afdelingstabellen(bundel):
@@ -522,18 +556,18 @@ def bericht(bundel, duiding, app_url=None):
                f"-{bundel['van'][:4]}")
     delen = [mo.kop(onderwerp(bundel).split(" (")[0] if week else onderwerp(bundel), periode)]
     for t in bundel.get("tuinen", []):
-        rij = _tegels_tuin(t, vergelijk)
+        rij = _tegels_tuin(t, vergelijk, week)
         if rij:
             delen.append(mo.tegels(rij, label=t["naam"]))
     delen.append(mo.voetnoot(f"Kleine regel onder een tegel = verschil {vergelijk}; cijfers voor de hele tuin."))
     delen.append(_duiding(bundel, duiding, app_url))
-    delen.append(_gebeurd(bundel))
     delen.append(_grafieken(bundel))
-    delen.append(_afdelingstabellen(bundel))
+    delen.append(_vergelijking(bundel) if week else _afdelingstabellen(bundel))
     delen.append(_controles(bundel))
     url = link(app_url, bundel["sleutel"])
     delen.append(mo.voetnoot(
-        f"Periode {bundel['van']} t/m {bundel['tot']}. Controles en cijfers uit de teeltregistratie (Priva-bestanden, "
-        "Agro4all, PATS); de duiding is van Claude met de bedrijfswiki erbij."
+        f"Periode {bundel['van']} t/m {bundel['tot']}. Controles en cijfers uit de teeltregistratie "
+        + ("(Priva-bestanden, PATS)" if week else "(Priva-bestanden, Agro4all, PATS)")
+        + "; de duiding is van Claude met de bedrijfswiki erbij."
         + (f' <a href="{_e(url)}">Open het rapport en geef feedback</a>.' if url else "")))
     return onderwerp(bundel), mo.omhulsel("".join(delen))

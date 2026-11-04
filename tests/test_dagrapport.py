@@ -147,12 +147,45 @@ class TestHerhalingFeedbackMail(unittest.TestCase):
         self.assertIn("Plaagdruk (PATS)", tekst)
         self.assertLess(tekst.index("Etmaal"), tekst.index("Conclusies"))        # cijfers eerst
         self.assertLess(tekst.index("Conclusies"), tekst.index("Controles (2)"))   # controles onderaan
-        self.assertIn("di 03-11 ConSecta (vak 11, 12)", tekst)
+        self.assertNotIn("Wat er gebeurde", tekst)                  # vervallen
+        self.assertNotIn("ConSecta", tekst)
         _, zonder = dr.bericht(bundel, None)
         self.assertIn("Geen duiding", zonder)
 
+    def test_weekrapport_vergelijkt_tuinen(self):
+        dagen = [str(VANDAAG - timedelta(days=2 - i)) for i in range(3)]
+
+        def tuin(nr, temp, reeks):
+            return {"naam": f"Tuin {nr}", "kolommen": ["Afd. 1"],
+                    "kengetallen": {"Afd. 1": {"temp": temp, "afwijking": 0.9},
+                                    "Hele tuin": {"temp": temp, "afwijking": 0.9, "rv": 85.0, "geoogst": 5000.0}},
+                    "kengetallen_vorige": {"Hele tuin": {"temp": temp - 0.5}},
+                    "reeksen": {"dagen": dagen, "afwijking": [0.9] * 3, "temp": reeks, "rv_uren": [1, 2, 3],
+                                "pats": {"Turkse mot": [0.0, 0.0, 0.0], "Trips": [1.0, None, 3.0]}}}
+
+        bundel = {"sleutel": "2026-w44", "soort": "week", "week": "2026-44", "van": "2026-10-25", "tot": "2026-10-31",
+                  "signalen": [], "tuinen": [tuin(1, 15.0, [15.0, 15.2, 15.4]), tuin(3, 14.0, [14.0, 14.7, 14.4])]}
+        _, tekst = dr.bericht(bundel, None)
+        self.assertIn("Tuin 1 naast Tuin 3", tekst)
+        self.assertIn("+1,0", tekst)                                 # etmaal: verschil tussen de tuinen
+        self.assertIn("Etmaaltemperatuur: Tuin 1 min Tuin 3", tekst)
+        self.assertIn("Plaagdruk (PATS)", tekst)
+        self.assertNotIn("Turkse mot", tekst)                        # altijd 0: niet getoond
+        for weg in ("lichtlijn", "Per afdeling", "Geoogst", "Agro4all"):
+            self.assertNotIn(weg, tekst)
+        _, dag = dr.bericht({**bundel, "soort": "dag", "sleutel": "2026-10-31-dag", "van": "2026-10-31"}, None)
+        self.assertIn("Afwijking van de lichtlijn", dag)
+
 
 class TestReeksen(unittest.TestCase):
+    def test_temp_en_verschil(self):
+        import pandas as pd
+        klimaat = pd.DataFrame([{"afdeling": 1, "datum": "2026-11-03", "temp_24h": 14.0, "lichtsom": 1.0},
+                                {"afdeling": 2, "datum": "2026-11-03", "temp_24h": 16.0, "lichtsom": 1.0}])
+        dagen = dr.dagenlijst(date(2026, 11, 3), 2)
+        self.assertEqual(dr.reeks_temp(klimaat, {1: 3000.0, 2: 1000.0}, dagen), [None, 14.5])
+        self.assertEqual(dr.reeks_verschil([15.0, None, 14.0], [14.0, 14.0, None]), [1.0, None, None])
+
     def test_afwijking_gewogen_naar_m2(self):
         import pandas as pd
         klimaat = pd.DataFrame([

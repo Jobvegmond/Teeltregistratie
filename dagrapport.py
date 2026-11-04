@@ -117,6 +117,7 @@ def maak_bundel(soort, vandaag):
     from utils.format import fmt_kort
 
     sleutel, van, tot, week = periode(soort, vandaag)
+    week_rapport = soort == "week"
     lengte = (tot - van).days + 1
     dagen = dr.dagenlijst(tot, dr.REEKS_DAGEN[soort])         # voor de grafiekjes
     v_van, v_tot = van - timedelta(days=lengte), tot - timedelta(days=lengte)
@@ -171,6 +172,8 @@ def maak_bundel(soort, vandaag):
         behandelingen = [{"vak": int(b["vaknummer"]), "datum": _datum(b["datum"]), "middel": b["middel"],
                           "type": b["type"], "doel": b.get("doel")}
                          for b in database.get_behandelingen(tid, vandaag - timedelta(days=28), vandaag)]
+        if week_rapport:                # het weekrapport gaat niet over Agro4all
+            behandelingen = []
         # Werkplanning (CXDS, Florgib, planten): alleen voor een tuin die in Agro4all registreert.
         taken = []
         if behandelingen:
@@ -214,6 +217,7 @@ def maak_bundel(soort, vandaag):
         uur_reeks, _meteo = database.get_klimaat_uur(tid, dagen[0], tot)
         reeksen = {"dagen": [str(d) for d in dagen],
                    "afwijking": dr.reeks_afwijking(g.klimaat[g.klimaat["tuin_id"] == tid], afd_m2, dagen),
+                   "temp": dr.reeks_temp(g.klimaat[g.klimaat["tuin_id"] == tid], afd_m2, dagen),
                    "rv_uren": dr.reeks_rv_uren(uur_reeks, afd_m2, dagen),
                    "pats": dr.reeks_pats(dagtotalen, dagen)}
         pats_feit = []
@@ -229,9 +233,11 @@ def maak_bundel(soort, vandaag):
             verwacht.pop("pats", None)
 
         signalen += dr.data_actueel(nr, database.get_laatste_data(tid), verwacht, vandaag)
-        signalen += dr.registraties(nr, teelten, [(v, s) for v, s in planning if s < vandaag], vandaag)
-        signalen += dr.bespuitingen(nr, list(lopend.values()), behandelingen, taken, bezetting, van, tot, vandaag)
-        signalen += dr.klimaat(nr, {k: nu["waarden"].get(k, {}) for k in volgorde}, advies)
+        if not week_rapport:            # registraties en bespuitingen komen uit Agro4all
+            signalen += dr.registraties(nr, teelten, [(v, s) for v, s in planning if s < vandaag], vandaag)
+            signalen += dr.bespuitingen(nr, list(lopend.values()), behandelingen, taken, bezetting, van, tot, vandaag)
+        # Het stookadvies (afwijking van de strategie) hoort bij het dagrapport.
+        signalen += dr.klimaat(nr, {k: nu["waarden"].get(k, {}) for k in volgorde}, {} if week_rapport else advies)
         signalen += dr.water(nr, {k: nu["waarden"].get(k, {}) for k in volgorde}, giften, bezetting)
         signalen += dr.plagen(nr, dagtotalen, vandaag)
 
@@ -249,7 +255,7 @@ def maak_bundel(soort, vandaag):
             "pats": pats_feit, "reeksen": reeksen, "kolommen": kolommen,
             "kengetallen": {k: nu["waarden"].get(k, {}) for k in kolommen},
             "kengetallen_vorige": {k: toen["waarden"].get(k, {}) for k in kolommen},
-            "stookadvies": {f"Afd. {a}": v for a, v in sorted(advies.items())},
+            "stookadvies": {} if week_rapport else {f"Afd. {a}": v for a, v in sorted(advies.items())},
             "lopende_vakken": len(lopend),
             "werkplanning": [{"datum": t["datum"], "titel": t["titel"], "toelichting": t["toelichting"]}
                              for t in taken],
