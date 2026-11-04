@@ -3,6 +3,55 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.26.0] - 2026-11-04
+
+### Toegevoegd
+- **Dagrapport en weekrapport** (`dagrapport.py`, `logic/dagrapport.py`, tests in `tests/test_dagrapport.py`): elke
+  ochtend een mail over gisteren, op maandag ook over de afgelopen week (zondag t/m zaterdag), voor beide tuinen.
+  Vervangt straks het dagrapport dat Claude op de klimaat-pc maakt.
+  - **Controles** op wat er misging of opvalt, als signalen met ernst *fout* / *let op* / *info*:
+    - *data*: klimaat, watergift, warmte/gas, Agro4all en PATS die achterlopen;
+    - *registraties*: Florgib verwacht maar niet geregistreerd, oogstrijp (teeltmodel) zonder emmers, emmers maar
+      niet afgerond, afgerond zonder lengte/gewicht, geen stekbeoordeling, concept niet gestart;
+    - *bespuitingen* (alleen een tuin die in Agro4all registreert): CXDS-blok loopt achter (werkplanning), geen
+      Rizolex bij het planten, een behandeling op een leeg vak, hetzelfde middel 3× in 4 weken;
+    - *klimaat* per afdeling: DIF < 2 °C, stooklijn > 15,5 °C, uren RV ≥ 90 % (roest), stooklijn t.o.v. de
+      lichtlijn die afwijkt van het stookadvies;
+    - *water*: EC/pH van de gift buiten het streven (pH alleen waar een pH-regeling is), water op een leeg vak,
+      een gift ver boven de rest van de afdeling (inwateren telt niet);
+    - *plagen*: trips of turkse mot die oplopen (PATS).
+  - Per signaal hoe vaak het in de dagrapporten van de laatste 14 dagen stond.
+  - **Duiding door Claude**: de geplande taak "Dagrapport teelt" op de werklaptop (06:30) maakt de bundel
+    (`dagrapport.py bundel --doel productie`, alleen lezen), leest de bedrijfswiki, schrijft de samenvatting en
+    de conclusies en zet ze op de NAS (`dagrapport.py klaarzetten`, map `agro4all/rapporten`, die de uurtaak
+    al leest). Geen Anthropic-API.
+  - De **uurtaak op de NAS** (`priva_bestanden.py`) mailt een klaargezet rapport (`integrations/mail.py`, ook in
+    `mail_log`) en bewaart het in de nieuwe tabel `rapport`. Staat er om 9 uur (`RAPPORT_UITERLIJK`) nog niets
+    klaar, dan mailt de NAS het rapport zonder duiding. Ontvangers: `DAGRAPPORT_AAN`, anders `RAPPORT_AAN`.
+- **Pagina 7. Rapporten**: per rapport de samenvatting, de conclusies met **feedback** (klopt / klopt niet /
+  bewust zo + toelichting, tabel `rapport_feedback`), de controles, per tuin de kengetallen en alle feedback.
+  Elke conclusie in de mail linkt hierheen. Feedback *klopt niet* of *bewust zo* dempt dezelfde controles
+  30 dagen (in de mail onderaan als gedempt) en gaat mee naar Claude, die er een les van maakt in de wiki
+  (`wiki/rapporten`).
+- Instellingen in `config.py` (sectie DAGRAPPORT): grenzen voor RV, stookadvies, PATS-stijging, inwateren en de
+  dagen voor herhaling en feedback.
+
+## [2.25.0] - 2026-11-04
+
+### Toegevoegd
+- **Eén verzendweg voor alle mail** (`integrations/mail.py`): Microsoft Graph, Direct Send of SMTP met inloggen,
+  in die volgorde, met bijlagen en afbeeldingen in de tekst (voor het dagrapport dat naar de NAS komt). Direct
+  Send kwam in de spam (het IP-adres van de NAS staat niet in het SPF-record); sinds 04-11-2026 staat Graph in
+  `.env.taak`, met klimaat@tanacetum.nl als afzender. Een kopie staat in Verzonden items van die mailbox.
+- Tabel **`mail_log`**: elke mailpoging (soort, sleutel, onderwerp, ontvangers, verzendweg, ok/fout met de
+  melding), zodat de statusmonitor straks alle mails op één plek ziet.
+- `GRAPH_GEHEIM_VERLOOPT` (jjjj-mm-dd): vanaf een maand voor het verlopen van het Graph-geheim een regel
+  "LET OP: …" in het logboek van de uurtaak.
+
+### Gewijzigd
+- `teelt_rapport.py` verstuurt via de nieuwe module en logt in `mail_log`; de tabel `teelt_rapport` blijft
+  bijhouden welke plantweken al gemaild zijn.
+
 ## [2.24.4] - 2026-11-04
 
 ### Gecorrigeerd

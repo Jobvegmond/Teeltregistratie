@@ -609,6 +609,11 @@ def init_db():
                 verstuurd_op TIMESTAMPTZ DEFAULT now()
             )
         """)
+        # Elke verstuurde of mislukte mail (integrations/mail.py, sinds 2.25.0).
+        cursor.execute(MAIL_LOG_TABEL)
+        # Dag- en weekrapporten met de duiding van Claude, en de feedback daarop (dagrapport.py, sinds 2.26.0).
+        cursor.execute(RAPPORT_TABEL)
+        cursor.execute(RAPPORT_FEEDBACK_TABEL)
         # Gewasbescherming, biologie en voeding per vak (sinds 2.14.0 uit Agro4all, agro4all_import.py).
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS middel (
@@ -1543,6 +1548,118 @@ def markeer_teelt_rapport(plantweek, laatste_oogst, aan):
                 verstuurd_op = now()
         """, (plantweek, str(laatste_oogst), aan))
         conn.commit()
+
+
+MAIL_LOG_TABEL = """
+    CREATE TABLE IF NOT EXISTS mail_log (
+        id SERIAL PRIMARY KEY,
+        soort TEXT NOT NULL,
+        sleutel TEXT,
+        onderwerp TEXT,
+        aan TEXT,
+        weg TEXT,
+        status TEXT NOT NULL CHECK (status IN ('ok', 'fout')),
+        melding TEXT,
+        tijdstip TIMESTAMPTZ DEFAULT now()
+    )
+"""
+
+
+def log_mail(soort, sleutel, onderwerp, aan, weg, status, melding=None):
+    """
+    Eén mailpoging in de mail-log: soort ("teelt_rapport", "dagrapport"), sleutel (bijv. de plantweek),
+    verzendweg ("graph", …) en status "ok" of "fout" met de foutmelding.
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO mail_log (soort, sleutel, onderwerp, aan, weg, status, melding)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """, (soort, sleutel, onderwerp, aan, weg, status, melding))
+        conn.commit()
+
+
+RAPPORT_TABEL = """
+    CREATE TABLE IF NOT EXISTS rapport (
+        sleutel TEXT PRIMARY KEY,
+        soort TEXT NOT NULL CHECK (soort IN ('dag', 'week')),
+        van TEXT NOT NULL,
+        tot TEXT NOT NULL,
+        bundel TEXT NOT NULL,
+        duiding TEXT,
+        verstuurd_op TIMESTAMPTZ,
+        aan TEXT
+    )
+"""
+RAPPORT_FEEDBACK_TABEL = """
+    CREATE TABLE IF NOT EXISTS rapport_feedback (
+        id SERIAL PRIMARY KEY,
+        rapport TEXT NOT NULL REFERENCES rapport (sleutel) ON DELETE CASCADE,
+        conclusie TEXT NOT NULL,
+        oordeel TEXT NOT NULL CHECK (oordeel IN ('klopt', 'klopt niet', 'bewust zo')),
+        tekst TEXT,
+        gebruiker TEXT,
+        tijdstip TIMESTAMPTZ DEFAULT now()
+    )
+"""
+
+
+def bewaar_rapport(sleutel, soort, van, tot, bundel, duiding, aan):
+    """Een verstuurd rapport (bundel en duiding als JSON-tekst); opnieuw versturen overschrijft het."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO rapport (sleutel, soort, van, tot, bundel, duiding, verstuurd_op, aan)
+            VALUES (%s, %s, %s, %s, %s, %s, now(), %s)
+            ON CONFLICT (sleutel) DO UPDATE SET bundel = EXCLUDED.bundel, duiding = EXCLUDED.duiding,
+                verstuurd_op = now(), aan = EXCLUDED.aan
+        """, (sleutel, soort, str(van), str(tot), bundel, duiding, aan))
+        conn.commit()
+
+
+def get_rapporten(aantal=60):
+    """De laatste rapporten als dicts (sleutel, soort, van, tot, bundel, duiding, verstuurd_op), nieuwste eerst."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT sleutel, soort, van, tot, bundel, duiding, verstuurd_op FROM rapport
+            ORDER BY van DESC, soort LIMIT %s
+        """, (aantal,))
+        kolommen = [k[0] for k in cursor.description]
+        return [dict(zip(kolommen, r)) for r in cursor.fetchall()]
+
+
+def voeg_rapport_feedback_toe(rapport, conclusie, oordeel, tekst=None, gebruiker=None):
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO rapport_feedback (rapport, conclusie, oordeel, tekst, gebruiker) VALUES (%s, %s, %s, %s, %s)
+        """, (rapport, conclusie, oordeel, (tekst or "").strip() or None, gebruiker))
+        conn.commit()
+    log_wijziging(gebruiker, "feedback", "rapport", rapport, f"{conclusie}: {oordeel}")
+
+
+def get_rapport_feedback(sinds=None):
+    """Alle feedback (sinds een datum) als dicts, nieuwste eerst."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(f"""
+            SELECT id, rapport, conclusie, oordeel, tekst, gebruiker, tijdstip FROM rapport_feedback
+            {"WHERE tijdstip >= %s" if sinds else ""} ORDER BY tijdstip DESC
+        """, (str(sinds),) if sinds else ())
+        kolommen = [k[0] for k in cursor.description]
+        return [dict(zip(kolommen, r)) for r in cursor.fetchall()]
+
+
+def get_laatste_data(tuin_id):
+    """{bron: laatste datum (date) of None} van een tuin: klimaat, watergift, warmte, gas, behandelingen, PATS."""
+    bronnen = {"klimaat": "klimaatdata_dag", "water": "watergift_dag", "warmte": "energiedata_dag",
+               "gas": "gasdata_dag", "behandeling": "behandeling", "pats": "pats_telling"}
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(" UNION ALL ".join(f"SELECT '{b}', MAX(datum) FROM {t} WHERE tuin_id = %(tuin)s"
+                                          for b, t in bronnen.items()), {"tuin": tuin_id})
+        return {b: date.fromisoformat(str(d)[:10]) if d else None for b, d in cursor.fetchall()}
 
 
 def get_klimaat_uur(tuin_id, van, tot):

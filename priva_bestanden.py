@@ -21,9 +21,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 # Eerst de Priva-scripts, per tuin. Agro4all vóór de klimaatregistratie: die laatste neemt alleen de dagen
-# vóór de eerste Agro4all-behandeling. Het rapport "Teelt afgerond" als laatste, met alle data van dit uur erin.
+# vóór de eerste Agro4all-behandeling. De rapporten ("Teelt afgerond", het dagrapport) als laatste, met alle data van
+# dit uur erin.
 PRIVA_SCRIPTS = ("priva_pulsmeters.py", "priva_watergift.py", "priva_klimaat.py")
-SCRIPTS = ("agro4all_import.py", "klimaatregistratie_import.py", "pats_import.py", "teelt_rapport.py")
+SCRIPTS = ("agro4all_import.py", "klimaatregistratie_import.py", "pats_import.py", "teelt_rapport.py",
+           "dagrapport.py")
 
 
 def main():
