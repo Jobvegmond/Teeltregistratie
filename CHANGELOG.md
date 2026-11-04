@@ -3,6 +3,14 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.24.4] - 2026-11-04
+
+### Gecorrigeerd
+- **PATS-tellingen kwamen sinds 31-10 niet meer binnen**: de API van PATS wil sindsdien bij de tellingen een
+  verplicht telmodel voor de Trap-Eyes ("beedrill" of "vertel") en gaf anders HTTP 400. Nu altijd
+  `config.PATS_MODEL` = "beedrill": dezelfde tellingen als voorheen. De import haalt elk uur 14 dagen op, dus
+  het gat vanaf 31-10 vult zich vanzelf.
+
 ## [2.24.3] - 2026-10-30
 
 ### Gewijzigd

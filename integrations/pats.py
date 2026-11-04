@@ -60,10 +60,17 @@ class Pats:
     def detection_classes(self):
         return self._get("detection_classes")
 
-    def counts(self, section_id, van, tot, bin_mode="D"):
-        """Tellingen per dag: {"trapeye": [...], "c": [...]}. van/tot als date; PATS-C-dagen lopen van 12 tot 12 uur."""
+    def counts(self, section_id, van, tot, bin_mode="D", model=None):
+        """
+        Tellingen per dag: {"trapeye": [...], "c": [...]}. van/tot als date; PATS-C-dagen lopen van 12 tot 12 uur.
+        model = het telmodel van de Trap-Eyes (verplicht sinds 31-10-2026): "beedrill" of "vertel"; standaard
+        config.PATS_MODEL. Op de PATS-C heeft het geen invloed.
+        """
+        if model is None:
+            from config import PATS_MODEL
+            model = PATS_MODEL
         return self._get("counts", section_id=section_id, start_date=f"{van:%Y%m%d}", end_date=f"{tot:%Y%m%d}",
-                         bin_mode=bin_mode)
+                         bin_mode=bin_mode, model=model)
 
 
 def _melding(r):
