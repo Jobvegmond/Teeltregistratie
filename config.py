@@ -90,8 +90,12 @@ PATS_SECTIONS = {58: 3, 869: 1}
 # rij 39, tussen vak 37 en 38; die tellen alleen voor de hele tuin.)
 PATS_TRAPEYE_VAKKEN = {3: (-1, 0)}
 PATS_SERVER = "beta"
+# Telmodel van de Trap-Eyes (verplicht bij PATS sinds 31-10-2026): "beedrill" = de telling bij elke foto (± 3 per
+# week), zoals vanaf het begin in de app; "vertel" = het nieuwe model, elke dag en hoger (bijna 2x zoveel trips).
+# Bij overstappen de hele historie opnieuw ophalen, anders springen de cijfers.
+PATS_MODEL = "beedrill"
 
 # --- VERSIE ---
 # Staat rechtsboven in de app. Ophogen bij elke wijziging op main (zie CHANGELOG.md):
 # derde getal bij een correctie, tweede bij iets nieuws, eerste bij een grote omzetting.
-APP_VERSIE = "2.24.3"
+APP_VERSIE = "2.24.4"
