@@ -4034,3 +4034,48 @@ def get_standaard_tuin_van_gebruiker(username):
         cursor.execute("SELECT standaard_tuin FROM gebruikers WHERE username = %s", (username,))
         rij = cursor.fetchone()
     return (rij[0] if rij and rij[0] else STANDAARD_TUIN)
+
+
+def get_watervoorspelling_data(tuin_id):
+    """
+    Alles voor de watervoorspelling van één tuin (watervoorspelling.py), in vijf query's, alleen lezen:
+    - teelten: id, vaknummer, datum_teelt_start, datum_oogst
+    - water: vaknummer, datum, liter_per_m2, bron (watergift_dag, alle bronnen)
+    - straling: {datum: stralingssom van de tuin} (gemiddeld over de afdelingen)
+    - eerste_emmer: {teelt_id: eerste oogstdag}
+    - opmerkingen: teelt_id, datum, tekst van de opmerkingen met categorie Water
+    """
+    def rijen(cursor):
+        kolommen = [k[0] for k in cursor.description]
+        return [dict(zip(kolommen, r)) for r in cursor.fetchall()]
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT t.id, v.vaknummer, t.datum_teelt_start, t.datum_oogst
+            FROM teelten t JOIN teeltvakken v ON v.id = t.teeltvak_id
+            WHERE v.tuin_id = %s AND v.vaknummer IS NOT NULL AND t.datum_teelt_start IS NOT NULL
+        """, (tuin_id,))
+        teelten = rijen(cursor)
+        cursor.execute("SELECT vaknummer, datum, liter_per_m2, bron FROM watergift_dag WHERE tuin_id = %s",
+                       (tuin_id,))
+        water = rijen(cursor)
+        cursor.execute("""
+            SELECT datum, AVG(stralingssom_dag) FROM klimaatdata_dag
+            WHERE tuin_id = %s AND stralingssom_dag IS NOT NULL GROUP BY datum
+        """, (tuin_id,))
+        straling = {d: float(s) for d, s in cursor.fetchall()}
+        cursor.execute("""
+            SELECT o.teelt_id, MIN(o.datum) FROM oogstregistraties o
+            JOIN teelten t ON t.id = o.teelt_id JOIN teeltvakken v ON v.id = t.teeltvak_id
+            WHERE v.tuin_id = %s AND o.aantal_emmers > 0 GROUP BY o.teelt_id
+        """, (tuin_id,))
+        eerste_emmer = {int(i): d for i, d in cursor.fetchall()}
+        cursor.execute("""
+            SELECT o.teelt_id, o.datum, o.tekst FROM opmerkingen o
+            JOIN teelten t ON t.id = o.teelt_id JOIN teeltvakken v ON v.id = t.teeltvak_id
+            WHERE v.tuin_id = %s AND o.categorie = 'Water'
+        """, (tuin_id,))
+        opmerkingen = rijen(cursor)
+    return {"teelten": teelten, "water": water, "straling": straling, "eerste_emmer": eerste_emmer,
+            "opmerkingen": opmerkingen}

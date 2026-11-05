@@ -3,6 +3,31 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.28.0] - 2026-11-05
+
+### Toegevoegd
+- **Watervoorspelling per vak** (`watervoorspelling.py`, `logic/watervoorspelling.py`, tests in
+  `tests/test_watervoorspelling.py`): voor vandaag per lopende teelt het advies *water*, *twijfel* of *niet nodig*
+  met een korte reden, bijv. "Vak 23 · 9 dagen na planten · 2.362 J/cm² straling sinds de gift van vr 30-10
+  (10 l/m²) · kans 88 %". Een hulpmiddel voor de teler, geen sturing; alleen lezen. Zelfde opzet als
+  `werkplanning.py` (`--json`, `--tuin`, `--doel`, `--van`), plus `--terugtoets` en `--alles`.
+  - Kenmerken per vak-dag: dagen na planten, dagen sinds de vorige gift (≥ 1 l/m²), straling sinds die gift
+    (`klimaatdata_dag`) plus de verwachting voor vandaag, grootte van de vorige gift, al in de oogst.
+  - Per teeltfase (dag 0–3, 4–7, week 2, week 3–4, daarna) een eigen logistische regressie, geleerd op beide
+    tuinen samen (toetste voor allebei beter dan alleen de eigen tuin).
+  - Stralingsverwachting van Open-Meteo (`integrations/openmeteo.py`, gratis, geen sleutel), omgerekend naar de
+    Priva-stralingssom met een rechte lijn door de laatste 4 weken: de verhouding verschilt per seizoen.
+  - Een opmerking met categorie *Water* in de laatste 7 dagen maakt van *niet nodig* een *twijfel*; wat vandaag al
+    gegeven is (Priva) staat als *gegeven*; tuin 3 vak 1 (waterteelt) krijgt geen advies. Ook "morgen
+    waarschijnlijk wel" als de kans morgen boven de drempel komt zonder gift vandaag.
+  - Terugtoets (leren tot juli 2026, toetsen op juli–november, met de opgeslagen verwachtingen van Open-Meteo):
+    tuin 3 *water* 72 % terecht (blind gokken 17 %), 81 % van de giften kreeg *water* en 98 % *water* of
+    *twijfel*; tuin 1 63 % terecht (blind 15 %), 96 % gevonden.
+  - `--json` geeft één item per dag voor de Takenlijst ({id, date, title, area, note}), bijv. "Water: vak 22–28
+    · twijfel: 17–20". Nog niet gekoppeld aan de geplande taak `takenlijst-app`.
+- `database.get_watervoorspelling_data()`: teelten, watergift, straling, eerste emmer en water-opmerkingen van
+  één tuin in vijf query's.
+
 ## [2.27.0] - 2026-11-05
 
 ### Gewijzigd
