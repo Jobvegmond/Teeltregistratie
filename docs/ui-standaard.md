@@ -173,7 +173,8 @@ Geen losse `<style>`-blokken in de pagina's.
   (`PAGINA_ICONEN` in app.py; de huidige als witte kaart met een oranje streepje) en onderaan week, versie en
   gebruiker. Op een smal scherm de kop met het logo en de genummerde knoppen bovenin.
 - **Keuzegroepen** (`filters.weergave`, de tuinkeuze): één grijs spoor, de gekozen optie wit met groene tekst.
-  Op een telefoon (≤ 700 px) staat de tuinkeuze als vaste balk onderin het scherm.
+  Op een telefoon (≤ 700 px) staat de tuinkeuze als vaste balk onderin het scherm; op een breed scherm rechts
+  op de regel van de filterbalk (als de pagina daarmee begint), met Uitleg ernaast.
 - **Uitleg** op een smal scherm: alleen het ?-icoon, rond, rechtsboven in de kop.
 - **Ronding**: 0,5 rem op knoppen en velden (`baseRadius`, `buttonRadius`), 0,75 rem op kaarten.
 - **Licht en donker** volgen het apparaat (`[theme.light]` en `[theme.dark]`); in het donker staat het logo op

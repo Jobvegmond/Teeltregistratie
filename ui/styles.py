@@ -135,6 +135,20 @@ header[data-testid="stHeader"] { display: none; }
     body:has(.vem-zijmerk) .vem-kop { display: none; }
     body:has(.vem-zijmerk) [data-testid="stElementContainer"]:has(> [data-testid="stMarkdown"] .vem-kop) { display: none; }
     body:has(.vem-zijmerk) [data-testid="stLayoutWrapper"]:has(> .st-key-vem_nav) { display: none; }
+    /* Begint de pagina met een filterbalk, dan staan de tuinkeuze en Uitleg rechts op dezelfde regel als de
+       filters (periode, weergave …) in plaats van op een eigen regel erboven: de kopbalk wordt een laag
+       rechtsboven en die filterbalk houdt rechts ruimte vrij, zodat hij ervoor afbreekt en er nooit onder schuift.
+       Begint de pagina met iets anders (bijv. Meer), dan blijft de kopbalk een eigen regel. */
+    [data-testid="stMainBlockContainer"] { position: relative; }
+    [data-testid="stLayoutWrapper"]:has(> .st-key-vem_kopbalk):has(+ [data-testid="stLayoutWrapper"] > [class*="st-key-filterbalk_"]) {
+        position: absolute; top: calc(1rem + 1.45rem); right: 2rem; width: auto; z-index: 5;
+    }
+    [data-testid="stLayoutWrapper"]:has(> .st-key-vem_kopbalk):has(+ [data-testid="stLayoutWrapper"] > [class*="st-key-filterbalk_"]) > .st-key-vem_kopbalk {
+        flex-wrap: nowrap; margin-bottom: 0;
+    }
+    [data-testid="stLayoutWrapper"]:has(> .st-key-vem_kopbalk) + [data-testid="stLayoutWrapper"] > [class*="st-key-filterbalk_"] {
+        padding-right: 20rem;
+    }
 }
 @media (max-width: 899.98px) {
     [data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"], [data-testid="stExpandSidebarButton"] { display: none !important; }
@@ -242,15 +256,22 @@ button:disabled { opacity: 0.45; }
 }
 /* ◀ [label ▾] ▶ (ui/filters.bladeraar): het label als vette knop met vaste minimumbreedte. */
 [class*="st-key-bladeraar_"] [data-testid="stPopover"] button { min-width: 9rem; font-weight: 600; }
-/* Telefoon: ◀ en ▶ altijd op dezelfde regel als het label; het label krimpt mee. */
+/* ◀ en ▶ altijd op dezelfde regel als het label; past het niet, dan krimpt het label (tekst met …). */
+[class*="st-key-bladeraar_"] { flex-wrap: nowrap !important; max-width: 100%; }
+[class*="st-key-bladeraar_"] > [data-testid="stLayoutWrapper"]:has([data-testid="stPopover"]),
+[class*="st-key-bladeraar_"] > [data-testid="stElementContainer"]:has([data-testid="stPopover"]) {
+    flex: 0 1 auto !important; min-width: 0 !important;
+}
+[class*="st-key-bladeraar_"] [data-testid="stPopover"], [class*="st-key-bladeraar_"] [data-testid="stPopover"] button {
+    min-width: 0 !important; max-width: 100%;
+}
 @media (max-width: 700px) {
-    [class*="st-key-bladeraar_"] { flex-wrap: nowrap !important; max-width: 100%; }
     [class*="st-key-bladeraar_"] > [data-testid="stLayoutWrapper"]:has([data-testid="stPopover"]),
     [class*="st-key-bladeraar_"] > [data-testid="stElementContainer"]:has([data-testid="stPopover"]) {
-        flex: 1 1 auto !important; min-width: 0 !important; width: auto !important;
+        flex: 1 1 auto !important; width: auto !important;
     }
     [class*="st-key-bladeraar_"] [data-testid="stPopover"], [class*="st-key-bladeraar_"] [data-testid="stPopover"] button {
-        min-width: 0 !important; width: 100% !important; max-width: 100%;
+        width: 100% !important;
     }
 }
 
