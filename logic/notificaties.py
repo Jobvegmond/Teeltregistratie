@@ -36,8 +36,9 @@ def _vakken(vakken):
 
 def water(lijst, vandaag=None):
     """
-    Uit de watervoorspelling (wv.adviezen): één melding voor de vakken met "water" en één voor "twijfel", met per
-    planting een regel (wv.groepen). Vakken die vandaag al water kregen of geen water nodig hebben, geven niets.
+    Uit de watervoorspelling (wv.adviezen, per planting): één melding voor de plantingen met "water" en één voor
+    "twijfel" (titel: de plantingen, bijv. "vak 22–24, 25–28"), met per planting een regel (wv.groepen). Vakken
+    die vandaag al water kregen of geen water nodig hebben, geven niets.
     """
     uit = []
     for advies, titel in (("water", "Water geven"), ("twijfel", "Misschien water")):
@@ -45,7 +46,7 @@ def water(lijst, vandaag=None):
         if groep:
             vakken = [a["vak"] for a in groep]
             uit.append({"soort": "water", "sleutel": f"water-{advies}-{vandaag}-{_vakken(vakken)}",
-                        "titel": f"{titel}: vak {wv.vakken_tekst(vakken)}", "regels": wv.groepen(groep)})
+                        "titel": f"{titel}: vak {wv.planting_namen(groep)}", "regels": wv.groepen(groep)})
     return uit
 
 

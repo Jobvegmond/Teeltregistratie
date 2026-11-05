@@ -106,10 +106,15 @@ def main():
         groep = [a for a in lijst if a["advies"] == soort]
         if not groep:
             continue
-        print(f"\n{soort.upper()} ({len(groep)}): vak {wv.vakken_tekst([a['vak'] for a in groep])}")
+        print(f"\n{soort.upper()}: vak {wv.planting_namen(groep)}")
         if soort != "niet nodig" or args.alles:
-            for a in groep:
-                print(f"  {a['reden']}")
+            for regel in wv.groepen(groep):
+                print(f"  {regel}")
+                if args.alles:                          # met de reden per vak eronder
+                    naam = regel.split(" · ")[0][len("vak "):]
+                    for a in groep:
+                        if a["planting"] == naam:
+                            print(f"      {a['reden']}")
     if d["zonder"]:
         print(f"\nGeen advies voor vak {wv.vakken_tekst(d['zonder'])} (waterteelt).")
 
@@ -198,8 +203,8 @@ def terugtoets(wv, openmeteo, tuin, d, andere, tot, maanden, als_json):
           f"{splits - timedelta(days=1):%d-%m-%y} ({wv.getal(uit['oud_dagen'])} vak-dagen van deze tuin), "
           f"getoetst op {uit['van']:%d-%m-%y} t/m {uit['tot']:%d-%m-%y}")
     print(f"Straling vandaag: {bron}.")
-    print(f"Toetsperiode: {wv.getal(uit['dagen'])} vak-dagen, {wv.getal(uit['giften'])} met een gift "
-          f"({pct(uit['giftkans'])}).\n")
+    print(f"Per planting per dag, zoals het advies (water gekregen = minstens de helft van de vakken): "
+          f"{wv.getal(uit['dagen'])} planting-dagen, {wv.getal(uit['giften'])} met water ({pct(uit['giftkans'])}).\n")
     print(f"{'advies':<11}{'dagen':>7}{'met gift':>10}{'raak':>7}")
     for a, v in uit["advies"].items():
         print(f"{a:<11}{v['aantal']:>7}{v['gift']:>10}{pct(v['gift'] / v['aantal'] if v['aantal'] else None):>7}")
@@ -209,7 +214,10 @@ def terugtoets(wv, openmeteo, tuin, d, andere, tot, maanden, als_json):
     print(f"'Water' was in {pct(uit['water_raak'])} van de gevallen terecht; blind gokken (evenveel 'water', "
           f"willekeurig verdeeld) zit op {pct(uit['blind_raak'])}.")
     print(f"Juist (water bij een gift, geen water zonder gift): {pct(uit['juist'])}, tegen {pct(uit['blind_juist'])} "
-          f"voor 'nooit water'.\n")
+          f"voor 'nooit water'.")
+    v = uit["per_vak"]
+    print(f"Per vak gerekend: 'water' {pct(v['water_raak'])} terecht (blind {pct(v['blind_raak'])}), "
+          f"{pct(v['gevonden_water_twijfel'])} van de giften water of twijfel ({wv.getal(v['dagen'])} vak-dagen).\n")
     print(f"{'fase':<11}{'dagen':>7}{'giften':>8}{'water raak':>12}{'gevonden':>10}{'+twijfel':>10}")
     for naam, v in uit["fasen"].items():
         print(f"{naam:<11}{v['dagen']:>7}{v['giften']:>8}{pct(v['water_raak']):>12}{pct(v['gevonden_water']):>10}"

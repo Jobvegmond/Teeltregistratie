@@ -3,7 +3,7 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
-## [2.29.1] - 2026-11-05
+## [2.30.1] - 2026-11-05
 
 ### Toegevoegd
 - Notificaties **wegklikken**: een kruisje rechtsboven in elk kaartje. Onthouden per gebruiker in de nieuwe tabel
@@ -16,8 +16,23 @@ inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 ### Gewijzigd
 - De tekst valt netjes in de kaartjes: het venster is nooit breder dan het scherm, lange regels breken af en de
   laatste regel valt er niet meer af (Streamlit gaf een tekstblok een negatieve ondermarge).
+- Notificaties water: de titel noemt de plantingen ("Water geven: vak 22–24, 25–28"), zoals de watervoorspelling
+  per planting (2.30.0).
 - **Inregenen** in plaats van inwateren, overal (werkplanning, notificaties, teksten, `config.INREGEN_DAGEN`,
   `werkplanning.INREGEN_DAG`, soort "inregenen").
+
+## [2.30.0] - 2026-11-05
+
+### Gewijzigd
+- **Watervoorspelling per planting** in plaats van per vak (wens van de teler: "werk altijd vanuit de
+  teelten"). Een planting = de vakken van één plantweek in een aaneengesloten reeks, zoals de werkplanning
+  (bijv. 17–21, 22–24, 25–28; `logic/watervoorspelling.plantingen()`). Het advies geldt voor de hele planting,
+  met de gemiddelde kans van de vakken; de kans per vak staat erbij ("kans 87 % (per vak 83–92 %)"), met
+  `--alles` ook de reden per vak. Nieuw in de regel: hoeveel er in die teeltfase meestal gegeven wordt
+  ("meestal ± 18 l/m²", mediaan uit de historie).
+- Takenlijst-item en notificaties tonen de plantingen ("Water: vak 22–24, 25–28 · twijfel: 17–21").
+- Terugtoets per planting per dag (water gekregen = minstens de helft van de vakken): tuin 3 *water* 79 %
+  terecht (per vak was 72 %; blind gokken 18 %), 98 % van de giften water of twijfel; tuin 1 67 % (was 63 %).
 
 ## [2.29.0] - 2026-11-05
 
