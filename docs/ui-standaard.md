@@ -18,7 +18,7 @@ Elke pagina, van boven naar beneden:
 
 Een onderdeel dat een pagina niet heeft, valt weg. De volgorde blijft.
 
-**Schermnummers.** De tabbladen zijn genummerd (1. Registreren … 6. Meer) en elke sectie en elk
+**Schermnummers.** De tabbladen zijn genummerd (1. Registreren … 6. Rapporten, 7. Meer) en elke sectie en elk
 openklapmenu op een pagina krijgt automatisch een volgnummer ("2.3"), zodat feedback naar een scherm kan
 verwijzen. Geef daarom elke hoofdweergave een `layout.sectie()`-kop en gebruik voor openklapmenu's
 `layout.uitklap()` (niet `st.expander`).

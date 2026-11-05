@@ -3,6 +3,11 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.27.2] - 2026-11-05
+
+### Gewijzigd
+- Navigatie: **Meer** staat onderaan, onder Rapporten. Rapporten is nu 6 (schermnummers 6.x), Meer 7 (7.x).
+
 ## [2.27.1] - 2026-11-05
 
 ### Gewijzigd

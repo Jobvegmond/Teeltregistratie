@@ -539,8 +539,8 @@ PAGINA_DEFINITIES = [
     ("pagina_teelt", "Teelt", "teelt"),
     ("pagina_tuinvergelijking", "Tuin", "tuinvergelijking"),
     ("pagina_opmerkingen", "Opmerkingen", "opmerkingen"),
-    ("pagina_meer", "Meer", "meer"),
     ("pagina_rapporten", "Rapporten", "rapporten"),
+    ("pagina_meer", "Meer", "meer"),
 ]
 # Icoon per pagina in de zijbalk (Material Symbols).
 PAGINA_ICONEN = {"Registreren": ":material/edit_note:", "Overzicht": ":material/view_timeline:",

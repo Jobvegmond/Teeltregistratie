@@ -115,4 +115,4 @@ PATS_MODEL = "beedrill"
 # --- VERSIE ---
 # Staat rechtsboven in de app. Ophogen bij elke wijziging op main (zie CHANGELOG.md):
 # derde getal bij een correctie, tweede bij iets nieuws, eerste bij een grote omzetting.
-APP_VERSIE = "2.27.1"
+APP_VERSIE = "2.27.2"
