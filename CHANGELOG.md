@@ -3,7 +3,7 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
-## [2.30.1] - 2026-11-05
+## [2.30.2] - 2026-11-05
 
 ### Gewijzigd
 - **Wateradvies als losse items in de Takenlijst**: `watervoorspelling.py --json` geeft één item per planting
@@ -11,6 +11,8 @@ inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
   soort en vakken; id `water-tuin3-<datum>-<eerste>-<laatste vak>`, zodat vinkje en feedback bij het item
   blijven als het advies die dag opnieuw wordt gezet. In de Takenlijst-app: per item een vinkje en een
   openklapmenu "Waarom en feedback".
+
+## [2.30.1] - 2026-11-05
 
 ### Toegevoegd
 - Notificaties **wegklikken**: een kruisje rechtsboven in elk kaartje. Onthouden per gebruiker in de nieuwe tabel
