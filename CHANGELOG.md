@@ -3,6 +3,14 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.27.1] - 2026-11-05
+
+### Gewijzigd
+- Breed scherm: de tuinkeuze (Tuin 1 / Tuin 3 / Beide) en Uitleg staan rechts op de regel van de filters (periode,
+  weergave …) in plaats van op een eigen regel erboven; de filters breken ervoor af, zodat ze er nooit onder
+  schuiven. Alleen als de pagina met een filterbalk begint (op Meer blijft het een eigen regel).
+- ◀ [label] ▶ blijft altijd op één regel; past het niet, dan krimpt het label.
+
 ## [2.27.0] - 2026-11-05
 
 ### Gewijzigd
