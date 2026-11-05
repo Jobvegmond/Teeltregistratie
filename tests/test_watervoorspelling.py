@@ -158,13 +158,13 @@ class TestAdviezen(unittest.TestCase):
         self.assertEqual({a["vak"]: a["advies"] for a in lijst},
                          {17: "twijfel", 25: "water", 26: "water", 30: "niet nodig", 31: "gegeven"})
         items = wv.feed_items(lijst, date(2026, 11, 5), "Tuin 3")
-        self.assertEqual(len(items), 1)
-        item = items[0]
-        self.assertEqual((item["id"], item["date"], item["area"]), ("water-tuin3-2026-11-05", "2026-11-05", "werk"))
-        self.assertEqual(item["title"], "Water: vak 25–26 · twijfel: 17")
-        self.assertIn("Water: vak 25–26 · 10 dagen na planten", item["note"])
-        self.assertIn("meestal ± 15 l/m²", item["note"])
-        self.assertIn("Twijfel: vak 17", item["note"])
+        # Eén los item per planting, eerst water, dan twijfel; geen item voor niet nodig of gegeven.
+        self.assertEqual([(i["id"], i["title"], i["soort"], i["vakken"]) for i in items],
+                         [("water-tuin3-2026-11-05-25-26", "Water · vak 25–26", "water", [25, 26]),
+                          ("water-tuin3-2026-11-05-17-17", "Twijfel · vak 17", "twijfel", [17])])
+        self.assertTrue(all((i["date"], i["area"]) == ("2026-11-05", "werk") for i in items))
+        self.assertTrue(items[0]["note"].startswith("Tuin 3 · 10 dagen na planten · "))
+        self.assertIn("meestal ± 15 l/m²", items[0]["note"])
 
     def test_water_opmerking_maakt_twijfel(self):
         rijen = [rij(vak=30, S=300, datum=date(2026, 11, 5))]
