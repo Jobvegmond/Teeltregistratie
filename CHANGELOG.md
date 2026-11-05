@@ -25,6 +25,10 @@ inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
   wortel, plantmaat, uniformiteit en cijfer op de laatst ingevulde waarde uit een eerdere week (in plaats van
   "zo laten"); `database.get_laatste_stekwaarden`. Bakjes en opmerking blijven per week.
 
+### Gecorrigeerd
+- Overzicht: het Florgib-bolletje stond op de grens tussen twee dagen (middernacht); nu midden in de dag, net als
+  de watergift en de bespuitingen.
+
 ## [2.26.1] - 2026-11-04
 
 ### Gewijzigd

@@ -2099,7 +2099,8 @@ def _tl_frames(info, afdelingen, van, tot, vandaag, weken, weergave):
                             "Florgib": f"verwacht {format_datum(u['florgib_verwacht'])}"})
         if s.get("plan"):
             plan.append({"y": y, "x": s["plan"], "Plan-oogst": format_datum(s["plan"])})
-    florgib = [f for f in florgib if van <= f["x"] <= tot]
+    # Het bolletje midden in de dag (12:00), zoals de watergift en de bespuitingen; niet op de dagscheiding.
+    florgib = [{**f, "x": pd.Timestamp(f["x"]) + pd.Timedelta(hours=12)} for f in florgib if van <= f["x"] <= tot]
     plan = [p for p in plan if van <= p["x"] <= tot]
 
     # Het weeknummer per blok van `stap` weken (zondag t/m zaterdag): bij één week midden in de week, bij meer
