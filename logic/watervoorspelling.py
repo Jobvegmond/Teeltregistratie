@@ -16,6 +16,8 @@ Werkwijze (verkenning tuin 3, november 2026):
   (kortegolfstraling in MJ/m²) en wordt omgerekend naar de Priva-schaal met een rechte lijn door de laatste
   IJK_DAGEN dagen (ijk_straling): de verhouding verschilt per seizoen (± 45 J/cm² per MJ/m² in de zomer van
   2025, ± 75–90 in de herfst), met een vaste voet van ± 200 J/cm².
+- Per planting: de teler geeft water per planting (de vakken van één plantweek in een aaneengesloten reeks,
+  zoals de werkplanning), dus het advies is per planting, met de gemiddelde kans van de vakken (plantingen()).
 - Advies: kans ≥ DREMPEL_WATER → water, ≥ DREMPEL_TWIJFEL → twijfel, anders niet nodig. Gekozen op het oude
   deel van de historie (tot juli 2026): "water" klopte daar in ± 75 % van de gevallen, water + twijfel vond
   ± 90 % van de giften.
@@ -176,7 +178,8 @@ def _logistisch(X, y, l2=L2, stappen=50):
 def train(rijen):
     """
     Model uit vak-dagen met een bekende uitkomst (kenmerken()): per fase {"w": gewichten} of, met te weinig
-    rijen of zonder giften/zonder droge dagen, {"kans": gemiddelde van de fase}.
+    rijen of zonder giften/zonder droge dagen, {"kans": gemiddelde van de fase}; met "liter": de mediaan van de
+    giften in die fase (hoeveel er meestal gegeven wordt).
     """
     model = {}
     totaal = [1.0 if r["gift"] >= MIN_GIFT else 0.0 for r in rijen]
@@ -184,10 +187,12 @@ def train(rijen):
     for i in range(len(FASEN)):
         groep = [r for r in rijen if fase(r["leeftijd"]) == i]
         y = np.array([1.0 if r["gift"] >= MIN_GIFT else 0.0 for r in groep])
+        liters = [r["gift"] for r in groep if r["gift"] >= MIN_GIFT]
+        maat = {"liter": float(np.median(liters))} if liters else {}
         if len(groep) < MIN_RIJEN_FASE or y.sum() == 0 or y.sum() == len(y):
-            model[i] = {"kans": float(y.mean()) if len(groep) else gemiddeld}
+            model[i] = {"kans": float(y.mean()) if len(groep) else gemiddeld, **maat}
             continue
-        model[i] = {"w": _logistisch(np.array([kenmerk_vector(r) for r in groep]), y)}
+        model[i] = {"w": _logistisch(np.array([kenmerk_vector(r) for r in groep]), y), **maat}
     return model
 
 
@@ -262,16 +267,45 @@ def vakken_tekst(vakken):
     return ", ".join(f"{r[0]}–{r[-1]}" if len(r) > 2 else ", ".join(map(str, r)) for r in reeksen)
 
 
+# --- Plantingen ---
+
+def plantingen(rijen):
+    """
+    {vak: naam van de planting} voor de vak-dagen van één dag: de vakken met dezelfde plantweek (ISO, uit de
+    plantdatum = datum − leeftijd) in aaneengesloten reeksen, zoals de werkplanning (bijv. '17–21'). De teler
+    geeft per planting water, dus het advies is per planting.
+    """
+    per_week = {}
+    for k in rijen:
+        start = k["datum"] - timedelta(days=k["leeftijd"])
+        per_week.setdefault(start.isocalendar()[:2], []).append(k["vak"])
+    uit = {}
+    for vakken in per_week.values():
+        reeks = []
+        for v in sorted(vakken) + [None]:
+            if reeks and (v is None or v != reeks[-1] + 1):
+                naam = f"{reeks[0]}–{reeks[-1]}" if len(reeks) > 1 else str(reeks[0])
+                uit.update({x: naam for x in reeks})
+                reeks = []
+            if v is not None:
+                reeks.append(v)
+    return uit
+
+
 # --- Advies voor vandaag ---
 
 def adviezen(model, vandaag_rijen, verwacht_morgen=None, opmerkingen=None, vandaag_gegeven=None):
     """
-    [{vak, teelt, advies, kans, kans_morgen, reden, kenmerken}] voor de vak-dagen van vandaag, op vak.
-    opmerkingen: {teelt-id: [(datum, tekst)]} met water-opmerkingen; vandaag_gegeven: {vak: l/m²} wat er
+    [{vak, teelt, planting, advies, kans, kans_vak, kans_morgen, liter, reden, kenmerken}] voor de vak-dagen van
+    vandaag, op vak. Het advies is per planting (plantingen()): de gemiddelde kans van de vakken ervan ("kans",
+    ook "kans_morgen"); de eigen kans van het vak staat in "kans_vak" en in de reden. "liter": hoeveel er in die
+    teeltfase meestal gegeven wordt. opmerkingen: {teelt-id: [(datum, tekst)]} met water-opmerkingen (één bij
+    een vak maakt van "niet nodig" voor de hele planting een "twijfel"); vandaag_gegeven: {vak: l/m²} wat er
     vandaag al gegeven is (Priva): die vakken krijgen "gegeven".
     """
     opmerkingen = opmerkingen or {}
     vandaag_gegeven = vandaag_gegeven or {}
+    namen = plantingen(vandaag_rijen)
     uit = []
     for k in sorted(vandaag_rijen, key=lambda r: r["vak"]):
         p = kans(model, k)
@@ -279,13 +313,22 @@ def adviezen(model, vandaag_rijen, verwacht_morgen=None, opmerkingen=None, vanda
         recent = [(d, t) for d, t in opmerkingen.get(k["teelt"], ())
                   if timedelta(0) <= k["datum"] - d <= timedelta(days=OPMERKING_DAGEN)]
         gegeven = vandaag_gegeven.get(k["vak"])
-        if gegeven and gegeven >= MIN_GIFT:
-            a = "gegeven"
-        else:
-            gegeven = None
-            a = advies(p, bool(recent))
-        uit.append({"vak": k["vak"], "teelt": k["teelt"], "advies": a, "kans": p, "kans_morgen": p_morgen,
+        gegeven = gegeven if gegeven and gegeven >= MIN_GIFT else None
+        uit.append({"vak": k["vak"], "teelt": k["teelt"], "planting": namen[k["vak"]],
+                    "advies": "gegeven" if gegeven else None, "kans": p, "kans_vak": p,
+                    "kans_morgen": p_morgen, "kans_morgen_vak": p_morgen, "opmerking": bool(recent),
+                    "liter": model[fase(k["leeftijd"])].get("liter"),
                     "reden": reden(k, p, recent, p_morgen, gegeven), "kenmerken": k})
+    for naam in dict.fromkeys(a["planting"] for a in uit):
+        groep = [a for a in uit if a["planting"] == naam and a["advies"] != "gegeven"]
+        if not groep:
+            continue
+        p = sum(a["kans_vak"] for a in groep) / len(groep)
+        morgens = [a["kans_morgen_vak"] for a in groep if a["kans_morgen_vak"] is not None]
+        p_morgen = sum(morgens) / len(morgens) if morgens else None
+        a_pl = advies(p, any(a["opmerking"] for a in groep))
+        for a in groep:
+            a.update(advies=a_pl, kans=p, kans_morgen=p_morgen)
     return uit
 
 
@@ -294,58 +337,76 @@ def _bereik(waarden, eenheid=""):
     return f"{lo}{eenheid}" if lo == hi else f"{lo}–{hi}{eenheid}"
 
 
+def _dagtekst(d):
+    return f"{DAG[d.weekday()]} {d:%d-%m}"
+
+
 def groepen(lijst):
     """
-    Korte regels voor de Takenlijst: opeenvolgende vakken met hetzelfde advies en dezelfde vorige gift (meestal
-    één planting) samen, bijv. 'vak 22–24 · 8–10 dagen na planten · 2.362 J/cm² sinds de gift van vr 30-10
-    (10 l/m²) · kans 83–92 %'.
+    Een korte regel per planting (en advies), bijv. 'vak 22–24 · 8–10 dagen na planten · 2.362 J/cm² sinds de
+    gift van vr 30-10 (10 l/m²) · kans 88 % (per vak 83–92 %) · meestal ± 15 l/m²'. Voor de Takenlijst, de
+    notificaties en de tekst van watervoorspelling.py.
     """
-    uit, groep, sleutel = [], [], None
+    per = {}
     for a in sorted(lijst, key=lambda a: a["vak"]):
-        k = a["kenmerken"]
-        nieuw = (a["advies"], k["vorige_dag"], round(k["vorige"] or 0))
-        if groep and (nieuw != sleutel or a["vak"] != groep[-1]["vak"] + 1):
-            uit.append(groep)
-            groep = []
-        groep.append(a)
-        sleutel = nieuw
-    if groep:
-        uit.append(groep)
+        per.setdefault((a.get("planting") or vakken_tekst([a["vak"]]), a["advies"]), []).append(a)
     regels = []
-    for g in uit:
-        k = g[0]["kenmerken"]
-        delen = [f"vak {vakken_tekst([a['vak'] for a in g])}",
-                 _bereik([a["kenmerken"]["leeftijd"] for a in g]) + " dagen na planten"]
-        if g[0]["advies"] == "gegeven":
+    for (naam, adv), g in sorted(per.items(), key=lambda x: min(a["vak"] for a in x[1])):
+        ks = [a["kenmerken"] for a in g]
+        delen = [f"vak {naam}", _bereik([k["leeftijd"] for k in ks]) + " dagen na planten"]
+        if adv == "gegeven":
             delen.append("vandaag al gegeven")
-        elif k["vorige_dag"]:
-            delen.append(f"{getal(straling_tot_nu(k))} J/cm² sinds de gift van {DAG[k['vorige_dag'].weekday()]} "
-                         f"{k['vorige_dag']:%d-%m} ({liter(k['vorige'])} l/m²)")
+            regels.append(" · ".join(delen))
+            continue
+        straling = [straling_tot_nu(k) for k in ks]
+        st = (getal(min(straling)) if max(straling) - min(straling) < 50
+              else f"{getal(min(straling))}–{getal(max(straling))}")
+        met_gift = [k for k in ks if k["vorige_dag"]]
+        if met_gift:
+            dagen = sorted({k["vorige_dag"] for k in met_gift})
+            liters = sorted({round(k["vorige"], 1) for k in met_gift})
+            l_tekst = liter(liters[0]) if len(liters) == 1 else f"{liter(liters[0])}–{liter(liters[-1])}"
+            delen.append(f"{st} J/cm² sinds de gift van {' en '.join(_dagtekst(d) for d in dagen)} ({l_tekst} l/m²)")
+            if len(met_gift) < len(ks):
+                delen.append("deels nog geen gift sinds het planten")
         else:
-            delen.append(f"nog geen gift sinds het planten ({getal(straling_tot_nu(k))} J/cm²)")
-        if g[0]["advies"] != "gegeven":
-            delen.append("kans " + _bereik([round(a["kans"] * 100) for a in g], " %"))
-        if any(a["kans_morgen"] is not None and a["kans"] < DREMPEL_WATER <= a["kans_morgen"] for a in g):
+            delen.append(f"nog geen gift sinds het planten ({st} J/cm²)")
+        kans_vak = [round(a.get("kans_vak", a["kans"]) * 100) for a in g]
+        delen.append(f"kans {g[0]['kans'] * 100:.0f} %"
+                     + (f" (per vak {_bereik(kans_vak, ' %')})" if len(set(kans_vak)) > 1 else ""))
+        if adv in ("water", "twijfel"):
+            maat = sorted(a["liter"] for a in g if a.get("liter"))
+            if maat:
+                delen.append(f"meestal ± {liter(maat[len(maat) // 2])} l/m²")
+        if adv != "water" and g[0].get("kans_morgen") is not None and g[0]["kans_morgen"] >= DREMPEL_WATER:
             delen.append("morgen waarschijnlijk wel")
         regels.append(" · ".join(delen))
     return regels
 
 
+def planting_namen(lijst):
+    """'22–24, 25–28': de plantingen in een lijst adviezen, op volgorde."""
+    namen = {}
+    for a in sorted(lijst, key=lambda a: a["vak"]):
+        namen.setdefault(a.get("planting") or vakken_tekst([a["vak"]]), None)
+    return ", ".join(namen)
+
+
 def feed_items(lijst, datum, tuin_naam):
     """
-    Items voor de Takenlijst ({id, date, title, area, note}): één item per dag met de vakken voor water en
-    twijfel, of niets als er geen vak water of twijfel heeft. De id is per tuin en dag vast, zodat een afgevinkt
-    item afgevinkt blijft.
+    Items voor de Takenlijst ({id, date, title, area, note}): één item per dag met de plantingen voor water en
+    twijfel, of niets als er geen planting water of twijfel heeft. De id is per tuin en dag vast, zodat een
+    afgevinkt item afgevinkt blijft.
     """
     water = [a for a in lijst if a["advies"] == "water"]
     twijfel = [a for a in lijst if a["advies"] == "twijfel"]
     if not water and not twijfel:
         return []
-    titel = "Water: " + (f"vak {vakken_tekst([a['vak'] for a in water])}" if water else "geen vak zeker")
+    titel = "Water: " + (f"vak {planting_namen(water)}" if water else "geen vak zeker")
     if twijfel:
-        titel += f" · twijfel: {vakken_tekst([a['vak'] for a in twijfel])}"
-    note = (f"{tuin_naam} · advies, geen sturing. Water: " + "; ".join(groepen(water)) if water
-            else f"{tuin_naam} · advies, geen sturing.")
+        titel += f" · twijfel: {planting_namen(twijfel)}"
+    note = (f"{tuin_naam} · advies per planting, geen sturing. Water: " + "; ".join(groepen(water)) if water
+            else f"{tuin_naam} · advies per planting, geen sturing.")
     if twijfel:
         note += ". Twijfel: " + "; ".join(groepen(twijfel))
     opm = [o for a in water + twijfel for o in a["reden"].split(" · ") if o.startswith("opmerking ")]
@@ -357,46 +418,72 @@ def feed_items(lijst, datum, tuin_naam):
 
 # --- Terugtoets ---
 
+def _tel(paren):
+    """Telling voor de terugtoets uit (kans, gift ja/nee)-paren."""
+    uitkomst = {a: [0, 0] for a in ADVIEZEN[:3]}
+    for p, y in paren:
+        a = advies(p)
+        uitkomst[a][0] += 1
+        uitkomst[a][1] += bool(y)
+    n = len(paren)
+    n_gift = sum(v[1] for v in uitkomst.values())
+    w_n, w_raak = uitkomst["water"]
+    t_raak = uitkomst["twijfel"][1]
+    juist = w_raak + (uitkomst["twijfel"][0] - t_raak) + (uitkomst["niet nodig"][0] - uitkomst["niet nodig"][1])
+    return {
+        "dagen": n, "giften": n_gift, "giftkans": n_gift / n if n else 0.0,
+        "advies": {a: {"aantal": v[0], "gift": v[1]} for a, v in uitkomst.items()},
+        "water_raak": w_raak / w_n if w_n else None,
+        "gevonden_water": w_raak / n_gift if n_gift else None,
+        "gevonden_water_twijfel": (w_raak + t_raak) / n_gift if n_gift else None,
+        "niet_nodig_mis": uitkomst["niet nodig"][1] / uitkomst["niet nodig"][0] if uitkomst["niet nodig"][0]
+        else None,
+        # "Juist" = water bij een gift en geen water (twijfel of niet nodig) zonder gift.
+        "juist": juist / n if n else None,
+        "blind_raak": n_gift / n if n else None,
+        "blind_juist": 1 - n_gift / n if n else None,
+    }
+
+
+def planting_dagen(rijen, kansen):
+    """
+    [(kans, water gekregen, leeftijd)] per planting per dag: de gemiddelde kans van de vakken, of de planting die
+    dag water kreeg (minstens de helft van de vakken) en de leeftijd van het oudste vak. kansen: één per rij.
+    """
+    per_dag = {}
+    for r, p in zip(rijen, kansen):
+        per_dag.setdefault(r["datum"], []).append((r, p))
+    uit = []
+    for paren in per_dag.values():
+        namen = plantingen([r for r, _p in paren])
+        per = {}
+        for r, p in paren:
+            per.setdefault(namen[r["vak"]], []).append((r, p))
+        for groep in per.values():
+            n = len(groep)
+            uit.append((sum(p for _r, p in groep) / n, sum(r["gift"] >= MIN_GIFT for r, _p in groep) * 2 >= n,
+                        max(r["leeftijd"] for r, _p in groep)))
+    return uit
+
+
 def terugtoets(rijen, splits, extra=()):
     """
     Leren op de vak-dagen vóór `splits` (ook die van `extra`, bijv. de andere tuin), toetsen op de dagen van
-    `rijen` vanaf `splits` (chronologisch). Geeft een dict met
-    het aantal toetsdagen en giften, per advies het aantal en hoeveel daarvan een gift kregen, welk deel van de
-    giften "water" / "water of twijfel" kreeg, en de vergelijking met blind gokken: dezelfde hoeveelheid
-    "water" willekeurig verdeeld (raak = het giftpercentage) en "nooit water" (juist = de droge dagen).
-    Per fase hetzelfde in "fasen".
+    `rijen` vanaf `splits` (chronologisch). Per planting per dag (zoals het advies: de gemiddelde kans van de
+    vakken; "water gekregen" = minstens de helft van de vakken) het aantal toetsdagen en giften, per advies het
+    aantal en hoeveel daarvan water kregen, welk deel van de giften "water" / "water of twijfel" kreeg, en de
+    vergelijking met blind gokken: dezelfde hoeveelheid "water" willekeurig verdeeld (raak = het giftpercentage)
+    en "nooit water" (juist = de droge dagen). Per fase hetzelfde in "fasen", en per vak in "per_vak".
     """
     oud = [r for r in rijen if r["datum"] < splits]
     nieuw = [r for r in rijen if r["datum"] >= splits]
     model = train(oud + [r for r in extra if r["datum"] < splits])
-
-    def tel(groep):
-        uitkomst = {a: [0, 0] for a in ADVIEZEN[:3]}
-        for r in groep:
-            a = advies(kans(model, r))
-            uitkomst[a][0] += 1
-            uitkomst[a][1] += r["gift"] >= MIN_GIFT
-        n = len(groep)
-        n_gift = sum(v[1] for v in uitkomst.values())
-        w_n, w_raak = uitkomst["water"]
-        t_raak = uitkomst["twijfel"][1]
-        juist = w_raak + (uitkomst["twijfel"][0] - t_raak) + (uitkomst["niet nodig"][0] - uitkomst["niet nodig"][1])
-        return {
-            "dagen": n, "giften": n_gift, "giftkans": n_gift / n if n else 0.0,
-            "advies": {a: {"aantal": v[0], "gift": v[1]} for a, v in uitkomst.items()},
-            "water_raak": w_raak / w_n if w_n else None,
-            "gevonden_water": w_raak / n_gift if n_gift else None,
-            "gevonden_water_twijfel": (w_raak + t_raak) / n_gift if n_gift else None,
-            "niet_nodig_mis": uitkomst["niet nodig"][1] / uitkomst["niet nodig"][0] if uitkomst["niet nodig"][0]
-            else None,
-            # "Juist" = water bij een gift en geen water (twijfel of niet nodig) zonder gift.
-            "juist": juist / n if n else None,
-            "blind_raak": n_gift / n if n else None,
-            "blind_juist": 1 - n_gift / n if n else None,
-        }
-
-    uit = tel(nieuw)
+    kansen = [kans(model, r) for r in nieuw]
+    per_planting = planting_dagen(nieuw, kansen)
+    uit = _tel([(p, y) for p, y, _l in per_planting])
     uit.update(oud_dagen=len(oud), van=min((r["datum"] for r in nieuw), default=None),
                tot=max((r["datum"] for r in nieuw), default=None),
-               fasen={FASEN[i][2]: tel([r for r in nieuw if fase(r["leeftijd"]) == i]) for i in range(len(FASEN))})
+               fasen={FASEN[i][2]: _tel([(p, y) for p, y, l in per_planting if fase(l) == i])
+                      for i in range(len(FASEN))},
+               per_vak=_tel([(p, r["gift"] >= MIN_GIFT) for r, p in zip(nieuw, kansen)]))
     return uit
