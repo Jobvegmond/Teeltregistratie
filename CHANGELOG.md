@@ -3,6 +3,24 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.27.0] - 2026-11-05
+
+### Gewijzigd
+- **Nieuw uiterlijk**, strakker en moderner, in de huisstijl van tanacetum.nl (groen `#0A562C`, oranje `#F8992D`,
+  het logo van Van Egmond Matricaria in `static/`), lettertype Inter:
+  - Lichtgrijze pagina met witte kaarten (tabellen, grafieken, formulieren, openklapmenu's, kengetallen,
+    vergelijkingstabellen); velden en knoppen wit met een dunne rand in plaats van grijze "Windows"-knoppen.
+  - Breed scherm: de navigatie links in een vaste zijbalk met het logo en een icoon per pagina; de groene kopbalk
+    en de Streamlit-balk bovenin (met Deploy) zijn weg, de inhoud begint direct bovenaan.
+  - Smal scherm: een smalle kop met het logo en de navigatie bovenin; op een telefoon de tuinkeuze als vaste balk
+    onderin het scherm.
+  - Keuzegroepen (tuin, periode, weergave, wat registreer je) als één spoor met de gekozen optie wit.
+  - Minder witruimte: de lege blokjes met alleen opmaak en het inlogcookie nemen geen ruimte meer in, en de
+    tussenruimte tussen blokken is kleiner.
+  - Kengetallen als kaart met een grote vette waarde; kolomkoppen van de vergelijkingstabel klein en grijs.
+- Alle opmaak op één plek: `ui/styles.py` (ook de kop en de kengetallen, eerst in app.py), thema in
+  `.streamlit/config.toml` (licht en donker). UI-standaard §7 bijgewerkt.
+
 ## [2.26.2] - 2026-11-05
 
 ### Verwijderd

@@ -145,71 +145,15 @@ from config import (
 # --- PAGINA-INSTELLINGEN ---
 # Moet de eerste Streamlit-aanroep zijn. Bepaalt o.a. de titel van het
 # browsertabblad.
-st.set_page_config(page_title="VEM teeltregistratie", page_icon="🌱", layout="wide")
+st.set_page_config(page_title="VEM teeltregistratie", page_icon="🌱", layout="wide",
+                   initial_sidebar_state="expanded")
 _VEM_T0 = time.perf_counter()  # laadtijd meten (zie het einde van dit bestand)
 
 # Alle Altair-grafieken in Nederlandse getalnotatie (komma, punt voor duizendtallen).
 zet_altair_nl()
 
-# Gedeelde opmaak voor de hele app: kengetallen-tegels en de compacte kop.
-st.markdown("""
-<style>
-/* Kengetallen: compacte tegels naast elkaar, elk zo breed als de inhoud (nooit een waarde over twee
-   regels), die doorlopen naar een volgende regel; i.p.v. brede st.metric-kaders met veel lege ruimte. */
-.vem-kg-titel {
-    font-size: 0.72rem; font-weight: 600; text-transform: uppercase;
-    letter-spacing: 0.06em; opacity: 0.6; margin: 0.9rem 0 0.35rem;
-}
-.vem-kg { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.4rem; }
-.vem-kg-tegel {
-    flex: 0 0 auto; min-width: 6.5rem; border: 1px solid rgba(128, 128, 128, 0.25); border-radius: 0.2rem;
-    padding: 0.3rem 0.6rem; line-height: 1.25;
-}
-.vem-kg-label, .vem-kg-waarde, .vem-kg-delta { white-space: nowrap; }
-.vem-kg-label { font-size: 0.72rem; opacity: 0.7; }
-.vem-kg-label abbr { text-decoration: none; cursor: help; opacity: 0.8; margin-left: 0.2rem; }
-.vem-kg-waarde { font-size: 1rem; font-weight: 600; margin-top: 0.1rem; }
-.vem-kg-delta { font-size: 0.68rem; opacity: 0.65; margin-top: 0.1rem; }
-
-
-/* Kop: naam van de app en het bedrijf links, week, datum en versie rechts. */
-.vem-kop {
-    display: flex; justify-content: space-between; align-items: center; gap: 1rem;
-    margin: 0 0 0.6rem 0; padding: 0.9rem 1.3rem; border-radius: 0.2rem;
-    background: linear-gradient(100deg, #2E6A4C 0%, #3d8761 100%); color: #fff;
-}
-.vem-merk { display: flex; flex-direction: column; line-height: 1.2; }
-.vem-titel { font-size: 1.45rem; font-weight: 700; letter-spacing: 0.01em; }
-.vem-bedrijf { font-size: 0.9rem; opacity: 0.85; }
-.vem-meta { display: flex; flex-direction: column; align-items: flex-end; line-height: 1.35; white-space: nowrap; }
-.vem-week { font-size: 0.9rem; font-weight: 600; }
-.vem-versie { font-size: 0.75rem; opacity: 0.75; }
-@media (max-width: 700px) { .vem-titel { font-size: 1.15rem; } .vem-kop { padding: 0.7rem 0.9rem; } }
-
-/* Navigatiebalk onder de kop: knoppen per pagina, de huidige gevuld groen. Zelfde ronding als de
-   knoppen van Streamlit (theme.buttonRadius in .streamlit/config.toml). */
-.st-key-vem_nav { gap: 0.25rem; flex-wrap: wrap; }
-/* Stek, "Hele week invullen": alle velden op één regel, dicht op elkaar. */
-.st-key-stek_week_rij { flex-wrap: wrap; gap: 0.5rem !important; }
-.st-key-vem_nav [data-testid="stPageLink"] a {
-    padding: 0.3rem 0.65rem; border-radius: 0.2rem; border: 1px solid rgba(46, 106, 76, 0.35);
-    background: transparent;
-}
-.st-key-vem_nav [data-testid="stPageLink"] a p { font-size: 0.92rem; }
-.st-key-vem_nav [data-testid="stPageLink"] a:hover { background: rgba(46, 106, 76, 0.10); }
-/* Streamlit geeft een paginaknop een negatieve marge (−6 px boven en onder); lopen de knoppen op een smal
-   scherm door naar een tweede regel, dan schuiven ze daardoor over elkaar. Marge weg, knop iets compacter. */
-.st-key-vem_nav [data-testid="stElementContainer"] { margin: 0 !important; }
-.st-key-vem_nav [data-testid="stPageLink"] a { margin: 0; line-height: 1.5; }
-.st-key-vem_nav_actief [data-testid="stPageLink"] a,
-.st-key-vem_nav_actief [data-testid="stPageLink"] a:hover { background: #2E6A4C; border-color: #2E6A4C; }
-.st-key-vem_nav_actief [data-testid="stPageLink"] a,
-.st-key-vem_nav_actief [data-testid="stPageLink"] a * { color: #fff !important; }
-
-/* Minder lege ruimte boven de inhoud; nog wel onder de vaste Streamlit-balk (3.75rem). */
-[data-testid="stMainBlockContainer"], .block-container { padding-top: 3.75rem !important; }
-</style>
-""", unsafe_allow_html=True)
+# Alle opmaak van de app (ui/styles.py), vóór de kop, zodat ook het inlogscherm hem heeft.
+styles.laad()
 
 
 # Vaste kleur per afdeling, zodat afd. 1 overal dezelfde kleur heeft.
@@ -598,6 +542,10 @@ PAGINA_DEFINITIES = [
     ("pagina_meer", "Meer", "meer"),
     ("pagina_rapporten", "Rapporten", "rapporten"),
 ]
+# Icoon per pagina in de zijbalk (Material Symbols).
+PAGINA_ICONEN = {"Registreren": ":material/edit_note:", "Overzicht": ":material/view_timeline:",
+                 "Teelt": ":material/eco:", "Tuin": ":material/compare_arrows:", "Opmerkingen": ":material/chat:",
+                 "Meer": ":material/more_horiz:", "Rapporten": ":material/summarize:"}
 
 
 def _mobiel():
@@ -634,13 +582,12 @@ st.navigation(_paginas(), position="hidden")
 
 _DAGEN_KORT = ["ma", "di", "wo", "do", "vr", "za", "zo"]
 _vandaag_kop = date.today()
+_WEEK_KOP = (f"Week {kalender.weeknummer(_vandaag_kop)} · "
+             f"{_DAGEN_KORT[_vandaag_kop.weekday()]} {format_datum(_vandaag_kop)}")
 st.markdown(
     '<div class="vem-kop">'
-    '<div class="vem-merk"><span class="vem-titel">Teeltregistratie</span>'
-    '<span class="vem-bedrijf">Van Egmond Matricaria</span></div>'
-    '<div class="vem-meta">'
-    f'<span class="vem-week">Week {kalender.weeknummer(_vandaag_kop)} · '
-    f'{_DAGEN_KORT[_vandaag_kop.weekday()]} {format_datum(_vandaag_kop)}</span>'
+    f'<div class="vem-merk">{styles.LOGO}<span class="vem-titel">Teeltregistratie</span></div>'
+    f'<div class="vem-meta"><span class="vem-week">{_WEEK_KOP}</span>'
     f'<span class="vem-versie">versie {APP_VERSIE}</span>'
     '</div></div>',
     unsafe_allow_html=True,
@@ -695,6 +642,16 @@ with _kopbalk.container(horizontal=True, width="content", key="vem_nav"):
         with st.container(width="content", key="vem_nav_actief" if _p.title == _pagina.title
                           else f"vem_nav_{_p.url_path or 'start'}"):
             st.page_link(_p, label=f"{_nr}. {_p.title}")
+with st.sidebar:
+    st.markdown(f'<div class="vem-zijmerk">{styles.LOGO}<div class="vem-titel">Teeltregistratie</div></div>',
+                unsafe_allow_html=True)
+    with st.container(key="vem_zijnav", gap=None):
+        for _nr, _p in enumerate(_pagina_lijst, 1):
+            with st.container(key="vem_zij_actief" if _p.title == _pagina.title else f"vem_zij_{_p.url_path or 'start'}"):
+                st.page_link(_p, label=f"{_p.title}", icon=PAGINA_ICONEN.get(_p.title))
+    st.markdown(f'<div class="vem-zijvoet">{_WEEK_KOP}<br>versie {APP_VERSIE}'
+                f'{" · " + html.escape(str(st.session_state.get("name"))) if st.session_state.get("name") else ""}'
+                '</div>', unsafe_allow_html=True)
 layout.begin_pagina(next(i for i, _p in enumerate(_pagina_lijst, 1) if _p.title == _pagina.title))
 
 # --- TUIN KIEZEN ---
@@ -1276,7 +1233,6 @@ def _inv_wijzigen():
 # Elke pagina is een functie; st.navigation (na het inloggen) kiest er één en
 # _pagina.run() onderaan voert alleen die uit. Alles hierboven (login, tuinkeuze, gedeelde functies en
 # caches) geldt voor alle pagina's.
-styles.laad()
 
 # --- NU: hoe staat elk vak ervoor ---
 #
