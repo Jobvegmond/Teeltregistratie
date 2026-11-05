@@ -45,15 +45,6 @@ class TestRijen(unittest.TestCase):
         uit = opzoeken.bij_vak(rijen, self.p, {1: "2626312", 2: "2636312"})
         self.assertEqual([(r["l"], r["code"]) for r in uit], [(5, "2626312"), (6, "2636312")])
 
-    def test_bij_afdeling_en_tuin(self):
-        rijen = [{"tuin_id": 2, "afdeling": 3, "datum": "2026-07-01"}, {"tuin_id": 2, "afdeling": 4, "datum": "2026-07-01"},
-                 {"tuin_id": 2, "afdeling": 3, "datum": "2026-08-31"}, {"tuin_id": 2, "afdeling": 3, "datum": "2026-06-01"}]
-        self.assertEqual(len(opzoeken.bij_afdeling(rijen, self.p)), 2)
-        dagen = [{"tuin_id": 2, "datum": "2026-07-01"}, {"tuin_id": 2, "datum": "2026-06-01"},
-                 {"tuin_id": 1, "datum": "2026-07-01"}]
-        self.assertEqual(opzoeken.bij_tuin(dagen, self.p), [dagen[0]])
-
-
 class TestSamenvatting(unittest.TestCase):
     def test_uitval_alleen_over_afgeronde_vakken(self):
         emmers = [{"teelt_id": 1, "emmers": 300}, {"teelt_id": 2, "emmers": 10}]

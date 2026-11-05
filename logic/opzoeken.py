@@ -1,7 +1,7 @@
 """
 Opzoeken: een teelt (alle vakken uit één plantweek) of één vak met alle
 informatie die er is. Alleen rekenwerk: zoeken op code of vaknummer, de
-periode per vak, rijen uit dag-tabellen bij het juiste vak zoeken en de
+periode per vak, rijen per vak per dag bij het juiste vak zoeken en de
 samenvatting. Ophalen in database.get_opzoek_gegevens, tekenen in app.py.
 Tests in tests/test_opzoeken.py.
 """
@@ -61,24 +61,6 @@ def bij_vak(rijen, perioden_, codes):
                 uit.append({**r, "code": codes.get(teelt_id)})
                 break
     return uit
-
-
-def bij_afdeling(rijen, perioden_):
-    """Rijen per afdeling per dag (tuin_id, afdeling, datum) binnen de periode van een vak in die afdeling."""
-    vensters = {}
-    for tuin_id, _vak, afd, start, eind in perioden_.values():
-        if afd is not None:
-            vensters.setdefault((tuin_id, int(afd)), []).append((start, eind))
-    return [r for r in rijen
-            if any(s <= _d(r["datum"]) <= e for s, e in vensters.get((r["tuin_id"], int(r["afdeling"])), []))]
-
-
-def bij_tuin(rijen, perioden_):
-    """Rijen per tuin per dag (tuin_id, datum) binnen de periode van een van de vakken in die tuin."""
-    vensters = {}
-    for tuin_id, _vak, _afd, start, eind in perioden_.values():
-        vensters.setdefault(tuin_id, []).append((start, eind))
-    return [r for r in rijen if any(s <= _d(r["datum"]) <= e for s, e in vensters.get(r["tuin_id"], []))]
 
 
 def samenvatting(vakken, emmers):
