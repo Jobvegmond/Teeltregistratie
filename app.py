@@ -850,7 +850,7 @@ def _pagina_registreren():
             "Een nieuwe teelt start je op Overzicht (klik op een concept in de tijdlijn).",
         lezen=[
             "Kies bovenaan wat je registreert. Bij Florgib, Emmers en Lengte en gewicht staat elk lopend vak op "
-            "een eigen regel.",
+            "een eigen regel; bij Lengte en gewicht op plantdatum, het oudste vak bovenaan.",
             "**Eén waarde voor meerdere vakken**: vul die boven de tabel in en vink de vakken aan. **Een eigen "
             "waarde per vak**: vul die in de tabel in (die gaat voor). Een vak met een ingevulde waarde doet "
             "ook mee zonder vinkje.",
@@ -1045,7 +1045,7 @@ def _inv_emmers(vakken, datum):
 
 def _inv_lengte(vakken):
     versie = st.session_state.get("inv_versie", 0)
-    volgorde = sorted(vakken, key=lambda r: (not r["emmers"], r["vak"]))       # in de oogst eerst
+    volgorde = sorted(vakken, key=lambda r: (r["geplant"], r["vak"]))          # op plantdatum, oudste eerst
     with st.form(f"inv_lengte_{versie}", border=False):
         st.caption("Voor alle aangevinkte vakken (een waarde in de tabel gaat voor):")
         k1, k2, k3 = st.columns([1, 1, 2])

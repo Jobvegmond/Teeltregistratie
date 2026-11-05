@@ -14,6 +14,10 @@ inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
   3.6–3.11, 3.13 en 3.14), op verzoek. Over blijven Vakken in deze teelt, Florgib en lengtes, Opmerkingen, Stek en
   Behandelingen; de Excel bevat alleen die nog. `get_opzoek_gegevens` haalt alleen nog op wat getoond wordt.
 
+### Gewijzigd
+- Registreren › Lengte en gewicht: de vakken op plantdatum (oudste eerst, dan op vak) in plaats van eerst de
+  vakken in de oogst en dan op vaknummer.
+
 ## [2.26.1] - 2026-11-04
 
 ### Gewijzigd
