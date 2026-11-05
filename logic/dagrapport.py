@@ -370,14 +370,16 @@ KENGETALLEN = [("temp", "Etmaal", 1, "°C"), ("temp_dag", "Dag", 1, "°C"), ("te
                ("rv", "RV", 0, "%"), ("rv_hoog", "Uren RV ≥ 90", 0, ""), ("stook_max", "Stooklijn max", 1, "°C"),
                ("water", "Water", 1, "l/m²"), ("ec", "EC", 2, ""), ("ph", "pH", 1, ""), ("energie", "Energie", 1,
                                                                                          "MJ/m²")]
-# De tegels bovenaan: (sleutel, kop, decimalen, eenheid).
+# De tegels per tuin in het dagrapport: (sleutel, kop, decimalen, eenheid).
 TEGELS = [("temp", "Etmaal", 1, "°C"), ("afwijking", "Afw. lichtlijn", 1, "°C"), ("rv", "RV", 0, "%"),
           ("water", "Water", 1, "l/m²"), ("energie", "Energie", 1, "MJ/m²"), ("geoogst", "Geoogst", 0, "stelen")]
 # Het weekrapport vergelijkt de tuinen en gaat niet over de lichtlijn of Agro4all (oogst).
-WEEK_NIET = {"afwijking", "geoogst"}
 VERGELIJK_NIET = {"afwijking"}
 AFWIJKING_GRENS = 0.5            # |afwijking van de lichtlijn| die als te warm of te koud kleurt
 ERNST_KLEUR = {"fout": mo.ROOD, "let op": mo.ORANJE, "info": mo.GRIJS}
+# De conclusies van Claude als kaart: soort → (badge, kleur), de ernstigste eerst.
+CONCLUSIE_SOORT = {"fout": ("Fout", mo.ROOD), "advies": ("Advies", mo.ORANJE), "opvallend": ("Opvallend", mo.BLAUW)}
+MAX_KAARTEN = 5
 
 
 def onderwerp(bundel):
@@ -393,14 +395,23 @@ def link(app_url, rapport, conclusie=None):
     return f"{app_url.rstrip('/')}/rapporten?rapport={rapport}" + (f"&conclusie={conclusie}" if conclusie else "")
 
 
-def _tegels_tuin(t, vergelijk, week=False):
-    """De tegels van één tuin uit de kengetallen van de hele tuin, met het verschil met de vorige periode."""
+def _maand_kort(d):
+    return f"{d.day} {mo.MAAND[d.month - 1]}"
+
+
+def _periode(bundel):
+    van, tot = date.fromisoformat(bundel["van"]), date.fromisoformat(bundel["tot"])
+    if bundel["soort"] == "week":
+        return f"Week {bundel['week']} · {_maand_kort(van)} – {_maand_kort(tot)} {tot.year}"
+    return f"{DAG[van.weekday()]} {_maand_kort(van)} {van.year}"
+
+
+def _tegels_tuin(t, vergelijk):
+    """De tegels van één tuin (dagrapport) uit de kengetallen van de hele tuin, met het verschil met de vorige dag."""
     nu = (t.get("kengetallen") or {}).get(HELE_TUIN) or {}
     toen = (t.get("kengetallen_vorige") or {}).get(HELE_TUIN) or {}
     rij = []
     for sleutel, naam, dec, eenheid in TEGELS:
-        if week and sleutel in WEEK_NIET:
-            continue
         w = nu.get(sleutel)
         if w is None and sleutel != "geoogst":
             continue
@@ -411,7 +422,31 @@ def _tegels_tuin(t, vergelijk, week=False):
             waarde, toon = fmt_getal(w if w is not None else 0, dec), None
         verschil = mo.verschil_tekst(w if w is not None else 0, toen.get(sleutel), dec)
         rij.append({"label": naam, "waarde": waarde, "eenheid": eenheid, "toon": toon,
-                    "sub": f"{verschil} {vergelijk}" if verschil else None})
+                    "sub": f"{mo.pijl(verschil)} {vergelijk}" if verschil else None})
+    return rij
+
+
+def _tegels_week(bundel):
+    """De vier tegels van het weekrapport: etmaal per tuin, PATS-vangsten en het aantal aandachtspunten."""
+    rij = []
+    for t in bundel.get("tuinen", []):
+        nu = (t.get("kengetallen") or {}).get(HELE_TUIN) or {}
+        toen = (t.get("kengetallen_vorige") or {}).get(HELE_TUIN) or {}
+        if nu.get("temp") is not None:
+            verschil = mo.verschil_tekst(nu["temp"], toen.get("temp"), 1)
+            rij.append({"label": f"Etmaal {t['naam'].lower()}", "waarde": fmt_getal(nu["temp"], 1), "eenheid": "°C",
+                        "sub": f"{mo.pijl(verschil)} t.o.v. vorige week" if verschil else None})
+    pats = [p for t in bundel.get("tuinen", []) for p in t.get("pats") or []]
+    if pats:
+        totaal, vorige = sum(p["totaal"] for p in pats), sum(p.get("vorige") or 0 for p in pats)
+        verschil = mo.verschil_tekst(totaal, vorige, 0)
+        rij.append({"label": "PATS-vangsten", "waarde": fmt_getal(totaal, 0),
+                    "sub": f"{mo.pijl(verschil)} t.o.v. vorige week" if verschil else None})
+    actief = [s for s in bundel["signalen"] if not s.get("feedback")]
+    fouten, letop = sum(s["ernst"] == "fout" for s in actief), sum(s["ernst"] == "let op" for s in actief)
+    rij.append({"label": "Aandachtspunten", "waarde": str(len(actief)),
+                "toon": "fout" if fouten else "let op" if letop else None,
+                "sub": f"{fouten} fout · {letop} let op"})
     return rij
 
 
@@ -482,6 +517,38 @@ def _vergelijking(bundel):
             + mo.voetnoot(f"Hele tuin, deze week; verschil = {eerste['naam']} min {tweede['naam']}."))
 
 
+def _klimaat_per_dag(bundel):
+    """Het weekrapport: per dag de etmaaltemperatuur en de uren RV ≥ 90 % van beide tuinen, kleurgecodeerd."""
+    tuinen = [t for t in bundel.get("tuinen", []) if t.get("reeksen")]
+    if len(tuinen) < 2 or not all(t["reeksen"].get("temp") for t in tuinen[:2]):
+        return ""
+    eerste, tweede = tuinen[:2]
+    van, tot = date.fromisoformat(bundel["van"]), date.fromisoformat(bundel["tot"])
+    dagen = [date.fromisoformat(d) for d in eerste["reeksen"]["dagen"]]
+    verschil = reeks_verschil(eerste["reeksen"]["temp"], tweede["reeksen"]["temp"])
+
+    def rv(w):
+        if w is None:
+            return LEEG
+        kleur = mo.ROOD if w >= RV_HOOG_UREN[1] else mo.ORANJE if w >= RV_HOOG_UREN[0] else None
+        return (fmt_getal(w, 0), kleur) if kleur else fmt_getal(w, 0)
+
+    rijen = []
+    for i, d in enumerate(dagen):
+        if van <= d <= tot:
+            rijen.append([f"{DAG[d.weekday()]} {d:%d-%m}", fmt_getal(eerste["reeksen"]["temp"][i], 1),
+                          fmt_getal(tweede["reeksen"]["temp"][i], 1), fmt_verschil(verschil[i], 1),
+                          rv(eerste["reeksen"]["rv_uren"][i]), rv(tweede["reeksen"]["rv_uren"][i])])
+    if not rijen:
+        return ""
+    namen = (eerste["naam"], tweede["naam"])
+    return (mo.sectiekop("Klimaat per dag")
+            + mo.tabel(["Dag", f"Etmaal {namen[0]}", f"Etmaal {namen[1]}", "Verschil", f"RV-uren {namen[0]}",
+                        f"RV-uren {namen[1]}"], rijen)
+            + mo.voetnoot(f"Etmaaltemperatuur in °C; RV-uren = uren per etmaal met RV ≥ 90 % (oranje vanaf "
+                          f"{RV_HOOG_UREN[0]}, rood vanaf {RV_HOOG_UREN[1]} uur)."))
+
+
 def _afdelingstabellen(bundel):
     delen = []
     for t in bundel.get("tuinen", []):
@@ -495,79 +562,136 @@ def _afdelingstabellen(bundel):
             if any(r != "–" for r in rij[1:]):
                 rijen.append(rij)
         if rijen:
-            delen.append(f'<div style="font-weight:bold;font-size:12px;margin:10px 0 2px">{_e(t["naam"])}</div>'
+            delen.append(f'<div style="font-weight:bold;font-size:14px;padding:10px 0 2px">{_e(t["naam"])}</div>'
                          + mo.tabel(["Kengetal"] + kolommen, rijen, klein=True))
     return mo.sectiekop("Per afdeling") + "".join(delen) if delen else ""
 
 
-def _signaal_html(s):
-    kleur = ERNST_KLEUR[s["ernst"]]
-    waar = f"T{s['tuin']}" + (f" vak {s['vak']}" if s["vak"] is not None else "")
-    extra = f" <span style=\"color:{mo.GRIJS}\">(ook {s['eerder']}× eerder)</span>" if s.get("eerder") else ""
-    return (f'<li style="margin:1px 0"><b style="color:{kleur}">{_e(s["ernst"])}</b> · {_e(SOORT_NAAM[s["soort"]])} · '
-            f"{_e(waar)}: {_e(s['tekst'])}{extra}</li>")
+def _plaats(s):
+    return f"T{s['tuin']}" + (f" vak {s['vak']}" if s["vak"] is not None else
+                              f" afd. {s['afdeling']}" if s.get("afdeling") is not None else "")
 
 
-def _controles(bundel):
-    signalen = bundel["signalen"]
+def _kaarten(bundel, duiding, app_url):
+    """
+    De conclusies van Claude als kaart (de ernstigste eerst, hooguit MAX_KAARTEN).
+    Geeft (html, [conclusies die als kaart staan], [conclusies die niet pasten]).
+    """
+    conclusies = duiding.get("conclusies") or []
+    volgorde = list(CONCLUSIE_SOORT)
+    gesorteerd = sorted(conclusies, key=lambda c: volgorde.index(c["soort"]) if c.get("soort") in volgorde else 9)
+    getoond, rest = gesorteerd[:MAX_KAARTEN], gesorteerd[MAX_KAARTEN:]
+    delen = []
+    for c in getoond:
+        naam, kleur = CONCLUSIE_SOORT.get(c.get("soort"), ("Info", mo.GRIJS))
+        delen.append(mo.kaart(kleur, naam, c.get("titel", ""), c.get("tekst", ""),
+                              plaats=f"Tuin {c['tuin']}" if c.get("tuin") else None, actie=c.get("actie"),
+                              feedback_url=link(app_url, bundel["sleutel"], c["id"])))
+    return "".join(delen), getoond, rest
+
+
+def _controles(bundel, uitsluiten=(), extra=()):
+    """
+    De overige controles: de signalen die niet al in een kaart staan, per soort gegroepeerd en klein. `extra` zijn
+    conclusies die niet als kaart pasten.
+    """
+    signalen = [s for s in bundel["signalen"] if s["sleutel"] not in uitsluiten]
     actief = [s for s in signalen if not s.get("feedback")]
     gedempt = [s for s in signalen if s.get("feedback")]
-    delen = [mo.sectiekop(f"Controles ({len(actief)})", klein=True)]
-    if actief:
-        delen.append(f'<ul style="padding-left:18px;margin:0;font-size:11px">'
-                     + "".join(_signaal_html(s) for s in actief) + "</ul>")
-    else:
-        delen.append('<p style="font-size:11px;margin:2px 0">Niets gevonden.</p>')
+    groepen = []
+    for soort in SOORTEN:
+        items = [(ERNST_KLEUR[s["ernst"]], _plaats(s), s["tekst"] + (f" (ook {s['eerder']}× eerder)"
+                                                                       if s.get("eerder") else ""))
+                 for s in actief if s["soort"] == soort]
+        if items:
+            groepen.append((SOORT_NAAM[soort], items))
+    if extra:
+        groepen.append(("Meer conclusies", [(CONCLUSIE_SOORT.get(c.get("soort"), ("", mo.GRIJS))[1],
+                                             f"Tuin {c['tuin']}" if c.get("tuin") else "",
+                                             f"{c.get('titel', '')}: {c.get('tekst', '')}") for c in extra]))
+    n = sum(len(i) for _, i in groepen)
+    delen = [mo.sectiekop(f"Overige controles ({n})" if (uitsluiten or extra) else f"Controles ({n})")]
+    delen.append(mo.regels(groepen) if groepen else mo.alinea("Niets gevonden."))
     if gedempt:
         delen.append(mo.voetnoot("Gedempt door feedback: " + "; ".join(
-            f"T{s['tuin']}{' vak ' + str(s['vak']) if s['vak'] is not None else ''} {_e(s['tekst'])} "
-            f"({_e(s['feedback']['oordeel'])})" for s in gedempt)))
+            f"{_e(_plaats(s))} {_e(s['tekst'])} ({_e(s['feedback']['oordeel'])})" for s in gedempt)))
     return "".join(delen)
 
 
-def _duiding(bundel, duiding, app_url):
-    sleutel = bundel["sleutel"]
+def _samenvatting(duiding):
     if not duiding:
         return mo.voetnoot("Geen duiding van Claude ontvangen (stond de werklaptop uit?): alleen de cijfers en de "
                            "controles.")
-    delen = [f'<p style="margin:10px 0 4px;font-size:13px">{_e(duiding.get("samenvatting", ""))}</p>']
-    conclusies = duiding.get("conclusies") or []
-    if conclusies:
-        delen.append(mo.sectiekop("Conclusies"))
-        delen.append('<ol style="padding-left:20px;margin:4px 0">')
-        for c in conclusies:
-            url = link(app_url, sleutel, c["id"])
-            feedback = (f' <a href="{_e(url)}" style="color:{mo.GROEN};font-size:11px">feedback geven</a>'
-                        if url else "")
-            wat = " · ".join(x for x in (c.get("soort"), f"tuin {c['tuin']}" if c.get("tuin") else None) if x)
-            delen.append(f'<li style="margin:6px 0"><b>{_e(c.get("titel", ""))}</b>'
-                         + (f' <span style="color:{mo.GRIJS}">({_e(wat)})</span>' if wat else "")
-                         + f"<br>{_e(c.get('tekst', ''))}{feedback}</li>")
-        delen.append("</ol>")
-    return "".join(delen)
+    return mo.alinea(duiding.get("samenvatting", ""))
 
 
 def bericht(bundel, duiding, app_url=None):
-    """(onderwerp, html) van het rapport. duiding: {samenvatting, conclusies: [{id, soort, tuin, titel, tekst}]} of None."""
+    """(onderwerp, html) van het rapport. duiding: {samenvatting, conclusies: [{id, soort, tuin, titel, tekst, actie}]} of None."""
     week = bundel["soort"] == "week"
     vergelijk = "t.o.v. vorige week" if week else "t.o.v. vorige dag"
-    periode = (f"Week {bundel['week']}, {_d(date.fromisoformat(bundel['van']))} t/m "
-               f"{_d(date.fromisoformat(bundel['tot']))}" if week else f"{_d(date.fromisoformat(bundel['van']))}"
-               f"-{bundel['van'][:4]}")
-    delen = [mo.kop(onderwerp(bundel).split(" (")[0] if week else onderwerp(bundel), periode)]
-    for t in bundel.get("tuinen", []):
-        rij = _tegels_tuin(t, vergelijk, week)
-        if rij:
-            delen.append(mo.tegels(rij, label=t["naam"]))
-    delen.append(mo.voetnoot(f"Kleine regel onder een tegel = verschil {vergelijk}; cijfers voor de hele tuin."))
-    delen.append(_duiding(bundel, duiding, app_url))
+    titel = "Weekrapport teelt" if week else "Dagrapport teelt"
+    delen = []
+    if week:
+        delen.append(mo.tegels(_tegels_week(bundel)))
+        delen.append(_vergelijking(bundel))        # de vergelijking tussen de tuinen staat bovenaan
+    else:
+        for t in bundel.get("tuinen", []):
+            rij = _tegels_tuin(t, vergelijk)
+            if rij:
+                delen.append(mo.tegels(rij, label=t["naam"], breedte=3))
+        delen.append(mo.voetnoot(f"Kleine regel onder een tegel = verschil {vergelijk}; cijfers voor de hele tuin."))
+    delen.append(_samenvatting(duiding))
+    uitsluiten, extra = set(), ()
+    if duiding and (duiding.get("conclusies") or []):
+        kaarten, getoond, rest = _kaarten(bundel, duiding, app_url)
+        delen.append(mo.sectiekop("Aandachtspunten") + kaarten)
+        uitsluiten = {s for c in getoond for s in c.get("signalen") or []}
+        extra = rest
+    if week:
+        delen.append(_klimaat_per_dag(bundel))
     delen.append(_grafieken(bundel))
-    delen.append(_vergelijking(bundel) if week else _afdelingstabellen(bundel))
-    delen.append(_controles(bundel))
+    if not week:
+        delen.append(_afdelingstabellen(bundel))
+    delen.append(_controles(bundel, uitsluiten, extra))
     url = link(app_url, bundel["sleutel"])
+    gemaakt = bundel.get("gemaakt", "")[:16].replace("T", " ")
     delen.append(mo.voetnoot(
-        f"Periode {bundel['van']} t/m {bundel['tot']}. Controles en cijfers uit de teeltregistratie "
+        f"Periode {bundel['van']} t/m {bundel['tot']}"
+        + (f"; gemaakt op {gemaakt}" if gemaakt else "") + ". Cijfers en controles uit de teeltregistratie "
         + ("(Priva-bestanden, PATS)" if week else "(Priva-bestanden, Agro4all, PATS)")
         + "; de duiding is van Claude met de bedrijfswiki erbij."
-        + (f' <a href="{_e(url)}">Open het rapport en geef feedback</a>.' if url else "")))
-    return onderwerp(bundel), mo.omhulsel("".join(delen))
+        + (f' <a href="{_e(url)}" style="color:{mo.GROEN}">Open het rapport en geef feedback</a>.' if url else "")))
+    return onderwerp(bundel), mo.omhulsel("".join(delen), kop=mo.kop(titel, _periode(bundel)),
+                                          titel=onderwerp(bundel))
+
+
+def tekst_bericht(bundel, duiding, app_url=None):
+    """De tekstversie van de mail (voor mailprogramma's zonder HTML en als alternatief naast de HTML)."""
+    week = bundel["soort"] == "week"
+    uit = [("Weekrapport teelt" if week else "Dagrapport teelt") + " - " + _periode(bundel), ""]
+    for t in bundel.get("tuinen", []):
+        nu = (t.get("kengetallen") or {}).get(HELE_TUIN) or {}
+        stukken = [f"{naam} {fmt_verschil(nu[s], dec) if s == 'afwijking' else fmt_getal(nu[s], dec)}"
+                   f"{' ' + eenheid if eenheid else ''}"
+                   for s, naam, dec, eenheid in (KENGETALLEN if week else TEGELS)
+                   if nu.get(s) is not None and not (week and s in VERGELIJK_NIET)]
+        uit.append(f"{t['naam']}: " + ", ".join(stukken))
+    uit.append("")
+    if duiding:
+        uit += [duiding.get("samenvatting", ""), ""]
+        for nr, c in enumerate(duiding.get("conclusies") or [], 1):
+            uit.append(f"{nr}. {c.get('titel', '')}" + (f" (tuin {c['tuin']})" if c.get("tuin") else ""))
+            uit.append(f"   {c.get('tekst', '')}")
+            if c.get("actie"):
+                uit.append(f"   Actie: {c['actie']}")
+            url = link(app_url, bundel["sleutel"], c["id"])
+            if url:
+                uit.append(f"   Feedback: {url}")
+        uit.append("")
+    actief = [s for s in bundel["signalen"] if not s.get("feedback")]
+    uit.append(f"Controles ({len(actief)}):")
+    uit += [f"- {s['ernst']} · {SOORT_NAAM[s['soort']]} · {_plaats(s)}: {s['tekst']}" for s in actief] or ["- niets gevonden"]
+    url = link(app_url, bundel["sleutel"])
+    if url:
+        uit += ["", f"Rapport en feedback: {url}"]
+    return "\n".join(uit)

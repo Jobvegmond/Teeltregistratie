@@ -314,6 +314,8 @@ def controleer_duiding(duiding, bundel):
         if c.get("id") in ids:
             fouten.append(f"conclusie {i}: id {c.get('id')} komt dubbel voor")
         ids.add(c.get("id"))
+        if c.get("actie") is not None and not isinstance(c["actie"], str):
+            fouten.append(f"conclusie {i}: actie moet tekst zijn")
         if c.get("soort") not in ("opvallend", "fout", "advies"):
             fouten.append(f"conclusie {i}: soort moet opvallend, fout of advies zijn")
         if c.get("tuin") not in (None, 1, 3):
@@ -342,12 +344,42 @@ def verstuur_rapport(database, mail, bundel, duiding, args, stempel):
         return
     sleutel = bundel["sleutel"]
     mail.verstuur_en_log("dagrapport", sleutel + (" (proef)" if args.test else ""), onderwerp, html_tekst, aan,
-                         log=database.log_mail)
+                         tekst=dr.tekst_bericht(bundel, duiding, APP_URL), log=database.log_mail)
     if not args.test:
         database.bewaar_rapport(sleutel, bundel["soort"], bundel["van"], bundel["tot"], als_json(bundel),
                                 als_json(duiding) if duiding else None, ", ".join(aan))
     print(f"[{stempel}] {'Proefmail' if args.test else 'Gemaild'}: '{onderwerp}' "
           f"({'met' if duiding else 'zonder'} duiding) aan {', '.join(aan)}")
+
+
+PROEF_DOMEIN = "@tanacetum.nl"
+
+
+def verstuur_proeven(database, mail, args, stempel, map_):
+    """
+    Proefbestanden proef-*.json in de rapportenmap ({bundel, duiding, aan}): één proefmail naar `aan` (alleen een adres
+    van het eigen domein), zonder het rapport te bewaren of mee te tellen. Het bestand wordt eerst verwijderd, zodat
+    een proef nooit twee keer verstuurd wordt; lukt het verwijderen niet, dan gaat er niets uit. True bij een fout.
+    """
+    fout = False
+    for bestand in sorted(map_.glob("proef-*.json")) if map_.is_dir() else []:
+        try:
+            proef = json.loads(bestand.read_text(encoding="utf-8"))
+            bundel, aan = proef["bundel"], proef["aan"].strip()
+            if not aan.lower().endswith(PROEF_DOMEIN) or "," in aan:
+                raise ValueError(f"een proefmail gaat naar één adres @tanacetum.nl, niet naar '{aan}'")
+            bestand.unlink()
+        except (ValueError, KeyError, OSError) as e:
+            print(f"[{stempel}] FOUT: proefbestand {bestand.name} niet verstuurd ({e})", file=sys.stderr)
+            fout = True
+            continue
+        try:
+            verstuur_rapport(database, mail, bundel, proef.get("duiding"),
+                             argparse.Namespace(**{**vars(args), "test": aan}), stempel)
+        except mail.MailFout as e:
+            print(f"[{stempel}] FOUT bij de proefmail {bestand.name}: {e}", file=sys.stderr)
+            fout = True
+    return fout
 
 
 def verstuur(args):
@@ -364,9 +396,9 @@ def verstuur(args):
     if not mail.verzendweg() and not args.droog:
         print(f"[{stempel}] Het versturen is nog niet ingesteld (GRAPH_… of SMTP_… in .env.taak); niets gedaan.")
         return
-    fout = False
     gedaan = set()
     map_ = Path(args.rapporten)
+    fout = verstuur_proeven(database, mail, args, stempel, map_)
     for bestand in sorted(map_.glob("rapport-*.json")) if map_.is_dir() else []:
         try:
             rapport = json.loads(bestand.read_text(encoding="utf-8"))

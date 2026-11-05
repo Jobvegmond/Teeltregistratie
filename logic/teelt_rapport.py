@@ -141,13 +141,14 @@ def bericht(plantweek, vakken, vorig_jaar, tuinen, laatste_oogst, app_url=None, 
     tekst += ["", voet] + ([f"Teeltregistratie: {app_url}"] if app_url else [])
 
     html_tekst = mo.omhulsel(
-        mo.kop(f"Teelt afgerond: plantweek {week} ({jaar})", inleiding)
-        + mo.tegels(tegels(samen, kolommen))
+        mo.alinea(inleiding)
+        + mo.tegels(tegels(samen, kolommen), breedte=6)
         + mo.sectiekop("Samenvatting")
         + mo.tabel(["Kengetal"] + kolommen, [{"Kengetal": kop, **rij} for kop, rij in samen])
         + mo.sectiekop("Per vak")
         + mo.tabel(vak_koppen, vak_rijen, eerste_links=5)
         + mo.voetnoot(mo.e(voet))
         + (f'<p><a href="{mo.e(app_url)}" style="color:{mo.GROEN}">Open de teeltregistratie</a></p>' if app_url else ""),
-        breedte=900)
+        breedte=900, kop=mo.kop(f"Teelt afgerond: plantweek {week} ({jaar})", "Rapport per afgeronde plantweek"),
+        titel=onderwerp(plantweek))
     return onderwerp(plantweek), "\n".join(tekst), html_tekst

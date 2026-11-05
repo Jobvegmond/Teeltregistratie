@@ -15,9 +15,10 @@ class TestTegels(unittest.TestCase):
         self.assertIn("+0,3 t.o.v. vorige dag", uit)
         self.assertIn(mo.ORANJE, uit)
 
-    def test_meer_dan_zes_tegels_lopen_door(self):
+    def test_tegels_zijn_zwevende_tabellen_met_een_gedeelde_afsluiting(self):
         uit = mo.tegels([{"label": str(i), "waarde": "1"} for i in range(8)], breedte=6)
-        self.assertEqual(uit.count("<table"), 2)
+        self.assertEqual(uit.count('align="left"'), 8)                 # de tegels vormen vanzelf rijen
+        self.assertEqual(uit.count("clear:both"), 1)
 
     def test_verschil_tekst(self):
         self.assertEqual(mo.verschil_tekst(14.2, 13.9, 1, "°C"), "+0,3 °C")
@@ -53,7 +54,46 @@ class TestStaafgrafiek(unittest.TestCase):
         self.assertNotIn(">2 nov<", uit)
 
 
+class TestKaartEnOmhulsel(unittest.TestCase):
+    def test_kaart_met_rand_badge_actie_en_knop(self):
+        uit = mo.kaart(mo.ROOD, "Fout", "Vak vergeten", "Niet gestart", plaats="Tuin 3", actie="Start het vak",
+                       feedback_url="https://x/y?a=1&b=2")
+        self.assertIn(f'bgcolor="{mo.ROOD}"', uit)                       # gekleurde linkerrand
+        self.assertIn("FOUT", uit)
+        self.assertIn("<b>Actie:</b> Start het vak", uit)
+        self.assertIn('href="https://x/y?a=1&amp;b=2"', uit)
+        self.assertIn(">Feedback<", uit)
+        self.assertNotIn("<hr", uit)
+
+    def test_kaart_zonder_actie_en_feedback(self):
+        uit = mo.kaart(mo.BLAUW, "Opvallend", "T", "tekst")
+        self.assertNotIn("Actie", uit)
+        self.assertNotIn("Feedback", uit)
+
+    def test_pijl(self):
+        self.assertEqual(mo.pijl("+0,3"), "▲ +0,3")
+        self.assertEqual(mo.pijl("−0,3"), "▼ −0,3")
+        self.assertEqual(mo.pijl("0,0"), "0,0")
+
+    def test_omhulsel_is_gecentreerd_en_smal(self):
+        uit = mo.omhulsel("<p>x</p>", kop=mo.kop("Titel", "Onder"))
+        self.assertIn('width="640"', uit)
+        self.assertIn("max-width:100%", uit)
+        self.assertIn("Titel", uit)
+        self.assertLess(uit.index("Titel"), uit.index("<p>x</p>"))
+
+    def test_regels_per_groep_met_aantal(self):
+        uit = mo.regels([("Klimaat", [(mo.ORANJE, "T1", "RV hoog")]), ("Water", [(mo.GRIJS, "T3", "EC")])])
+        self.assertIn("Klimaat (1)", uit)
+        self.assertIn("RV hoog", uit)
+
+
 class TestTabel(unittest.TestCase):
+    def test_zebra_en_gekleurde_cel(self):
+        uit = mo.tabel(["A", "B"], [["x", ("1", mo.ROOD)], ["y", "2"], ["z", "3"]])
+        self.assertEqual(uit.count('class="zebra"'), 1)                  # de tweede rij
+        self.assertIn(f"color:{mo.ROOD}", uit)
+
     def test_rijen_als_lijst_en_als_dict(self):
         uit = mo.tabel(["A", "B"], [["x", "1"], {"A": "y", "B": "2"}])
         self.assertIn(">x<", uit)
