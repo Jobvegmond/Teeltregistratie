@@ -21,6 +21,9 @@ inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
   meteen op het laatste jaar met die week en de teelt op de laatst geplante van die week (eerst week → vak → jaar,
   met als standaard het laagste vaknummer, ook uit oude jaren). De teelt toont vak, code en plantdatum; altijd de
   teelten van de tuin uit de kop (`selectie.teelten`, test).
+- Registreren › Stek, *Hele week invullen*: in een week waarin een veld nog bij geen enkel vak is ingevuld, staan
+  wortel, plantmaat, uniformiteit en cijfer op de laatst ingevulde waarde uit een eerdere week (in plaats van
+  "zo laten"); `database.get_laatste_stekwaarden`. Bakjes en opmerking blijven per week.
 
 ## [2.26.1] - 2026-11-04
 

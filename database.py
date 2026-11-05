@@ -3638,6 +3638,35 @@ def get_stek_voor_week(maandag, tuin_id=None):
     ]
 
 
+def get_laatste_stekwaarden(maandag, tuin_id=None):
+    """
+    De laatst ingevulde stekwaarden vóór de week vanaf `maandag`: per veld (wortel, plantmaat, uniformiteit,
+    beoordeling) de waarde van de recentst geplante teelt in deze tuin waarbij dat veld is ingevuld.
+    Voor "Hele week invullen" bij Stek; een veld dat nooit is ingevuld ontbreekt.
+    """
+    velden = ("wortel", "plantmaat", "uniformiteit", "beoordeling")
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT s.wortel, s.plantmaat, s.uniformiteit, s.beoordeling
+            FROM stekbeoordelingen s
+            JOIN teelten t ON t.id = s.teelt_id
+            JOIN teeltvakken v ON v.id = t.teeltvak_id
+            WHERE v.tuin_id = %s AND t.datum_teelt_start < %s
+              AND (s.wortel IS NOT NULL OR s.plantmaat IS NOT NULL OR s.uniformiteit IS NOT NULL
+                   OR s.beoordeling IS NOT NULL)
+            ORDER BY t.datum_teelt_start DESC, v.vaknummer DESC
+            LIMIT 200
+        """, (_tuin_of_standaard(tuin_id), str(maandag)))
+        rijen = cursor.fetchall()
+    uit = {}
+    for rij in rijen:
+        for veld, waarde in zip(velden, rij):
+            if veld not in uit and waarde not in (None, ""):
+                uit[veld] = waarde
+    return uit
+
+
 def sla_stekbeoordeling_op(teelt_id, velden, gebruiker=None):
     """
     Slaat de stekbeoordeling van één teelt op (nieuw of bijwerken). `velden` is

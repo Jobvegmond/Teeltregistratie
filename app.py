@@ -84,6 +84,7 @@ from database import (
     zet_actieve_tuin,
     STANDAARD_RAS,
     get_stek_voor_week,
+    get_laatste_stekwaarden,
     sla_stekbeoordeling_op,
     stek_uitval_pct,
     verdeel_bakjes,
@@ -864,7 +865,9 @@ def _pagina_registreren():
             "laatst geplante van die week (allebei aan te passen). Daaronder per onderdeel een tabblad.",
             "**Stek**: kies de pootweek met ◀ ▶ of klik op het label (standaard de huidige week; is daar nog niets "
             "gepoot, dan de laatste week waarin wel). *Hele week invullen*: het stek van een week komt meestal uit "
-            "één partij; vul het één keer in en pas een afwijkend vak in de tabel aan. *Weekrapport*: kopieer de "
+            "één partij; vul het één keer in en pas een afwijkend vak in de tabel aan. In een week waarin nog "
+            "niets is ingevuld staan wortel, plantmaat, uniformiteit en cijfer al op de laatst ingevulde waarden. "
+            "*Weekrapport*: kopieer de "
             "tabel, open de mail (onderwerp en ontvangers staan klaar) en plak hem boven je handtekening.",
         ],
         bron="Alles wat je hier opslaat komt in het logboek (Meer), met jouw naam; *Laatst geregistreerd* komt "
@@ -4498,8 +4501,13 @@ def _inv_stek(balk):
             key=f"stek_totaal_{stek_maandag}",
         )
 
+        # Is een veld in deze week nog bij geen enkel vak ingevuld, dan staat het op de laatst ingevulde waarde
+        # (van een eerdere week), zodat je die niet elke week opnieuw hoeft te kiezen.
+        laatste_stek = get_laatste_stekwaarden(stek_maandag)
+
         def _keuze(veld, label, opties, breedte):
-            huidig = _gedeeld(veld)
+            leeg = all(r[veld] in (None, "") for r in rijen_stek)
+            huidig = laatste_stek.get(veld) if leeg else _gedeeld(veld)
             keuzes = [NIET_WIJZIGEN] + list(opties)
             return rij.selectbox(
                 label, keuzes, width=breedte,
