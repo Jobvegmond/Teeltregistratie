@@ -18,6 +18,7 @@ inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
   - Minder witruimte: de lege blokjes met alleen opmaak en het inlogcookie nemen geen ruimte meer in, en de
     tussenruimte tussen blokken is kleiner.
   - Kengetallen als kaart met een grote vette waarde; kolomkoppen van de vergelijkingstabel klein en grijs.
+  - Smal scherm: de knop Uitleg als klein rond ?-icoon rechtsboven in de kop, niet op een eigen regel.
 - Alle opmaak op één plek: `ui/styles.py` (ook de kop en de kengetallen, eerst in app.py), thema in
   `.streamlit/config.toml` (licht en donker). UI-standaard §7 bijgewerkt.
 

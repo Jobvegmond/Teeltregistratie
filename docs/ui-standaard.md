@@ -174,6 +174,7 @@ Geen losse `<style>`-blokken in de pagina's.
   gebruiker. Op een smal scherm de kop met het logo en de genummerde knoppen bovenin.
 - **Keuzegroepen** (`filters.weergave`, de tuinkeuze): één grijs spoor, de gekozen optie wit met groene tekst.
   Op een telefoon (≤ 700 px) staat de tuinkeuze als vaste balk onderin het scherm.
+- **Uitleg** op een smal scherm: alleen het ?-icoon, rond, rechtsboven in de kop.
 - **Ronding**: 0,5 rem op knoppen en velden (`baseRadius`, `buttonRadius`), 0,75 rem op kaarten.
 - **Licht en donker** volgen het apparaat (`[theme.light]` en `[theme.dark]`); in het donker staat het logo op
   een wit plaatje.

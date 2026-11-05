@@ -15,7 +15,7 @@ import streamlit as st
 # Per thema: achtergrond, vlak (velden, sporen, tegels), rand, zachte tekst, groen en het lichte groen, de
 # gekozen optie in een spoor en de schaduw daarvan. Gelijk aan .streamlit/config.toml.
 PALET = {
-    "light": {"pagina": "#f4f4f4", "bg": "#ffffff", "vlak": "#e9ebea", "vlak-hover": "#dfe2e0", "rand": "#e1e4e2",
+    "light": {"pagina": "#f9faf9", "bg": "#ffffff", "vlak": "#eef0ef", "vlak-hover": "#e4e7e5", "rand": "#e4e7e5",
               "zacht": "rgba(24, 32, 27, 0.6)", "groen": "#0A562C", "groen-donker": "#074020",
               "groen-zacht": "rgba(10, 86, 44, 0.09)", "oranje": "#F8992D", "gekozen": "#ffffff",
               "logo-bg": "transparent", "logo-pad": "0",
@@ -224,6 +224,22 @@ button:disabled { opacity: 0.45; }
 .st-key-vem_uitleg [data-testid="stPopover"] button { min-height: 0; padding: 0.2rem 0.65rem; }
 .st-key-vem_uitleg [data-testid="stPopover"] button p,
 .st-key-vem_uitleg [data-testid="stPopover"] button span { font-size: 0.8rem; }
+/* Smal scherm: de knop Uitleg als klein rond ?-icoon rechtsboven in de kop (naast de week), niet op een eigen
+   regel tussen de navigatie en de pagina. */
+@media (max-width: 899.98px) {
+    [data-testid="stMainBlockContainer"] { position: relative; }
+    [data-testid="stLayoutWrapper"]:has(> .st-key-vem_uitleg) {
+        position: absolute; top: 0.5rem; right: 0.75rem; margin: 0; z-index: 5;
+    }
+    .st-key-vem_uitleg [data-testid="stPopover"] button {
+        width: 2.1rem; height: 2.1rem; min-height: 0; padding: 0 !important; border-radius: 50% !important;
+        justify-content: center;
+    }
+    .st-key-vem_uitleg [data-testid="stPopover"] button [data-testid="stMarkdownContainer"],
+    .st-key-vem_uitleg [data-testid="stPopover"] button div[aria-hidden="true"] { display: none; }
+    .st-key-vem_uitleg [data-testid="stPopover"] button [data-testid="stIconMaterial"] { font-size: 1.15rem; margin: 0; }
+    .vem-meta { margin-right: 2.7rem; }
+}
 /* ◀ [label ▾] ▶ (ui/filters.bladeraar): het label als vette knop met vaste minimumbreedte. */
 [class*="st-key-bladeraar_"] [data-testid="stPopover"] button { min-width: 9rem; font-weight: 600; }
 /* Telefoon: ◀ en ▶ altijd op dezelfde regel als het label; het label krimpt mee. */
