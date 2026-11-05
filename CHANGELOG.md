@@ -3,6 +3,13 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.26.2] - 2026-11-05
+
+### Verwijderd
+- Overzicht: de openklapmenu's **Overzicht per plantweek** (2.4) en **Vooruitblik komende 6 weken** (2.5), op
+  verzoek. Het plannen staat nog in de tijdlijn, de concepttabel en de jaarplanning. Weg uit de code:
+  `toon_vooruitblik`, `_planning_per_plantweek` en `database.get_planning_per_week`.
+
 ## [2.26.1] - 2026-11-04
 
 ### Gewijzigd

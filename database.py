@@ -3159,32 +3159,6 @@ def get_planning(tuin_id=None):
         return cursor.fetchall()
 
 
-def get_planning_per_week(tuin_id=None):
-    """
-    Groepeert alle concept-planningen per plantweek (iso-jaar + weeknummer
-    van verwachte_startdatum), met de vaknummers in oplopende volgorde per
-    week. Geeft een lijst van tuples (jaar, week, [vaknummers], arbeidsaantal)
-    terug, gesorteerd op jaar/week. Het arbeidsaantal is het aantal vakken
-    dat voor de arbeidsplanning telt: vak 19+20 samen tellen daarin als 1
-    (net als bij het maken van de planning), ook al staan ze allebei apart
-    in de vakkenlijst.
-    """
-    rijen = get_planning(tuin_id)
-    groepen = {}
-    for _planning_id, vaknummer, start, _duur, _eind, _notitie in rijen:
-        sleutel = get_isojaar_week(start)
-        groepen.setdefault(sleutel, []).append(vaknummer)
-
-    resultaat = []
-    for jaar, week in sorted(groepen.keys()):
-        vakken = sorted(groepen[(jaar, week)])
-        arbeidsaantal = len(vakken)
-        if VAK_GECOMBINEERD[0] in vakken and VAK_GECOMBINEERD[1] in vakken:
-            arbeidsaantal -= 1
-        resultaat.append((jaar, week, vakken, arbeidsaantal))
-    return resultaat
-
-
 def verwijder_planning(planning_id, gebruiker=None):
     """Verwijdert een concept-planningsregel (zonder gevolgen voor eventuele echte teelten)."""
     with get_connection() as conn:

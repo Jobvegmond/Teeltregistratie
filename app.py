@@ -60,7 +60,6 @@ from database import (
     get_wijzigingenlog,
     lees_ruwe_tabel,
     get_planning,
-    get_planning_per_week,
     voeg_planning_toe,
     wijzig_planning,
     verwijder_planning,
@@ -1861,9 +1860,8 @@ def _pagina_overzicht():
     layout.pagina_kop(
         "Overzicht",
         wat="Per vak hoe de teelt ervoor staat en wat er gepland staat: de tijdlijn in teeltvolgorde, met per dag "
-            "de bespuitingen en de watergift. Daaronder het plannen (concepttabel, jaarplanning, "
-            "overzicht per plantweek, vooruitblik) en het vakkenregister: alle vakken als lopend, te starten of "
-            "afgerond.",
+            "de bespuitingen en de watergift. Daaronder het plannen (concepttabel en jaarplanning) en het "
+            "vakkenregister: alle vakken als lopend, te starten of afgerond.",
         lezen=[
             "**Tijdlijn**: per vak één regel. Weken lopen van zondag t/m zaterdag; bovenaan het weeknummer en "
             "daaronder de weekdag en de datum. De lopende teelt is groen tot vandaag en loopt daarna doorzichtig "
@@ -1938,7 +1936,7 @@ def _pagina_overzicht():
         uitleg_help.voetnoot("Grijze blokjes bij EC en pH: het getal past niet in een dag; klik erop of kies 4 wk "
                              "voor alle getallen.")
 
-    _planning_uitklappen(vandaag)
+    _planning_uitklappen()
     toon_vakkenregister(vandaag, TUIN_WEERGAVE, afdelingen)
     for tuin, tabel in water:
         eind = min(tot, vandaag)
@@ -4103,75 +4101,6 @@ def _wg_excel(df, tuin, van, tot):
     return buffer.getvalue()
 
 
-# --- VOORUITBLIK: wat er de komende weken te planten en te oogsten staat (beide tuinen) ---
-#
-# Tuin 1 heeft grotere vakken dan tuin 3 (883 vs 550 m², 53064 vs 32688
-# stelen bij 60/m²). "3 vakken" betekent dus niet in beide tuinen evenveel
-# areaal of planten — daarom is dit om te zetten naar m² of aantal stelen.
-
-def toon_vooruitblik(vandaag, n_weken=6, kop=True):
-    """Tabel met per week en per tuin wat er geplant (concepten) en geoogst (lopend + concepten) wordt."""
-    if kop:
-        layout.sectie(f"Vooruitblik komende {n_weken} weken (beide tuinen)")
-    eenheid = filters.weergave("Eenheid", ["Aantal vakken", "m²", "Aantal stelen"], "vooruitblik_eenheid",
-                               "Aantal vakken")
-    tuinen = sorted(TUINEN, key=lambda t: t["nummer"])
-    vakgegevens = {t["id"]: get_vakgegevens(t["id"]) for t in tuinen}
-    zondag_nu = kalender.week_begin(vandaag)
-    week_starts = [zondag_nu + timedelta(weeks=i) for i in range(n_weken)]
-    data, _, stook, _ = _nu_alles(vandaag)
-    lopend = [t for t in data["teelten"].to_dict("records") if not vs.als_datum(t["datum_oogst"])]
-
-    def waarde(tuin_id, vak, startdatum, aantal_planten=None):
-        """
-        Hoeveel één planting/oogst meetelt, in de gekozen eenheid. Een concept
-        heeft nog geen vastgelegd plantaantal; dat wordt dan geschat met de
-        standaarddichtheid voor die plantweek, net als het invulscherm doet.
-        """
-        if eenheid == "Aantal vakken":
-            return 1
-        gegevens = vakgegevens[tuin_id].get(vak, {})
-        if eenheid == "m²":
-            return gegevens.get("oppervlakte_m2") or 0
-        if vs._getal(aantal_planten):
-            return vs._getal(aantal_planten)
-        dichtheid = standaard_dichtheid_voor_plantweek(get_weeknummer(startdatum))
-        return round((gegevens.get("stelen_bij_60") or 0) / 60 * dichtheid)
-
-    def week_van(dag):
-        """Zondag van de week (zo–za); een oogst die al vóór deze week verwacht werd telt bij deze week."""
-        return max(week_starts[0], kalender.week_begin(dag))
-
-    rijen = [{"Week": "Week {1} - {0}".format(*kalender.week_sleutel(w)) + (" (deze week)" if i == 0 else "")}
-             for i, w in enumerate(week_starts)]
-    for tuin in tuinen:
-        plant, oogst = {w: 0 for w in week_starts}, {w: 0 for w in week_starts}
-        for t in (t for t in lopend if t["tuin_id"] == tuin["id"]):
-            start = vs.als_datum(t["datum_teelt_start"])
-            # Prognose van het teeltmodel (zoals in "Nu"), anders de plandatum.
-            verwacht = (stook.get(t["id"]) or {}).get("prognose") or bereken_verwachte_oogstdatum(start)[1]
-            if verwacht and week_van(verwacht) in oogst:
-                oogst[week_van(verwacht)] += waarde(tuin["id"], t["vaknummer"], start, t["aantal_planten"])
-        for _pid, vak, start, _duur, eind, _notitie in get_planning(tuin["id"]):
-            start = vs.als_datum(start)
-            if week_van(start) in plant:
-                plant[week_van(start)] += waarde(tuin["id"], vak, start)
-            if eind and week_van(vs.als_datum(eind)) in oogst:
-                oogst[week_van(vs.als_datum(eind))] += waarde(tuin["id"], vak, start)
-        for rij, w in zip(rijen, week_starts):
-            rij[f"{tuin['naam']} plant"] = round(plant[w])
-            rij[f"{tuin['naam']} oogst"] = round(oogst[w])
-    kolommen = [("Week", "Week", "tekst", None, "medium")]
-    for tuin in tuinen:
-        kolommen += [(f"{tuin['naam']} plant", f"{tuin['naam']} plant", "getal", "%d", "small"),
-                     (f"{tuin['naam']} oogst", f"{tuin['naam']} oogst", "getal", "%d", "small")]
-    toon_tabel(pd.DataFrame(rijen), kolommen)
-    uitleg_help.voetnoot(
-        f"In {eenheid.lower()}. Plant = concept-plantingen die week; oogst = lopende vakken en concepten waarvan "
-        "de (verwachte) oogst in die week valt."
-    )
-
-
 # --- VAKKENREGISTER (Overzicht, onder de tijdlijn) ---
 #
 # Alle vakken in drie tabellen: lopend, te starten (bevestigd, startdatum in
@@ -4349,11 +4278,10 @@ def toon_vakkenregister(vandaag, tuin_weergave, afdelingen):
 
 
 # --- PLANNEN (openklapmenu's op Overzicht) ---
-def _planning_uitklappen(vandaag):
+def _planning_uitklappen():
     """
-    Het plannen onder de tijdlijn: de concepttabel (veel concepten tegelijk), de jaarplanning, het overzicht
-    per plantweek en de vooruitblik. Plannen werkt per tuin: de tuin van de kop, bij Beide de laatst gekozen
-    tuin.
+    Het plannen onder de tijdlijn: de concepttabel (veel concepten tegelijk) en de jaarplanning. Plannen werkt
+    per tuin: de tuin van de kop, bij Beide de laatst gekozen tuin.
     """
     # Horizon voor de jaarplanning-tabel en het (her)plannen: een vol jaar vooruit.
     aantal_weken_vooruit = 52
@@ -4532,32 +4460,6 @@ def _planning_uitklappen(vandaag):
         if col_wis.button("↩︎ Wis mijn jaarplanning", key="plan_wis_weekdoelen"):
             wis_planning_weekdoelen(gebruiker=huidige_gebruiker())
             st.rerun()
-
-    with layout.uitklap(f"Overzicht per plantweek · {TUIN_NAAM}"):
-        _planning_per_plantweek()
-
-    with layout.uitklap("Vooruitblik komende 6 weken (beide tuinen)"):
-        toon_vooruitblik(vandaag, kop=False)
-
-
-def _planning_per_plantweek():
-    planning_per_week = get_planning_per_week()
-    if planning_per_week:
-        df_planning_week = pd.DataFrame(
-            [
-                (f"Week {week} - {jaar}", arbeidsaantal, ", ".join(str(v) for v in vakken))
-                for jaar, week, vakken, arbeidsaantal in planning_per_week
-            ],
-            columns=["Plantweek", "Aantal vakken (arbeid)", "Vakken (oplopend)"]
-        )
-        toon_tabel(df_planning_week, [
-            ("Plantweek", "Plantweek", "tekst", None, "medium"),
-            ("Aantal vakken (arbeid)", "Aantal (arbeid)", "getal", "%d", "small"),
-            ("Vakken (oplopend)", "Vakken", "tekst", None, "large"),
-        ])
-    else:
-        st.info("Nog geen concept-planningen om per week te tonen.")
-
 
 
 # --- STEK ---

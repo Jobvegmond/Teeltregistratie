@@ -133,7 +133,6 @@ alles = filters.schakelaar("Alle concepten tonen", "planning_alles", False, plek
 | Registraties invoeren (Florgib, emmers, lengte/gewicht, opmerking, wijzigen) | Tabblad Registreren | Een concept starten als teelt: venster op de tijdlijn (Overzicht) |
 | Opmerkingen | Pagina Opmerkingen | Vakpopup; elders één regel "n opmerkingen →" |
 | Planning (concepten) | Tijdlijn op Overzicht (klik op een concept of een lege plek) | Concepttabel en jaarplanning in openklapmenu's op dezelfde pagina |
-| Vooruitblik | Openklapmenu op Overzicht | – |
 
 ## 5. Legenda's
 
