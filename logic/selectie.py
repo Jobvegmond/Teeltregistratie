@@ -42,6 +42,11 @@ def laatste(items, tuin=None, vak=None):
     return max(kandidaten, key=lambda i: (i["jaar"], i["week"])) if kandidaten else None
 
 
+def teelten(items, week, jaar, tuin=None):
+    """De teelten in die plantweek en dat jaar, op plantdatum en vak: de laatst geplante onderaan."""
+    return sorted(gekozen(items, tuin, week=week, jaar=jaar), key=lambda i: (str(i.get("start") or ""), i["vak"]))
+
+
 def gekozen(items, tuin=None, vak=None, week=None, jaar=None):
     """De items die bij alle keuzes passen."""
     return [i for i in items if _past(i, tuin, vak, week, jaar)]

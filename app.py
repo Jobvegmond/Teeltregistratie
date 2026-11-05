@@ -860,7 +860,8 @@ def _pagina_registreren():
             "**Nog te doen** (rechts): bij Florgib de vakken waarvan het teeltmodel de Florgib binnen 3 dagen "
             "verwacht (of die over tijd zijn); bij Emmers de vakken in de oogst en die binnen 3 dagen oogstrijp "
             "zijn; bij Lengte en gewicht de vakken in de oogst zonder oogstlengte.",
-            "**Wijzigen**: kies het vak met week, vak en jaar; daaronder per onderdeel een tabblad.",
+            "**Wijzigen**: kies de plantweek; het jaar springt op het laatste jaar met die week en de teelt op de "
+            "laatst geplante van die week (allebei aan te passen). Daaronder per onderdeel een tabblad.",
             "**Stek**: kies de pootweek met ◀ ▶ of klik op het label (standaard de huidige week; is daar nog niets "
             "gepoot, dan de laatste week waarin wel). *Hele week invullen*: het stek van een week komt meestal uit "
             "één partij; vul het één keer in en pas een afwijkend vak in de tabel aan. *Weekrapport*: kopieer de "
@@ -1097,29 +1098,26 @@ def _inv_opmerking(vakken, datum):
 
 
 def _inv_wijzigen():
-    """Eén vak kiezen (week → vak → jaar) en per onderdeel wijzigen; het hele vak verwijderen staat apart."""
-    alle_teelten = get_alle_teelten_voor_selectie()
+    """Eén teelt kiezen (plantweek → jaar → teelt) en per onderdeel wijzigen; het hele vak verwijderen staat apart."""
+    alle_teelten = get_alle_teelten_voor_selectie(TUIN_ID)
 
     if alle_teelten:
-        # Kiezen met drie losse velden (week → vak → jaar) in plaats van één
-        # lange lijst; elk veld toont alleen wat bij de eerdere keuze bestaat.
-        # Weken in de tijd (recentste onderaan); standaard de week van de
-        # laatst gestarte teelt, en bij een week het meest recente jaar.
-        k_week, k_vak, k_jaar, _ = st.columns([1, 1, 1.3, 4])
+        # Plantweek → jaar → teelt. Weken in de tijd (recentste onderaan), standaard de week van de laatst
+        # geplante teelt. Na een week staat het jaar op het laatste jaar met die week en de teelt op de laatst
+        # geplante van die week; de sleutels hangen van de eerdere keuze af, zodat dat elke keer opnieuw gebeurt.
+        k_week, k_jaar, k_teelt, _ = st.columns([1, 1, 2, 3])
         weken_alle = selectie.weken(alle_teelten)
         recent = selectie.laatste(alle_teelten)
-        week_keuze = k_week.selectbox("Week", weken_alle, index=weken_alle.index(recent["week"]),
+        week_keuze = k_week.selectbox("Plantweek", weken_alle, index=weken_alle.index(recent["week"]),
                                       key="wijzig_week")
-        vakken_week = selectie.vakken(alle_teelten, week=week_keuze)
-        vak_keuze = k_vak.selectbox("Vak", vakken_week, key=f"wijzig_vak_{week_keuze}")
-        jaren_vak = selectie.jaren(alle_teelten, week_keuze, vak=vak_keuze)
-        jaar_keuze = k_jaar.selectbox("Jaar", jaren_vak, index=len(jaren_vak) - 1,
-                                      key=f"wijzig_jaar_{week_keuze}_{vak_keuze}")
-        passend = selectie.gekozen(alle_teelten, vak=vak_keuze, week=week_keuze, jaar=jaar_keuze)
-        if len(passend) > 1:   # zelden: twee teelten in één vak in dezelfde week
-            passend = [st.selectbox("Code", passend, format_func=lambda t: t["code"] or f"ID{t['id']}",
-                                    key=f"wijzig_dubbel_{week_keuze}_{vak_keuze}_{jaar_keuze}")]
-        geselecteerd_id = passend[0]["id"]
+        jaren_week = selectie.jaren(alle_teelten, week_keuze)
+        jaar_keuze = k_jaar.selectbox("Jaar", jaren_week, index=len(jaren_week) - 1,
+                                      key=f"wijzig_jaar_{week_keuze}")
+        teelten_week = selectie.teelten(alle_teelten, week_keuze, jaar_keuze)
+        gekozen_teelt = k_teelt.selectbox(
+            "Teelt", teelten_week, index=len(teelten_week) - 1, key=f"wijzig_teelt_{week_keuze}_{jaar_keuze}",
+            format_func=lambda t: f"Vak {t['vak']} · {t['code'] or '-'} · geplant {format_datum(t['start'])}")
+        geselecteerd_id = gekozen_teelt["id"]
         huidige = get_teelt_by_id(geselecteerd_id)
         st.caption(f"Vak {huidige['vaknummer']} · {huidige['code'] or '-'} · "
                    f"{'afgerond' if huidige['datum_oogst'] else 'lopend'}")

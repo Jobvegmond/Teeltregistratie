@@ -899,7 +899,7 @@ def markeer_teelt_afgerond(teelt_id, datum_oogst, gebruiker=None):
 def get_alle_teelten_voor_selectie(tuin_id=None):
     """
     ALLE teelten van een tuin (ook afgeronde) voor "Wijzigen of verwijderen",
-    als dicts: id, tuin_id, vak, jaar en week (ISO, van de startdatum), code.
+    als dicts: id, tuin_id, vak, jaar en week (ISO, van de startdatum), start, code.
     """
     with get_connection() as conn:
         cursor = conn.cursor()
@@ -916,7 +916,7 @@ def get_alle_teelten_voor_selectie(tuin_id=None):
     for teelt_id, tuin, vaknummer, start_datum, code in rijen:
         jaar, week = get_isojaar_week(start_datum)
         resultaat.append({"id": teelt_id, "tuin_id": tuin, "vak": vaknummer, "jaar": jaar, "week": week,
-                          "code": code})
+                          "start": start_datum, "code": code})
     return resultaat
 
 
