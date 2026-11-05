@@ -9,6 +9,10 @@ inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 - Overzicht: de openklapmenu's **Overzicht per plantweek** (2.4) en **Vooruitblik komende 6 weken** (2.5), op
   verzoek. Het plannen staat nog in de tijdlijn, de concepttabel en de jaarplanning. Weg uit de code:
   `toon_vooruitblik`, `_planning_per_plantweek` en `database.get_planning_per_week`.
+- Teelt (bij Tuin 1 / Tuin 3): de openklapmenu's **Oogst (emmers), Watergift, Gietbeurten, EC/pH watersysteem,
+  Klimaat van de afdeling, Warmte en gas, Verloop van de prognose, Teelthistorie en Wijzigingen** (3.2,
+  3.6–3.11, 3.13 en 3.14), op verzoek. Over blijven Vakken in deze teelt, Florgib en lengtes, Opmerkingen, Stek en
+  Behandelingen; de Excel bevat alleen die nog. `get_opzoek_gegevens` haalt alleen nog op wat getoond wordt.
 
 ## [2.26.1] - 2026-11-04
 

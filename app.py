@@ -3680,31 +3680,7 @@ def _op_samenvatting(groep_db, emmers, week):
     ])
 
 
-def _op_prognosegrafiek(prognose):
-    """Hoe de prognose-oogst per vak in de loop van de teelt veranderde, met de plan-oogst gestippeld."""
-    if prognose.empty:
-        return
-    df = prognose.dropna(subset=["prognose_oogst"]).copy()
-    if df.empty:
-        return
-    for kolom in ("datum", "prognose_oogst", "plan_oogst"):
-        df[kolom] = pd.to_datetime(df[kolom])
-    basis = alt.Chart(df).encode(x=alt.X("datum:T", title="Dag van de prognose", axis=alt.Axis(format="%d-%m")))
-    lijnen = basis.mark_line(point=alt.OverlayMarkDef(size=18)).encode(
-        y=alt.Y("prognose_oogst:T", title="Prognose-oogst", axis=alt.Axis(format="%d-%m")),
-        color=alt.Color("code:N", title="Vak", legend=alt.Legend(orient="bottom")),
-        tooltip=[alt.Tooltip("code:N", title="Code"), alt.Tooltip("datum:T", title="Dag", format="%d-%m-%y"),
-                 alt.Tooltip("prognose_oogst:T", title="Prognose", format="%d-%m-%y"),
-                 alt.Tooltip("plan_oogst:T", title="Plan", format="%d-%m-%y")])
-    plan = basis.mark_line(strokeDash=[4, 3], opacity=0.6).encode(
-        y="plan_oogst:T", color=alt.Color("code:N", legend=None))
-    st.altair_chart(alt.layer(plan, lijnen).properties(height=240), use_container_width=True)
-    uitleg_help.voetnoot("Doorgetrokken = prognose-oogst zoals die die dag berekend werd; gestippeld = plan-oogst.")
-
-
 OP_SECTIES = [
-    ("Oogst (emmers)", "emmers", [("datum", "Datum", "datum"), ("code", "Code", "tekst"),
-                                  ("emmers", "Emmers", "getal:0"), ("stelen", "Stelen", "getal:0")]),
     ("Florgib en lengtes", "vakken", [
         ("code", "Code", "tekst"), ("start", "Geplant", "datum"), ("planten", "Planten", "getal:0"),
         ("florgib", "Florgib", "datum"), ("lengte_florgib", "Lengte bij Florgib (cm)", "getal:1"),
@@ -3718,75 +3694,28 @@ OP_SECTIES = [
         ("code", "Code", "tekst"), ("ras", "Ras", "tekst"), ("bakjes", "Bakjes", "getal:0"),
         ("wortel", "Wortel", "tekst"), ("plantmaat", "Plantmaat", "tekst"), ("uniformiteit", "Uniformiteit", "tekst"),
         ("beoordeling", "Cijfer", "getal:1"), ("opmerking", "Opmerking", "tekst")]),
-    ("Watergift: alle dagen", "water", [
-        ("datum", "Datum", "datum"), ("code", "Code", "tekst"), ("liter_per_m2", "l/m²", "getal:1"),
-        ("beurten", "Beurten", "getal:0"), ("ec", "EC", "getal:2"), ("ph", "pH", "getal:2"), ("bron", "Bron", "tekst")]),
-    ("Gietbeurten", "beurten", [
-        ("start", "Start", "tijd"), ("eind", "Eind", "tijd"), ("code", "Code", "tekst"),
-        ("liter_per_m2", "l/m²", "getal:2"), ("ec", "EC", "getal:2"), ("ph", "pH", "getal:2"),
-        ("flow", "Flow (m³/u)", "getal:2")]),
-    ("EC/pH watersysteem", "kwaliteit", [
-        ("datum", "Datum", "datum"), ("watersysteem", "Systeem", "getal:0"), ("ec_gift", "EC gift", "getal:2"),
-        ("ph_gift", "pH gift", "getal:2"), ("ec_gem", "EC gemeten", "getal:2"), ("ph_gem", "pH gemeten", "getal:2"),
-        ("ec_doel", "EC ingesteld", "getal:2"), ("ph_doel", "pH ingesteld", "getal:2"),
-        ("ec_aanvoer", "EC uitgangswater", "getal:3"), ("recept", "Recept", "getal:0")]),
-    ("Klimaat van de afdeling", "klimaat", [
-        ("datum", "Datum", "datum"), ("afdeling", "Afd.", "getal:0"), ("etmaal_temp", "Etmaal (°C)", "getal:1"),
-        ("temp_dag", "Dag (°C)", "getal:1"), ("temp_nacht", "Nacht (°C)", "getal:1"), ("rv", "RV (%)", "getal:1"),
-        ("rv_dag", "RV dag", "getal:1"), ("rv_nacht", "RV nacht", "getal:1"),
-        ("lichtsom", "Lichtsom (J/cm²)", "getal:0")]),
-    ("Warmte en gas (hele kas)", "energie", [
-        ("datum", "Datum", "datum"), ("warmte_mj_per_m2", "Warmte (MJ/m²)", "getal:2"),
-        ("warmte_mj_totaal", "Warmte totaal (MJ)", "getal:0"), ("gas_m3_per_m2", "Gas (m³/m²)", "getal:3"),
-        ("gas_m3_totaal", "Gas totaal (m³)", "getal:0")]),
-    ("Verloop van de prognose", "prognose", [
-        ("datum", "Dag", "datum"), ("code", "Code", "tekst"), ("leeftijd_d", "Leeftijd (d)", "getal:0"),
-        ("fase", "Fase", "tekst"), ("gedaan", "Gedaan", "getal:2"), ("plan_oogst", "Plan", "datum"),
-        ("prognose_oogst", "Prognose", "datum"), ("correctie_c", "Correctie (°C)", "getal:1"),
-        ("stooklijn", "Stooklijn (°C)", "getal:1")]),
     ("Behandelingen", "behandelingen", [
         ("datum", "Datum", "datum"), ("code", "Code", "tekst"), ("type", "Soort", "tekst"),
         ("middel", "Middel", "tekst"), ("dosering", "Hoeveelheid", "getal:2"), ("eenheid", "Eenheid", "tekst"),
         ("mix", "Tankmix", "tekst"), ("doel", "Tegen", "tekst"), ("methode", "Methode", "tekst"),
         ("aantal_vakken", "Op vakken", "getal:0"), ("opmerking", "Opmerking", "tekst")]),
-    ("Teelthistorie (leerdata)", "historie", [
-        ("code", "Code", "tekst"), ("startdatum", "Geplant", "datum"), ("oogstdatum", "Oogst", "datum"),
-        ("teeltduur_dagen", "Teeltduur (d)", "getal:0"), ("florgib_datum", "Florgib", "datum"),
-        ("florgib_bron", "Florgib uit", "tekst"), ("lengte_eind", "Lengte (cm)", "getal:1"),
-        ("oogstgewicht", "Gewicht (g)", "getal:0"), ("bron", "Bron", "tekst")]),
-    ("Wijzigingen", "wijzigingen", [
-        ("tijdstip", "Wanneer", "tijd"), ("gebruiker", "Wie", "tekst"), ("actie", "Actie", "tekst"),
-        ("entiteit", "Wat", "tekst"), ("omschrijving", "Omschrijving", "tekst")]),
 ]
 
 
 def _op_bronnen(gegevens, groep_db, keuze_ids, vandaag):
-    """{bron: rijen} voor de gekozen vakken: op teelt-id, of per vak/afdeling/tuin op de eigen periode."""
+    """{bron: rijen} voor de gekozen vakken: op teelt-id, de behandelingen per vak op de eigen periode."""
     perioden_ = opzoeken.perioden(groep_db, vandaag)
     codes = {int(r["id"]): r["code"] for r in groep_db}
 
     def op_id(df):
         return df[df["teelt_id"].isin(keuze_ids)] if not df.empty else df
 
-    def rijen(df):
-        return df.to_dict("records") if not df.empty else []
-
-    energie = pd.DataFrame()
-    if not gegevens["warmte"].empty or not gegevens["gas"].empty:
-        energie = gegevens["warmte"].merge(gegevens["gas"], on=["tuin_id", "datum"], how="outer").sort_values("datum")
-    wijzigingen = gegevens["wijzigingen"]
-    if not wijzigingen.empty:
-        wijzigingen = wijzigingen[wijzigingen["entiteit_id"].isin({str(i) for i in keuze_ids})]
+    behandelingen = gegevens["behandelingen"]
     return {
         "emmers": op_id(gegevens["emmers"]), "vakken": groep_db, "opmerkingen": op_id(gegevens["opmerkingen"]),
-        "stek": op_id(gegevens["stek"]), "prognose": op_id(gegevens["prognose"]),
-        "historie": op_id(gegevens["historie"]), "wijzigingen": wijzigingen,
-        "water": opzoeken.bij_vak(rijen(gegevens["water"]), perioden_, codes),
-        "beurten": opzoeken.bij_vak(rijen(gegevens["beurten"]), perioden_, codes),
-        "behandelingen": opzoeken.bij_vak(rijen(gegevens["behandelingen"]), perioden_, codes),
-        "klimaat": opzoeken.bij_afdeling(rijen(gegevens["klimaat"]), perioden_),
-        "kwaliteit": opzoeken.bij_tuin(rijen(gegevens["kwaliteit"]), perioden_),
-        "energie": opzoeken.bij_tuin(rijen(energie), perioden_),
+        "stek": op_id(gegevens["stek"]),
+        "behandelingen": opzoeken.bij_vak(behandelingen.to_dict("records") if not behandelingen.empty else [],
+                                          perioden_, codes),
     }
 
 
@@ -3859,8 +3788,6 @@ def _opzoeken_inhoud():
     for titel, bron, kolommen in OP_SECTIES:
         rijen = bronnen[bron]
         with layout.uitklap(titel, len(rijen)):
-            if bron == "prognose":
-                _op_prognosegrafiek(rijen)
             export[titel] = _op_tabel(rijen, kolommen)
     naam = f"teelt_wk{week[1]}_{week[0]}" if gekozen == OP_ALLE else f"vak_{groep_db[0]['code'] if groep_db else gekozen}"
     layout.export(excel_bestand(export), f"{naam}.xlsx")
@@ -3897,12 +3824,12 @@ def _pagina_teelt():
             "verloop over 12 plantweken. ⏳ = lopend vak (t/m gisteren; oogst en duur zijn de prognose). Een klik "
             "op een vak opent het in zijn eigen tuin.",
             "**Tuin 1 / Tuin 3**: kies bij Vak één vak of alle vakken. Bij één vak bovenaan alles uit de vakpopup; "
-            "de vakken van de teelt staan er altijd bij (klik op een regel om dat vak te kiezen). Elke bron staat in "
-            "een openklapmenu; watergift, klimaat, EC/pH, warmte en gas per vak van planten tot de oogst (of tot "
-            "vandaag). Onderaan alles in één Excel-bestand.",
+            "de vakken van de teelt staan er altijd bij (klik op een regel om dat vak te kiezen). Daaronder in "
+            "openklapmenu's Florgib en lengtes, opmerkingen, stek en behandelingen (per vak van planten tot de oogst "
+            "of tot vandaag). Onderaan alles in één Excel-bestand.",
         ],
-        bron="Samenvatting gewogen naar de m² van het vak. Registratie (vakken, emmers, opmerkingen, stek), Priva "
-             "(klimaat, watergift, gietbeurten, EC/pH, energie), het prognoselogboek en het wijzigingenlog. Warmte "
+        bron="Samenvatting gewogen naar de m² van het vak. Registratie (vakken, emmers, opmerkingen, stek), "
+             "Priva (klimaat, watergift, energie in de vergelijking bij Beide) en Agro4all (behandelingen). Warmte "
              "en gas gelden voor de hele kas (per m²).",
         kleuren="Beide: groen/rood pijltje = beter/slechter dan vorig jaar; lichtgroen vak = beste tuin; ⚠ = niet "
                 "alle vakken met data. Vakkentabel: groen/rood = minstens 5 % beter/slechter dan het gemiddelde van "
