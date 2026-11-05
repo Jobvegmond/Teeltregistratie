@@ -328,17 +328,17 @@ button:disabled { opacity: 0.45; }
     font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;
     color: var(--vem-zacht); margin: 0.8rem 0 0.35rem;
 }
-/* Als kaarten: wit met een dunne rand, het label klein bovenaan, de waarde groot en vet. */
-.vem-kg { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-bottom: 0.3rem; }
+/* Als kleine kaarten: wit met een dunne rand, het label klein bovenaan, de waarde vet. */
+.vem-kg { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.25rem; }
 .vem-kg-tegel {
-    flex: 0 0 auto; min-width: 7.5rem; border: 1px solid var(--vem-rand); border-radius: 0.75rem;
-    background: var(--vem-bg); padding: 0.6rem 0.9rem 0.65rem; line-height: 1.25;
+    flex: 0 0 auto; min-width: 5.5rem; border: 1px solid var(--vem-rand); border-radius: 0.55rem;
+    background: var(--vem-bg); padding: 0.3rem 0.6rem 0.35rem; line-height: 1.2;
 }
 .vem-kg-label, .vem-kg-waarde, .vem-kg-delta { white-space: nowrap; }
-.vem-kg-label { font-size: 0.75rem; font-weight: 500; color: var(--vem-zacht); }
+.vem-kg-label { font-size: 0.7rem; font-weight: 500; color: var(--vem-zacht); }
 .vem-kg-label abbr { text-decoration: none; cursor: help; opacity: 0.8; margin-left: 0.2rem; }
-.vem-kg-waarde { font-size: 1.35rem; font-weight: 700; margin-top: 0.2rem; letter-spacing: -0.02em; }
-.vem-kg-delta { font-size: 0.72rem; color: var(--vem-zacht); margin-top: 0.15rem; }
+.vem-kg-waarde { font-size: 0.98rem; font-weight: 650; margin-top: 0.05rem; letter-spacing: -0.01em; }
+.vem-kg-delta { font-size: 0.66rem; color: var(--vem-zacht); margin-top: 0.05rem; }
 
 /* ---------- Vergelijkingstabel (ui/vergelijkingstabel.py) ---------- */
 /* Strak: alleen horizontale lijnen, geen zebra, waarden nooit afgebroken. Streamlit zet om elke cel van een

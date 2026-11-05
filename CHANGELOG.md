@@ -28,6 +28,12 @@ inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 - `database.get_watervoorspelling_data()`: teelten, watergift, straling, eerste emmer en water-opmerkingen van
   één tuin in vijf query's.
 
+## [2.27.3] - 2026-11-05
+
+### Gewijzigd
+- Kengetallen (de tegels bovenaan Teelt en in de vakpopup) weer compact: kleinere waarde (≈ 1 rem i.p.v. 1,35),
+  minder binnenruimte en kleinere tussenruimte; ze blijven witte kaartjes met een dunne rand.
+
 ## [2.27.2] - 2026-11-05
 
 ### Gewijzigd
