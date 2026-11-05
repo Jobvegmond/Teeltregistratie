@@ -132,6 +132,7 @@ alles = filters.schakelaar("Alle concepten tonen", "planning_alles", False, plek
 | Lijst van vakken | Vakkenregister (Overzicht) | Doorklik-link met het juiste filter |
 | Registraties invoeren (Florgib, emmers, lengte/gewicht, opmerking, wijzigen) | Tabblad Registreren | Een concept starten als teelt: venster op de tijdlijn (Overzicht) |
 | Opmerkingen | Pagina Opmerkingen | Vakpopup; elders één regel "n opmerkingen →" |
+| Wat er vandaag te doen is (water, spuiten, registraties) | Notificaties: de knop met het belletje in de kop, alleen voor `NOTIFICATIES_VOOR` (`logic/notificaties.py`) | – |
 | Planning (concepten) | Tijdlijn op Overzicht (klik op een concept of een lege plek) | Concepttabel en jaarplanning in openklapmenu's op dezelfde pagina |
 
 ## 5. Legenda's

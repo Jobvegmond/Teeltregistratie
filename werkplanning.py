@@ -29,27 +29,16 @@ def lees_argumenten():
     return parser.parse_args()
 
 
-def main():
-    args = lees_argumenten()
-    # Altijd UTF-8 (ook in een Windows-console of als de uitvoer naar een bestand gaat): "–" en "·" in de taken.
-    sys.stdout.reconfigure(encoding="utf-8")
-    if args.doel == "productie":
-        import database as _db          # laadt .env; daarna het productie-adres als DATABASE_URL
-        doel_url = os.environ.get("DATABASE_URL_PRODUCTIE")
-        if not doel_url:
-            print("FOUT: DATABASE_URL_PRODUCTIE is niet gezet.", file=sys.stderr)
-            sys.exit(1)
-        _db.DATABASE_URL = doel_url
-
-    import database
+def bereken_taken(database, tuin, van, dagen=7):
+    """
+    De taken van `dagen` dagen vanaf `van` voor één tuin (dict uit database.get_tuinen()): lijst van dicts met
+    datum, soort, vakken, titel en toelichting (logic/werkplanning.taken). Ook gebruikt door de notificaties in
+    de app. `database` = de module database (met de juiste DATABASE_URL).
+    """
     from logic import prognoselog, teeltprognose as tp, vakstatus as vs
     from logic import werkplanning as wp
 
-    tuin = next((t for t in database.get_tuinen() if t["nummer"] == args.tuin), None)
-    if tuin is None:
-        print(f"FOUT: geen tuin {args.tuin}", file=sys.stderr)
-        sys.exit(1)
-    van, tot = args.van, args.van + timedelta(days=args.dagen - 1)
+    tot = van + timedelta(days=dagen - 1)
 
     def plandatum(start):
         return database.bereken_verwachte_oogstdatum(start)[1]
@@ -93,7 +82,30 @@ def main():
         b["datum"] = vs.als_datum(b["datum"])
     cxds = wp.laatste_cxds(behandelingen)
 
-    taken = wp.taken(teelten, cxds, concepten, van, args.dagen, geplant)
+    return wp.taken(teelten, cxds, concepten, van, dagen, geplant)
+
+
+def main():
+    args = lees_argumenten()
+    # Altijd UTF-8 (ook in een Windows-console of als de uitvoer naar een bestand gaat): "–" en "·" in de taken.
+    sys.stdout.reconfigure(encoding="utf-8")
+    if args.doel == "productie":
+        import database as _db          # laadt .env; daarna het productie-adres als DATABASE_URL
+        doel_url = os.environ.get("DATABASE_URL_PRODUCTIE")
+        if not doel_url:
+            print("FOUT: DATABASE_URL_PRODUCTIE is niet gezet.", file=sys.stderr)
+            sys.exit(1)
+        _db.DATABASE_URL = doel_url
+
+    import database
+
+    tuin = next((t for t in database.get_tuinen() if t["nummer"] == args.tuin), None)
+    if tuin is None:
+        print(f"FOUT: geen tuin {args.tuin}", file=sys.stderr)
+        sys.exit(1)
+    van, tot = args.van, args.van + timedelta(days=args.dagen - 1)
+    from logic import werkplanning as wp
+    taken = bereken_taken(database, tuin, van, args.dagen)
     if args.json:
         print(json.dumps([{"id": f"{t['soort']}-{'-'.join(map(str, t['vakken']))}-{t['datum']}",
                            "date": str(t["datum"]), "title": t["titel"], "note": t["toelichting"],

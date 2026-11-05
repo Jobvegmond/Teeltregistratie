@@ -73,38 +73,18 @@ def main():
         print(f"FOUT: geen tuin {args.tuin}", file=sys.stderr)
         sys.exit(1)
     vandaag = args.van
-    gisteren = vandaag - timedelta(days=1)
-    # Het model leert op beide tuinen; het advies is voor de gekozen tuin.
-    alle = {t["nummer"]: voorbereid(database, wv, t, vandaag) for t in tuinen}
-    d = alle[tuin["nummer"]]
-    andere = [x for n, x in alle.items() if n != tuin["nummer"]]
-
     if args.terugtoets:
+        gisteren = vandaag - timedelta(days=1)
+        # Het model leert op beide tuinen; de toets is voor de gekozen tuin.
+        alle = {t["nummer"]: voorbereid(database, wv, t, vandaag) for t in tuinen}
+        d = alle[tuin["nummer"]]
+        andere = [x for n, x in alle.items() if n != tuin["nummer"]]
         terugtoets(wv, openmeteo, tuin, d, andere, gisteren, args.maanden, args.json)
         return
 
-    # Stralingsverwachting: Open-Meteo, omgerekend met de laatste weken (ook voor een dag zonder meting).
-    melding = None
-    try:
-        if vandaag == date.today():
-            om = openmeteo.verwachting(dagen_terug=wv.IJK_DAGEN + 10, dagen_vooruit=2)
-        else:
-            om = openmeteo.historie(vandaag - timedelta(days=wv.IJK_DAGEN + 10), vandaag + timedelta(days=1))
-    except Exception as fout:                                   # geen netwerk: verder met de metingen
-        om, melding = {}, f"geen stralingsverwachting (Open-Meteo: {type(fout).__name__})"
-    straling = d["straling"]
-    ijk = wv.ijk_straling(straling, om, vandaag)
-    verwachting = {dag: wv.omrekenen(mj, ijk) for dag, mj in om.items() if dag >= vandaag or dag not in straling}
-    if vandaag not in verwachting:                              # terugvallen op het gemiddelde van de laatste week
-        week = [straling[dag] for dag in straling if dag >= vandaag - timedelta(days=7)]
-        verwachting[vandaag] = sum(week) / len(week) if week else 0.0
-    verwacht_morgen = verwachting.get(vandaag + timedelta(days=1))
-
-    # Leren op de gemeten straling van de dag zelf (toetste even goed als op de verwachting van die ochtend).
-    model = wv.train([r for x in alle.values() for r in
-                      wv.kenmerken(x["teelten"], x["gift"], x["straling"], x["begin"], gisteren)])
-    rijen = wv.kenmerken(d["teelten"], d["gift"], straling, vandaag, vandaag, verwachting, d["eerste_emmer"])
-    lijst = wv.adviezen(model, rijen, verwacht_morgen, d["opmerkingen"], d["vandaag_gegeven"])
+    uit = bereken_advies(database, tuin, vandaag)
+    lijst, d, om, ijk, melding = uit["lijst"], uit["data"], uit["openmeteo"], uit["ijk"], uit["melding"]
+    verwachting, verwacht_morgen = uit["verwachting"], uit["verwacht_morgen"]
 
     if args.json:
         items = wv.feed_items(lijst, vandaag, tuin["naam"])
@@ -132,6 +112,46 @@ def main():
                 print(f"  {a['reden']}")
     if d["zonder"]:
         print(f"\nGeen advies voor vak {wv.vakken_tekst(d['zonder'])} (waterteelt).")
+
+
+def bereken_advies(database, tuin, vandaag):
+    """
+    Het advies van `vandaag` voor één tuin (dict uit database.get_tuinen()), geleerd op beide tuinen. Geeft een
+    dict met lijst (wv.adviezen: per vak advies, kans en reden), data (voorbereid), openmeteo, ijk, verwachting,
+    verwacht_morgen en melding (als Open-Meteo niet bereikbaar was). Ook gebruikt door de notificaties in de app.
+    """
+    from integrations import openmeteo
+    from logic import watervoorspelling as wv
+
+    gisteren = vandaag - timedelta(days=1)
+    tuinen = database.get_tuinen()
+    alle = {t["nummer"]: voorbereid(database, wv, t, vandaag) for t in tuinen}
+    d = alle[tuin["nummer"]]
+    # Stralingsverwachting: Open-Meteo, omgerekend met de laatste weken (ook voor een dag zonder meting).
+    melding = None
+    try:
+        if vandaag == date.today():
+            om = openmeteo.verwachting(dagen_terug=wv.IJK_DAGEN + 10, dagen_vooruit=2)
+        else:
+            om = openmeteo.historie(vandaag - timedelta(days=wv.IJK_DAGEN + 10), vandaag + timedelta(days=1))
+    except Exception as fout:                                   # geen netwerk: verder met de metingen
+        om, melding = {}, f"geen stralingsverwachting (Open-Meteo: {type(fout).__name__})"
+    straling = d["straling"]
+    ijk = wv.ijk_straling(straling, om, vandaag)
+    verwachting = {dag: wv.omrekenen(mj, ijk) for dag, mj in om.items() if dag >= vandaag or dag not in straling}
+    if vandaag not in verwachting:                              # terugvallen op het gemiddelde van de laatste week
+        week = [straling[dag] for dag in straling if dag >= vandaag - timedelta(days=7)]
+        verwachting[vandaag] = sum(week) / len(week) if week else 0.0
+    verwacht_morgen = verwachting.get(vandaag + timedelta(days=1))
+
+    # Leren op de gemeten straling van de dag zelf (toetste even goed als op de verwachting van die ochtend).
+    model = wv.train([r for x in alle.values() for r in
+                      wv.kenmerken(x["teelten"], x["gift"], x["straling"], x["begin"], gisteren)])
+    rijen = wv.kenmerken(d["teelten"], d["gift"], straling, vandaag, vandaag, verwachting, d["eerste_emmer"])
+    lijst = wv.adviezen(model, rijen, verwacht_morgen, d["opmerkingen"], d["vandaag_gegeven"])
+
+    return {"lijst": lijst, "data": d, "openmeteo": om, "ijk": ijk, "verwachting": verwachting,
+            "verwacht_morgen": verwacht_morgen, "melding": melding}
 
 
 def voorbereid(database, wv, tuin, vandaag):

@@ -3,6 +3,24 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.29.0] - 2026-11-05
+
+### Toegevoegd
+- **Notificaties**: een knop met een belletje en het aantal meldingen rechtsboven (naast Uitleg; op de telefoon
+  naast het ?-icoon), alleen voor de gebruikers in `config.NOTIFICATIES_VOOR` (nu job), over de eigen tuin
+  (standaard_tuin). Elke melding een kaartje (logic/notificaties.py, tests):
+  - **Water** volgens de watervoorspelling: "Water geven" en "Misschien water", met per planting de reden;
+  - **Spuiten** volgens de werkplanning: CXDS-blokken, Florgib + CXDS en inwateren van vandaag en morgen;
+  - **Registreren**: Florgib die verwacht was maar niet is ingevuld, oogst verwacht maar nog geen emmers, in de
+    oogst maar nog geen oogstlengte; met een knop *Invullen* die naar Registreren gaat met de juiste keuze.
+  De voorspelling en de werkplanning rekenen een paar seconden en worden een uur bewaard; de knop wordt pas na
+  de pagina gevuld, zodat die er niet op wacht.
+- `werkplanning.bereken_taken` en `watervoorspelling.bereken_advies`: het rekenwerk van de scripts als functie
+  (de scripts geven dezelfde uitvoer).
+
+### Verwijderd
+- Registreren: het kader **Nog te doen** (nu de notificaties); `registreren.nog_te_doen`.
+
 ## [2.28.0] - 2026-11-05
 
 ### Toegevoegd

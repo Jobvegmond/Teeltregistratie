@@ -1,7 +1,8 @@
 """
 Rekenwerk voor het tabblad Registreren: de lopende vakken van een tuin (met wat er al is en wat het teeltmodel
 verwacht), de waarde per vak bij het opslaan (een eigen waarde in de tabel, anders de waarde voor alle
-aangevinkte vakken), wat er nog te doen is en de laatste registraties uit het wijzigingenlog.
+aangevinkte vakken) en de laatste registraties uit het wijzigingenlog. Wat er nog te doen is: de
+notificaties (logic/notificaties.py).
 Geen Streamlit; tests in tests/test_registreren.py.
 """
 import re
@@ -65,38 +66,6 @@ def te_registreren(regels, velden, gemeen):
 def zonder(registraties, veld):
     """De vakken (nummers) waarvoor `veld` na het aanvullen nog leeg is."""
     return [vak for _id, vak, waarden in registraties if waarden.get(veld) is None]
-
-
-def nog_te_doen(soort, vakken, vandaag, vooruit=3):
-    """
-    Wat er nu (of binnen `vooruit` dagen) te registreren is, als [(vak, tekst)], het dringendste eerst:
-    - "florgib": vakken zonder Florgib waarvan het teeltmodel de Florgib verwacht;
-    - "emmers": vakken in de oogst (al emmers) of met een prognose-oogst;
-    - "lengte": vakken in de oogst zonder oogstlengte.
-    """
-    grens = vandaag + timedelta(days=vooruit)
-    if soort == "florgib":
-        rijen = sorted((r for r in vakken if r["lengte_half"] is None and r["florgib_verwacht"]
-                        and r["florgib_verwacht"] <= grens), key=lambda r: (r["florgib_verwacht"], r["vak"]))
-        return [(r["vak"], f"verwacht {r['florgib_verwacht']:%d-%m}" + _dagen(r["florgib_verwacht"], vandaag))
-                for r in rijen]
-    if soort == "emmers":
-        bezig = sorted((r for r in vakken if r["emmers"]), key=lambda r: r["vak"])
-        verwacht = sorted((r for r in vakken if not r["emmers"] and r["prognose"] and r["prognose"] <= grens),
-                          key=lambda r: (r["prognose"], r["vak"]))
-        return ([(r["vak"], f"in de oogst, {r['emmers']:g} emmers") for r in bezig]
-                + [(r["vak"], f"prognose {r['prognose']:%d-%m}" + _dagen(r["prognose"], vandaag)) for r in verwacht])
-    if soort == "lengte":
-        return [(r["vak"], f"in de oogst ({r['emmers']:g} emmers), nog geen lengte")
-                for r in sorted(vakken, key=lambda r: r["vak"]) if r["emmers"] and r["lengte_eind"] is None]
-    return []
-
-
-def _dagen(dag, vandaag):
-    verschil = (dag - vandaag).days
-    if verschil == 0:
-        return " (vandaag)"
-    return f" (over {verschil} d)" if verschil > 0 else f" ({-verschil} d over tijd)"
 
 
 # Welke logregels bij welke soort registratie horen (omschrijving of entiteit in het wijzigingenlog).

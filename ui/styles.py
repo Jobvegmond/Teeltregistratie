@@ -141,13 +141,17 @@ header[data-testid="stHeader"] { display: none; }
        Begint de pagina met iets anders (bijv. Meer), dan blijft de kopbalk een eigen regel. */
     [data-testid="stMainBlockContainer"] { position: relative; }
     [data-testid="stLayoutWrapper"]:has(> .st-key-vem_kopbalk):has(+ [data-testid="stLayoutWrapper"] > [class*="st-key-filterbalk_"]) {
-        position: absolute; top: calc(1rem + 1.45rem); right: 2rem; width: auto; z-index: 5;
+        position: absolute; top: calc(1rem + 1.45rem); right: 2rem; width: max-content; z-index: 5;
     }
     [data-testid="stLayoutWrapper"]:has(> .st-key-vem_kopbalk):has(+ [data-testid="stLayoutWrapper"] > [class*="st-key-filterbalk_"]) > .st-key-vem_kopbalk {
         flex-wrap: nowrap; margin-bottom: 0;
     }
     [data-testid="stLayoutWrapper"]:has(> .st-key-vem_kopbalk) + [data-testid="stLayoutWrapper"] > [class*="st-key-filterbalk_"] {
         padding-right: 20rem;
+    }
+    /* Met de knop Notificaties erbij is de kopbalk breder. */
+    body:has(.st-key-vem_notif) [data-testid="stLayoutWrapper"]:has(> .st-key-vem_kopbalk) + [data-testid="stLayoutWrapper"] > [class*="st-key-filterbalk_"] {
+        padding-right: 25rem;
     }
 }
 @media (max-width: 899.98px) {
@@ -238,6 +242,10 @@ button:disabled { opacity: 0.45; }
 .st-key-vem_uitleg [data-testid="stPopover"] button { min-height: 0; padding: 0.2rem 0.65rem; }
 .st-key-vem_uitleg [data-testid="stPopover"] button p,
 .st-key-vem_uitleg [data-testid="stPopover"] button span { font-size: 0.8rem; }
+/* Labels in de kop nooit afkappen ("Uit…"): niet laten krimpen. */
+.st-key-vem_uitleg [data-testid="stPopover"] button * { flex-shrink: 0 !important; }
+.st-key-vem_uitleg [data-testid="stPopover"] button [data-testid="stMarkdownContainer"],
+.st-key-vem_uitleg [data-testid="stPopover"] button p { overflow: visible; text-overflow: clip; }
 /* Smal scherm: de knop Uitleg als klein rond ?-icoon rechtsboven in de kop (naast de week), niet op een eigen
    regel tussen de navigatie en de pagina. */
 @media (max-width: 899.98px) {
@@ -253,7 +261,37 @@ button:disabled { opacity: 0.45; }
     .st-key-vem_uitleg [data-testid="stPopover"] button div[aria-hidden="true"] { display: none; }
     .st-key-vem_uitleg [data-testid="stPopover"] button [data-testid="stIconMaterial"] { font-size: 1.15rem; margin: 0; }
     .vem-meta { margin-right: 2.7rem; }
+    /* De knop Notificaties: belletje met het aantal, als pilletje naast het ?-icoon. */
+    .st-key-vem_uitleg .st-key-vem_notif [data-testid="stPopover"] button {
+        width: auto; padding: 0 0.6rem 0 0.5rem !important; border-radius: 1.05rem !important; gap: 0.25rem;
+    }
+    .st-key-vem_uitleg .st-key-vem_notif [data-testid="stPopover"] button [data-testid="stMarkdownContainer"] { display: block; }
+    body:has(.st-key-vem_notif) .vem-meta { margin-right: 7rem; }
+    body:has(.st-key-vem_notif) .vem-week { font-size: 0.78rem; }
 }
+/* ---------- Notificaties (app.py, _toon_notificaties) ---------- */
+/* De teller: oranje als er iets te doen is, grijs bij 0. */
+.st-key-vem_notif_actief [data-testid="stPopover"] button p {
+    background: var(--vem-oranje); color: #fff; font-weight: 700; font-size: 0.72rem !important;
+    padding: 0 0.42rem; border-radius: 1rem; line-height: 1.35;
+}
+.st-key-vem_notif_leeg [data-testid="stPopover"] button p { color: var(--vem-zacht); }
+.st-key-vem_notif_actief [data-testid="stPopover"] button [data-testid="stIconMaterial"] { color: var(--vem-groen); }
+.vem-notif-kop { font-weight: 700; font-size: 1rem; margin-bottom: 0.1rem; }
+.vem-notif-kop span { font-weight: 400; font-size: 0.8rem; color: var(--vem-zacht); margin-left: 0.35rem; }
+/* Elke melding een kaartje met een gekleurde streep links: water blauw, spuiten groen, registreren oranje. */
+[class*="st-key-vem_notif_water_"], [class*="st-key-vem_notif_spuiten_"], [class*="st-key-vem_notif_registratie_"] {
+    border-radius: 0.6rem !important; padding: 0.55rem 0.75rem !important; gap: 0.35rem !important;
+}
+[class*="st-key-vem_notif_water_"] { box-shadow: inset 3px 0 0 #2a78d6; }
+[class*="st-key-vem_notif_spuiten_"] { box-shadow: inset 3px 0 0 var(--vem-groen); }
+[class*="st-key-vem_notif_registratie_"] { box-shadow: inset 3px 0 0 var(--vem-oranje); }
+.vem-notif-soort {
+    font-size: 0.66rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--vem-zacht);
+}
+.vem-notif-titel { font-size: 0.9rem; font-weight: 650; margin: 0.05rem 0 0.15rem; }
+.vem-notif-regel { font-size: 0.78rem; color: var(--vem-zacht); line-height: 1.4; }
+[class*="st-key-vem_notif_knop_"] button { min-height: 0; padding: 0.15rem 0.6rem; }
 /* ◀ [label ▾] ▶ (ui/filters.bladeraar): het label als vette knop met vaste minimumbreedte. */
 [class*="st-key-bladeraar_"] [data-testid="stPopover"] button { min-width: 9rem; font-weight: 600; }
 /* ◀ en ▶ altijd op dezelfde regel als het label; past het niet, dan krimpt het label (tekst met …). */
