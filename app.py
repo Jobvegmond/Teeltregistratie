@@ -111,6 +111,7 @@ from database import (
     warmte_per_bezette_m2,
     vakstatus_dataversie,
 )
+from logic import notificaties
 from logic import vakstatus as vs
 from logic import kengetallen as kg
 from logic import perioden
@@ -139,7 +140,7 @@ from config import (
     PATS_TRAPEYE_VAKKEN,
     AFDELING_VOLGORDE, AFWIJKING_VENSTER_DAGEN, C_GRENZEN, FLORGIB_ACHTERSTAND_DAGEN,
     OP_KOERS_MARGE, OPMERKING_CATEGORIEEN, APP_VERSIE, WATERSYSTEMEN,
-    DIF_MIN, STOOK_MAX, EC_BEREIK, PH_BEREIK,
+    DIF_MIN, STOOK_MAX, EC_BEREIK, PH_BEREIK, NOTIFICATIES_VOOR,
 )
 
 # --- PAGINA-INSTELLINGEN ---
@@ -686,9 +687,14 @@ if _tuin_modus == "een" and st.session_state["tuin_weergave"] == "beide":
     _tuin_rij.caption(f"Beide kan hier niet: {_tuin_reden[:-1].lower()}")
 elif _tuin_modus == "beide":
     _tuin_rij.caption(_tuin_reden)
-# De knop Uitleg van de pagina komt klein rechts in de kopbalk (ui/layout.pagina_kop); een paginatitel is er
-# niet, want de gevulde knop in de navigatiebalk laat al zien op welke pagina je bent.
-layout.kop_plek(_kopbalk.container(width="content", key="vem_uitleg"))
+# Rechts in de kopbalk: de notificaties (alleen voor NOTIFICATIES_VOOR; gevuld onderaan, na de pagina, zodat die
+# er niet op wacht) en de knop Uitleg van de pagina (ui/layout.pagina_kop). Een paginatitel is er niet, want de
+# huidige pagina licht op in de navigatie.
+_kop_rechts = _kopbalk.container(horizontal=True, width="content", gap="small", vertical_alignment="center",
+                                 key="vem_uitleg")
+_notif_plek = (_kop_rechts.container(width="content", key="vem_notif")
+               if st.session_state.get("username") in NOTIFICATIES_VOOR else None)
+layout.kop_plek(_kop_rechts)
 # De tuin waarin geregistreerd en gepland wordt: de gekozen tuin, bij Beide de laatst gekozen tuin.
 TUIN_NUMMER = st.session_state["tuin_nummer"]
 TUIN_ID = get_tuin_id(TUIN_NUMMER)
@@ -815,9 +821,6 @@ def _pagina_registreren():
             "**Emmers**: 100 stelen per emmer. Vink *Afronden* aan bij de laatste emmers van een vak (ook "
             "zonder emmers: dan wordt het vak alleen afgerond).",
             "**Rijpheid**: 1 = rauw, 4 = rijp; een bereik als 1-3 voor een mengsel.",
-            "**Nog te doen** (rechts): bij Florgib de vakken waarvan het teeltmodel de Florgib binnen 3 dagen "
-            "verwacht (of die over tijd zijn); bij Emmers de vakken in de oogst en die binnen 3 dagen oogstrijp "
-            "zijn; bij Lengte en gewicht de vakken in de oogst zonder oogstlengte.",
             "**Wijzigen**: kies de plantweek; het jaar springt op het laatste jaar met die week en de teelt op de "
             "laatst geplante van die week (allebei aan te passen). Daaronder per onderdeel een tabblad.",
             "**Stek**: kies de pootweek met ◀ ▶ of klik op het label (standaard de huidige week; is daar nog niets "
@@ -860,13 +863,6 @@ def _pagina_registreren():
             {INV_FLORGIB: _inv_florgib, INV_EMMERS: _inv_emmers, INV_OPMERKING: _inv_opmerking}[actie](vakken, datum)
     with rechts:
         soort = INV_SOORT[actie]
-        if soort != "opmerking":
-            layout.sectie("Nog te doen")
-            te_doen = reg.nog_te_doen(soort, vakken, vandaag)
-            if te_doen:
-                st.markdown("\n".join(f"- **Vak {vak}** · {tekst}" for vak, tekst in te_doen))
-            else:
-                st.caption("Niets op dit moment.")
         layout.sectie("Laatst geregistreerd")
         vak_van = {int(t["id"]): int(t["vaknummer"]) for t in records if t["tuin_id"] == TUIN_ID}
         laatste = reg.laatste_registraties(get_wijzigingenlog(500), soort, vak_van)
@@ -5230,7 +5226,80 @@ def pagina_meer():
         _pagina_ruwe_data()
 
 
+# --- NOTIFICATIES (knop met het belletje in de kop, alleen voor NOTIFICATIES_VOOR) ---
+#
+# Wat er vandaag te doen is in de eigen tuin van de gebruiker: water volgens de watervoorspelling, bespuitingen
+# volgens de werkplanning (vandaag en morgen) en registraties die er al hadden moeten zijn (logic/notificaties.py).
+# De voorspelling en de werkplanning rekenen een paar seconden; daarom een uur bewaard.
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _notif_water(tuin_nummer, dag):
+    """De watervoorspelling van `dag` (watervoorspelling.bereken_advies), of een foutmelding."""
+    import database as _database
+    import watervoorspelling
+    try:
+        tuin = next(t for t in TUINEN if t["nummer"] == tuin_nummer)
+        return watervoorspelling.bereken_advies(_database, tuin, dag)["lijst"], None
+    except Exception as fout:                       # de rest van de meldingen gaat gewoon door
+        return [], f"Watervoorspelling niet beschikbaar ({type(fout).__name__})"
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _notif_werk(tuin_nummer, dag):
+    """De werkplanning van `dag` en de dag erna (werkplanning.bereken_taken), of een foutmelding."""
+    import database as _database
+    import werkplanning
+    try:
+        tuin = next(t for t in TUINEN if t["nummer"] == tuin_nummer)
+        return werkplanning.bereken_taken(_database, tuin, dag, 2), None
+    except Exception as fout:
+        return [], f"Werkplanning niet beschikbaar ({type(fout).__name__})"
+
+
+_NOTIF_SOORT = {"water": ("Water", ":material/water_drop:"), "spuiten": ("Spuiten", ":material/sanitizer:"),
+                "registratie": ("Registreren", ":material/edit_note:")}
+
+
+def _toon_notificaties(plek):
+    """De knop met het aantal meldingen en, opengeklapt, de meldingen zelf (elk een kaartje)."""
+    vandaag = date.today()
+    nummer = get_standaard_tuin_van_gebruiker(st.session_state.get("username"))
+    tuin = next((t for t in TUINEN if t["nummer"] == nummer), None)
+    if tuin is None:
+        return
+    water_lijst, fout_water = _notif_water(nummer, vandaag)
+    taken, fout_werk = _notif_werk(nummer, vandaag)
+    data, _model, stook, _afwijking = _nu_alles(vandaag)
+    vakken = reg.lopende_vakken(data["teelten"].to_dict("records"), tuin["id"], vandaag, stook)
+    meldingen = notificaties.alles(water_lijst, taken, vakken, vandaag)
+    fouten = [f for f in (fout_water, fout_werk) if f]
+    with plek.container(width="content", key="vem_notif_actief" if meldingen else "vem_notif_leeg"):
+        with st.popover(str(len(meldingen)), icon=":material/notifications:", width="content",
+                        help="Notificaties: wat er vandaag te doen is"):
+            with st.container(width=430, gap="small"):
+                st.markdown(f'<div class="vem-notif-kop">Notificaties <span>{html.escape(tuin["naam"])} · '
+                            f'{_DAGEN_KORT[vandaag.weekday()]} {format_datum(vandaag)}</span></div>',
+                            unsafe_allow_html=True)
+                if not meldingen:
+                    st.caption("Niets te doen op dit moment.")
+                for i, m in enumerate(meldingen):
+                    naam, icoon = _NOTIF_SOORT[m["soort"]]
+                    with st.container(border=True, gap="small", key=f"vem_notif_{m['soort']}_{i}"):
+                        st.markdown(
+                            f'<div class="vem-notif-soort">{naam}</div>'
+                            f'<div class="vem-notif-titel">{html.escape(m["titel"])}</div>'
+                            + "".join(f'<div class="vem-notif-regel">{html.escape(r)}</div>' for r in m["regels"]),
+                            unsafe_allow_html=True)
+                        if m.get("actie") and st.button("Invullen", key=f"vem_notif_knop_{i}", icon=icoon,
+                                                        width="content"):
+                            ga_naar("registreren", {"inv_actie": m["actie"]}, tuin=nummer)
+                for f in fouten:
+                    st.caption(f)
+
+
 _pagina.run()
+if _notif_plek is not None:
+    _toon_notificaties(_notif_plek)
 
 # Lokaal meten: maak een leeg bestand .vem_tijd naast app.py; elke run schrijft
 # dan zijn duur (en de actieve pagina) in .vem_tijd.log.

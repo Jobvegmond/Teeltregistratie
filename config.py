@@ -44,6 +44,11 @@ INWATER_DAGEN = 7               # water of een behandeling tot zoveel dagen vó�
 HERHALING_DAGEN = 14            # zo ver terug telt het rapport hoe vaak een signaal eerder kwam
 FEEDBACK_DAGEN = 30             # feedback "klopt niet"/"bewust" dempt hetzelfde signaal zolang
 
+# --- NOTIFICATIES (knop met het belletje in de kop) ---
+# Alleen voor deze gebruikers (username): wat er vandaag te doen is in hun eigen tuin (standaard_tuin), uit de
+# watervoorspelling, de werkplanning (bespuitingen) en de registraties die er al hadden moeten zijn.
+NOTIFICATIES_VOOR = ("job",)
+
 # --- ENERGIE ---
 # Calorische waarde van aardgas (bovenwaarde Groningen-gas, geen rendementscorrectie),
 # om m³ gas om te rekenen naar MJ.
@@ -115,4 +120,4 @@ PATS_MODEL = "beedrill"
 # --- VERSIE ---
 # Staat rechtsboven in de app. Ophogen bij elke wijziging op main (zie CHANGELOG.md):
 # derde getal bij een correctie, tweede bij iets nieuws, eerste bij een grote omzetting.
-APP_VERSIE = "2.27.3"
+APP_VERSIE = "2.29.0"

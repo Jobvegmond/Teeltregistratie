@@ -43,27 +43,6 @@ class TestTeRegistreren(unittest.TestCase):
         self.assertEqual(reg.zonder(uit, "lengte"), [5])
 
 
-class TestNogTeDoen(unittest.TestCase):
-    def vakken(self):
-        return [{"vak": 5, "lengte_half": None, "florgib_verwacht": date(2026, 10, 19), "emmers": 0,
-                 "prognose": date(2026, 10, 23), "lengte_eind": None},
-                {"vak": 6, "lengte_half": None, "florgib_verwacht": date(2026, 10, 30), "emmers": 12.0,
-                 "prognose": None, "lengte_eind": None},
-                {"vak": 7, "lengte_half": 30.0, "florgib_verwacht": date(2026, 10, 18), "emmers": 0,
-                 "prognose": date(2026, 12, 1), "lengte_eind": None}]
-
-    def test_florgib(self):
-        self.assertEqual(reg.nog_te_doen("florgib", self.vakken(), VANDAAG), [(5, "verwacht 19-10 (2 d over tijd)")])
-
-    def test_emmers(self):
-        self.assertEqual(reg.nog_te_doen("emmers", self.vakken(), VANDAAG),
-                         [(6, "in de oogst, 12 emmers"), (5, "prognose 23-10 (over 2 d)")])
-
-    def test_lengte(self):
-        self.assertEqual(reg.nog_te_doen("lengte", self.vakken(), VANDAAG),
-                         [(6, "in de oogst (12 emmers), nog geen lengte")])
-
-
 class TestLaatsteRegistraties(unittest.TestCase):
     def test_per_soort_en_alleen_deze_tuin(self):
         log = [("t4", "job", "aangemaakt", "oogstregistratie", 90, "3 emmers geregistreerd op 2026-10-21 voor teelt 1"),
