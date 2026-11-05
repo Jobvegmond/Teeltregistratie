@@ -29,7 +29,7 @@ def nep_historie(n=4000, zaad=1):
         S = rnd.uniform(0, 5000)
         drempel = 2500 if leeftijd <= 28 else 99999
         uit.append(rij(leeftijd=leeftijd, sinds=rnd.randint(1, 9), S=S, S_vandaag=0.0,
-                       gift=15.0 if S + rnd.gauss(0, 300) > drempel else 0.0, datum=dag(i // 40)))
+                       gift=15.0 if S + rnd.gauss(0, 300) > drempel else 0.0, datum=dag(i // 40), vak=i % 40 + 1))
     return uit
 
 
@@ -117,7 +117,7 @@ class TestModel(unittest.TestCase):
     def test_fase_zonder_genoeg_rijen_gemiddelde(self):
         rijen = [rij(leeftijd=2, gift=g) for g in (5.0, 0.0, 5.0, 5.0)] + nep_historie(500)
         model = wv.train(rijen)
-        self.assertEqual(model[0], {"kans": 0.75})
+        self.assertEqual(model[0], {"kans": 0.75, "liter": 5.0})
         self.assertEqual(wv.kans(model, rij(leeftijd=1)), 0.75)
 
     def test_advies(self):
@@ -161,8 +161,9 @@ class TestAdviezen(unittest.TestCase):
         self.assertEqual(len(items), 1)
         item = items[0]
         self.assertEqual((item["id"], item["date"], item["area"]), ("water-tuin3-2026-11-05", "2026-11-05", "werk"))
-        self.assertEqual(item["title"], "Water: vak 25, 26 · twijfel: 17")
-        self.assertIn("Water: vak 25, 26 · 10 dagen na planten", item["note"])
+        self.assertEqual(item["title"], "Water: vak 25–26 · twijfel: 17")
+        self.assertIn("Water: vak 25–26 · 10 dagen na planten", item["note"])
+        self.assertIn("meestal ± 15 l/m²", item["note"])
         self.assertIn("Twijfel: vak 17", item["note"])
 
     def test_water_opmerking_maakt_twijfel(self):
@@ -178,13 +179,49 @@ class TestAdviezen(unittest.TestCase):
         self.assertEqual(wv.feed_items(lijst, date(2026, 11, 5), "Tuin 3"), [])
 
 
+class TestPlantingen(unittest.TestCase):
+    def test_plantweek_en_aaneengesloten(self):
+        vandaag = date(2026, 11, 5)                                     # do, week 45
+        rijen = [rij(vak=v, leeftijd=l, datum=vandaag) for v, l in
+                 ((17, 17), (18, 16), (19, 15), (20, 15), (21, 14), (22, 10), (23, 9), (24, 8),
+                  (25, 3), (26, 2), (27, 1), (28, 0), (30, 2), (31, 30))]
+        self.assertEqual(wv.plantingen(rijen), {17: "17–21", 18: "17–21", 19: "17–21", 20: "17–21", 21: "17–21",
+                                                22: "22–24", 23: "22–24", 24: "22–24", 25: "25–28", 26: "25–28",
+                                                27: "25–28", 28: "25–28", 30: "30", 31: "31"})
+
+    def test_advies_per_planting_met_gemiddelde_kans(self):
+        model = wv.train(nep_historie())
+        vandaag = date(2026, 11, 5)
+        rijen = [rij(vak=17, S=4500, datum=vandaag), rij(vak=18, S=2700, datum=vandaag),
+                 rij(vak=19, S=300, datum=vandaag)]
+        lijst = wv.adviezen(model, rijen)
+        self.assertEqual({a["planting"] for a in lijst}, {"17–19"})
+        self.assertEqual(len({a["advies"] for a in lijst}), 1)          # één advies voor de hele planting
+        gemiddeld = sum(a["kans_vak"] for a in lijst) / 3
+        self.assertTrue(all(abs(a["kans"] - gemiddeld) < 1e-9 for a in lijst))
+        self.assertEqual(lijst[0]["advies"], wv.advies(gemiddeld))
+        self.assertEqual(len(wv.groepen(lijst)), 1)
+        self.assertIn("per vak", wv.groepen(lijst)[0])
+
+    def test_planting_dagen(self):
+        d = date(2026, 11, 5)
+        rijen = [rij(vak=1, leeftijd=10, datum=d, gift=15.0), rij(vak=2, leeftijd=10, datum=d, gift=0.0),
+                 rij(vak=3, leeftijd=10, datum=d, gift=0.0), rij(vak=9, leeftijd=3, datum=d, gift=5.0)]
+        uit = sorted(wv.planting_dagen(rijen, [0.9, 0.6, 0.3, 0.8]))
+        self.assertEqual(len(uit), 2)
+        self.assertAlmostEqual(uit[0][0], 0.6)                          # vak 1–3: gemiddelde kans
+        self.assertFalse(uit[0][1])                                     # 1 van 3 vakken water: minder dan de helft
+        self.assertEqual(uit[1][1:], (True, 3))
+
+
 class TestTerugtoets(unittest.TestCase):
     def test_terugtoets_beter_dan_blind(self):
         rijen = nep_historie(6000)
         splits = dag(100)
         uit = wv.terugtoets(rijen, splits)
-        self.assertEqual(uit["dagen"], sum(r["datum"] >= splits for r in rijen))
-        self.assertEqual(uit["giften"], sum(r["datum"] >= splits and r["gift"] > 0 for r in rijen))
+        self.assertEqual(uit["per_vak"]["dagen"], sum(r["datum"] >= splits for r in rijen))
+        self.assertEqual(uit["per_vak"]["giften"], sum(r["datum"] >= splits and r["gift"] > 0 for r in rijen))
+        self.assertLessEqual(uit["dagen"], uit["per_vak"]["dagen"])
         self.assertEqual(sum(v["aantal"] for v in uit["advies"].values()), uit["dagen"])
         self.assertGreater(uit["water_raak"], 2 * uit["blind_raak"])
         self.assertGreater(uit["juist"], uit["blind_juist"])
@@ -195,7 +232,7 @@ class TestTerugtoets(unittest.TestCase):
         rijen = nep_historie(2000)
         extra = nep_historie(2000, zaad=2)
         uit = wv.terugtoets(rijen, dag(25), extra)
-        self.assertEqual(uit["dagen"], sum(r["datum"] >= dag(25) for r in rijen))
+        self.assertEqual(uit["per_vak"]["dagen"], sum(r["datum"] >= dag(25) for r in rijen))
 
 
 if __name__ == "__main__":
