@@ -88,8 +88,6 @@ def main():
 
     if args.json:
         items = wv.feed_items(lijst, vandaag, tuin["naam"])
-        for item in items:
-            item["vakken"] = {a: [x["vak"] for x in lijst if x["advies"] == a] for a in ("water", "twijfel")}
         print(json.dumps(items, ensure_ascii=False, indent=1))
         return
 

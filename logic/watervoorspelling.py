@@ -394,26 +394,29 @@ def planting_namen(lijst):
 
 def feed_items(lijst, datum, tuin_naam):
     """
-    Items voor de Takenlijst ({id, date, title, area, note}): één item per dag met de plantingen voor water en
-    twijfel, of niets als er geen planting water of twijfel heeft. De id is per tuin en dag vast, zodat een
-    afgevinkt item afgevinkt blijft.
+    Items voor de Takenlijst ({id, date, title, area, note, soort, vakken}): één los item per planting met water
+    of twijfel, eerst water, dan op vak; geen item voor "niet nodig" of "gegeven". Bijv. title "Water · vak
+    22–24", note "8–10 dagen na planten · 2.362 J/cm² sinds de gift van vr 30-10 (10 l/m²) · kans 87 % · …".
+    De id is per tuin, dag en planting vast ("water-tuin3-2026-11-05-22-24"), zodat vinkjes en feedback bij het
+    item blijven als het advies die dag opnieuw wordt gezet.
     """
-    water = [a for a in lijst if a["advies"] == "water"]
-    twijfel = [a for a in lijst if a["advies"] == "twijfel"]
-    if not water and not twijfel:
-        return []
-    titel = "Water: " + (f"vak {planting_namen(water)}" if water else "geen vak zeker")
-    if twijfel:
-        titel += f" · twijfel: {planting_namen(twijfel)}"
-    note = (f"{tuin_naam} · advies per planting, geen sturing. Water: " + "; ".join(groepen(water)) if water
-            else f"{tuin_naam} · advies per planting, geen sturing.")
-    if twijfel:
-        note += ". Twijfel: " + "; ".join(groepen(twijfel))
-    opm = [o for a in water + twijfel for o in a["reden"].split(" · ") if o.startswith("opmerking ")]
-    if opm:
-        note += ". " + "; ".join(dict.fromkeys(opm))
     tuin = "".join(c for c in tuin_naam.lower() if c.isalnum())
-    return [{"id": f"water-{tuin}-{datum}", "date": str(datum), "title": titel, "area": "werk", "note": note}]
+    uit = []
+    for soort, kop in (("water", "Water"), ("twijfel", "Twijfel")):
+        per = {}
+        for a in sorted((a for a in lijst if a["advies"] == soort), key=lambda a: a["vak"]):
+            per.setdefault(a.get("planting") or str(a["vak"]), []).append(a)
+        for naam, groep in per.items():
+            regel = groepen(groep)[0]
+            note = regel.split(" · ", 1)[1] if " · " in regel else regel          # zonder "vak …" vooraan
+            opm = [o for a in groep for o in a["reden"].split(" · ") if o.startswith("opmerking ")]
+            if opm:
+                note += " · " + " · ".join(dict.fromkeys(opm))
+            vakken = [a["vak"] for a in groep]
+            uit.append({"id": f"water-{tuin}-{datum}-{min(vakken)}-{max(vakken)}", "date": str(datum),
+                        "title": f"{kop} · vak {naam}", "area": "werk", "note": f"{tuin_naam} · {note}",
+                        "soort": soort, "vakken": vakken})
+    return uit
 
 
 # --- Terugtoets ---
