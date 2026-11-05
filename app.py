@@ -81,6 +81,8 @@ from database import (
     get_tuin_id,
     get_vaknummers,
     get_standaard_tuin_van_gebruiker,
+    get_notificaties_weg,
+    zet_notificatie_weg,
     zet_actieve_tuin,
     STANDAARD_RAS,
     get_stek_voor_week,
@@ -635,6 +637,9 @@ if _auth_status is None:
 # balk onder de kop, met de huidige pagina gevuld.
 _pagina_lijst = _paginas()
 _pagina = st.navigation(_pagina_lijst, position="hidden")
+# Doorklikken vanuit een notificatie ("Naar registreren", _notif_naar_registreren): nu van pagina wisselen.
+if st.session_state.get("_notif_naar") is not None:
+    ga_naar("registreren", tuin=st.session_state.pop("_notif_naar"))
 # Eén kopbalk: de tabbladknoppen (genummerd, voor feedback: "scherm 2.3"), daarachter de tuinkeuze en rechts
 # de knop Uitleg (zie hieronder).
 _kopbalk = st.container(horizontal=True, vertical_alignment="center", gap="small", key="vem_kopbalk")
@@ -1821,7 +1826,7 @@ def _pagina_overzicht():
             "door tot de prognose-oogst; per teelt (plantweek) wisselen donker en licht; het zwarte streepje is de "
             "plan-oogst. Hoeveel de prognose voor of achter loopt op plan staat in het vak (klik op de balk).",
             "**Weergave** *Standaard*: een driehoekje bovenin de balk op elke dag met een behandeling (kleur = "
-            "soort) en een blauw vakje op elke dag met water in een teelt (inwateren vóór het planten staat er "
+            "soort) en een blauw vakje op elke dag met water in een teelt (inregenen vóór het planten staat er "
             "niet bij), met het aantal l/m² erin "
             "(met een decimaal als de dag breed genoeg is, anders in hele liters; past er niets, klik dan op het "
             "vakje; dat hangt af van de periode en de breedte van het scherm).",
@@ -2103,7 +2108,7 @@ def _tl_watergift(tuin, volgorde, van, tot, teelten, met_ecph=False):
     Per vak per dag met watergift één vakje (dekking naar de liters, met het getal), met_ecph: ook de EC en pH
     van de gift per vak en de EC van de voorregeling als tekst ("waarden"). Plus de tabel vak × dag voor Excel
     en de watergiftdata (voor het dagvenster). Alleen water op dagen dat er een teelt in het vak staat (van
-    planten t/m oogst; teelten = die van deze tuin): inwateren vóór het planten staat er niet bij.
+    planten t/m oogst; teelten = die van deze tuin): inregenen vóór het planten staat er niet bij.
     """
     d = _wg_data(tuin["id"], van, tot, vakstatus_dataversie()) if van <= tot else {
         "gift": [], "kwaliteit": [], "beurten": []}
@@ -5256,8 +5261,17 @@ def _notif_werk(tuin_nummer, dag):
         return [], f"Werkplanning niet beschikbaar ({type(fout).__name__})"
 
 
-_NOTIF_SOORT = {"water": ("Water", ":material/water_drop:"), "spuiten": ("Spuiten", ":material/sanitizer:"),
-                "registratie": ("Registreren", ":material/edit_note:")}
+_NOTIF_SOORT = {"water": "Water", "spuiten": "Spuiten", "registratie": "Registreren"}
+
+
+def _notif_naar_registreren(actie, tuin_nummer):
+    """
+    Knop "Naar registreren": de keuze bij "Wat registreer je?" en de tuin klaarzetten. Van pagina wisselen kan
+    niet vanuit een knop; dat gebeurt bovenaan de volgende run (sessiesleutel _notif_naar). Het venster heeft per
+    pagina een eigen sleutel, dus op Registreren is het dicht.
+    """
+    filters.bewaar("inv_actie", actie)
+    st.session_state["_notif_naar"] = tuin_nummer
 
 
 def _toon_notificaties(plek):
@@ -5271,28 +5285,34 @@ def _toon_notificaties(plek):
     taken, fout_werk = _notif_werk(nummer, vandaag)
     data, _model, stook, _afwijking = _nu_alles(vandaag)
     vakken = reg.lopende_vakken(data["teelten"].to_dict("records"), tuin["id"], vandaag, stook)
-    meldingen = notificaties.alles(water_lijst, taken, vakken, vandaag)
+    gebruiker = st.session_state.get("username")
+    meldingen = notificaties.zichtbaar(notificaties.alles(water_lijst, taken, vakken, vandaag),
+                                       get_notificaties_weg(gebruiker))
     fouten = [f for f in (fout_water, fout_werk) if f]
     with plek.container(width="content", key="vem_notif_actief" if meldingen else "vem_notif_leeg"):
         with st.popover(str(len(meldingen)), icon=":material/notifications:", width="content",
-                        help="Notificaties: wat er vandaag te doen is"):
-            with st.container(width=430, gap="small"):
+                        help="Notificaties: wat er vandaag te doen is",
+                        key=f"vem_notif_open_{_pagina.url_path or 'start'}"):
+            with st.container(width=380, gap="small", key="vem_notif_lijst"):
                 st.markdown(f'<div class="vem-notif-kop">Notificaties <span>{html.escape(tuin["naam"])} · '
                             f'{_DAGEN_KORT[vandaag.weekday()]} {format_datum(vandaag)}</span></div>',
                             unsafe_allow_html=True)
                 if not meldingen:
                     st.caption("Niets te doen op dit moment.")
                 for i, m in enumerate(meldingen):
-                    naam, icoon = _NOTIF_SOORT[m["soort"]]
                     with st.container(border=True, gap="small", key=f"vem_notif_{m['soort']}_{i}"):
                         st.markdown(
-                            f'<div class="vem-notif-soort">{naam}</div>'
+                            f'<div class="vem-notif-soort">{_NOTIF_SOORT[m["soort"]]}</div>'
                             f'<div class="vem-notif-titel">{html.escape(m["titel"])}</div>'
                             + "".join(f'<div class="vem-notif-regel">{html.escape(r)}</div>' for r in m["regels"]),
                             unsafe_allow_html=True)
-                        if m.get("actie") and st.button("Invullen", key=f"vem_notif_knop_{i}", icon=icoon,
-                                                        width="content"):
-                            ga_naar("registreren", {"inv_actie": m["actie"]}, tuin=nummer)
+                        # Het kruisje staat (ui/styles.py) vast rechtsboven in het kaartje.
+                        st.button("", key=f"vem_notif_weg_{i}", icon=":material/close:", help="Wegklikken",
+                                  on_click=zet_notificatie_weg, args=(gebruiker, m["sleutel"]), type="tertiary")
+                        if m.get("actie"):
+                            st.button("Naar registreren", key=f"vem_notif_knop_{i}", icon=":material/arrow_forward:",
+                                      type="primary", width="content", on_click=_notif_naar_registreren,
+                                      args=(m["actie"], nummer))
                 for f in fouten:
                     st.caption(f)
 

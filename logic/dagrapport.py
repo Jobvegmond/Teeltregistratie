@@ -15,7 +15,7 @@ import html
 from datetime import date, timedelta
 from statistics import median
 
-from config import (DIF_MIN, EC_BEREIK, FLORGIB_ACHTERSTAND_DAGEN, INWATER_DAGEN, PATS_STIJGING, PATS_STIJGING_MIN,
+from config import (DIF_MIN, EC_BEREIK, FLORGIB_ACHTERSTAND_DAGEN, INREGEN_DAGEN, PATS_STIJGING, PATS_STIJGING_MIN,
                     PH_BEREIK, PH_REGELING, RV_HOOG_UREN, STOOK_MAX, STOOKADVIES_MARGE)
 from utils.format import fmt_getal, fmt_kort, fmt_verschil
 
@@ -45,7 +45,7 @@ def signaal(soort, ernst, tuin, tekst, sleutel, vak=None, afdeling=None):
             "soort": soort, "ernst": ernst, "tuin": tuin, "vak": vak, "afdeling": afdeling, "tekst": tekst}
 
 
-def bezet(bezetting, vak, dag, voor=INWATER_DAGEN):
+def bezet(bezetting, vak, dag, voor=INREGEN_DAGEN):
     """Of een vak op `dag` een teelt heeft (of er binnen `voor` dagen een geplant wordt). bezetting: {vak: [(start,
     eind of None)]}; None = loopt nog (ook een concept: dat wordt nog geplant)."""
     return any(start - timedelta(days=voor) <= dag and (eind is None or dag <= eind)
@@ -214,8 +214,8 @@ def water(tuin, waarden, giften, bezetting):
             continue
         mid = median(r["liter"] for r in rijen)
         for r in rijen:
-            inwateren = any(-INWATER_DAGEN <= (dag - start).days <= 10 for start, _ in bezetting.get(r["vak"], ()))
-            if mid > 0 and r["liter"] > UITSCHIETER[0] * mid and r["liter"] > mid + UITSCHIETER[1] and not inwateren:
+            inregenen = any(-INREGEN_DAGEN <= (dag - start).days <= 10 for start, _ in bezetting.get(r["vak"], ()))
+            if mid > 0 and r["liter"] > UITSCHIETER[0] * mid and r["liter"] > mid + UITSCHIETER[1] and not inregenen:
                 uit.append(signaal("water", "info", tuin, f"{_d(dag)}: {fmt_getal(r['liter'], 1)} l/m², de rest van "
                                    f"afd. {afd} kreeg ± {fmt_getal(mid, 1)}", "uitschieter", r["vak"]))
     return uit

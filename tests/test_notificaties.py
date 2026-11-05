@@ -13,7 +13,7 @@ def advies(vak, soort, vorige_dag=date(2026, 10, 30)):
 
 
 def vak(nummer, **velden):
-    basis = {"vak": nummer, "geplant": date(2026, 9, 1), "lengte_half": None, "lengte_eind": None, "emmers": 0,
+    basis = {"id": 100 + nummer, "vak": nummer, "geplant": date(2026, 9, 1), "lengte_half": None, "lengte_eind": None, "emmers": 0,
              "florgib_verwacht": None, "prognose": None}
     return {**basis, **velden}
 
@@ -32,10 +32,10 @@ class TestWater(unittest.TestCase):
 class TestSpuiten(unittest.TestCase):
     def test_vandaag_en_morgen(self):
         taken = [{"datum": date(2026, 11, 7), "vakken": [9], "titel": "Florgib + CXDS vak 9", "toelichting": "x"},
-                 {"datum": date(2026, 11, 6), "vakken": [25], "titel": "Inwateren", "toelichting": "y"},
+                 {"datum": date(2026, 11, 6), "vakken": [25], "titel": "Inregenen", "toelichting": "y"},
                  {"datum": date(2026, 11, 5), "vakken": [17], "titel": "CXDS-blok vak 17–21", "toelichting": "z"}]
         uit = nt.spuiten(taken, VANDAAG)
-        self.assertEqual([m["titel"] for m in uit], ["CXDS-blok vak 17–21", "Inwateren"])
+        self.assertEqual([m["titel"] for m in uit], ["CXDS-blok vak 17–21", "Inregenen"])
         self.assertEqual(uit[1]["regels"], ["morgen · y"])
 
 
@@ -57,6 +57,22 @@ class TestRegistraties(unittest.TestCase):
         uit = nt.alles([advies(22, "water")], [], [vak(9, florgib_verwacht=VANDAAG)], VANDAAG)
         self.assertEqual([m["soort"] for m in uit], ["water", "registratie"])
         self.assertEqual(uit[1]["regels"], ["Vak 9 · verwacht 05-11 (vandaag)"])
+
+
+class TestWegklikken(unittest.TestCase):
+    def test_vaste_sleutels(self):
+        uit = nt.alles([advies(22, "water"), advies(23, "water")],
+                       [{"datum": VANDAAG, "vakken": [17, 18], "soort": "cxds", "titel": "CXDS", "toelichting": "z"}],
+                       [vak(9, florgib_verwacht=VANDAAG)], VANDAAG)
+        self.assertEqual([m["sleutel"] for m in uit], ["water-water-2026-11-05-22-23", "spuiten-cxds-2026-11-05-17-18",
+                                                       "registratie-florgib-109"])
+
+    def test_weggeklikt_blijft_weg(self):
+        uit = nt.alles([advies(22, "water")], [], [vak(9, florgib_verwacht=VANDAAG)], VANDAAG)
+        self.assertEqual([m["soort"] for m in nt.zichtbaar(uit, {"water-water-2026-11-05-22"})], ["registratie"])
+        # Komt er een vak bij, dan is het een nieuwe melding.
+        meer = nt.alles([], [], [vak(9, florgib_verwacht=VANDAAG), vak(10, florgib_verwacht=VANDAAG)], VANDAAG)
+        self.assertEqual(len(nt.zichtbaar(meer, {"registratie-florgib-109"})), 1)
 
 
 if __name__ == "__main__":

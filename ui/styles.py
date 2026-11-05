@@ -291,7 +291,22 @@ button:disabled { opacity: 0.45; }
 }
 .vem-notif-titel { font-size: 0.9rem; font-weight: 650; margin: 0.05rem 0 0.15rem; }
 .vem-notif-regel { font-size: 0.78rem; color: var(--vem-zacht); line-height: 1.4; }
-[class*="st-key-vem_notif_knop_"] button { min-height: 0; padding: 0.15rem 0.6rem; }
+[class*="st-key-vem_notif_knop_"] button { min-height: 0; padding: 0.2rem 0.7rem; }
+/* Het venster nooit breder dan het scherm; lange regels breken af in plaats van uit het kaartje te lopen. */
+[data-testid="stPopoverBody"]:has(.st-key-vem_notif_lijst) { max-width: calc(100vw - 1rem); }
+.st-key-vem_notif_lijst { max-width: 100%; }
+/* De kaartjes zo hoog als hun tekst: Streamlit geeft een tekstblok een negatieve ondermarge (voor de marge van
+   een alinea); de kaartjes hebben geen alinea's, dus dan valt de laatste regel eraf. */
+.st-key-vem_notif_lijst [data-testid="stMarkdownContainer"] { margin-bottom: 0 !important; }
+.vem-notif-titel, .vem-notif-regel { overflow-wrap: anywhere; white-space: normal; }
+.vem-notif-soort, .vem-notif-titel { padding-right: 1.6rem; }
+/* Het kruisje vast rechtsboven in een kaartje: klein en grijs. */
+.st-key-vem_notif_lijst [data-testid="stVerticalBlock"][class*="st-key-vem_notif_"] { position: relative; }
+.st-key-vem_notif_lijst [class*="st-key-vem_notif_weg_"] {
+    position: absolute !important; top: 0.35rem; right: 0.35rem; width: auto !important; z-index: 2;
+}
+[class*="st-key-vem_notif_weg_"] button { min-height: 0; padding: 0.05rem; color: var(--vem-zacht); }
+[class*="st-key-vem_notif_weg_"] button:hover { color: inherit; }
 /* ◀ [label ▾] ▶ (ui/filters.bladeraar): het label als vette knop met vaste minimumbreedte. */
 [class*="st-key-bladeraar_"] [data-testid="stPopover"] button { min-width: 9rem; font-weight: 600; }
 /* ◀ en ▶ altijd op dezelfde regel als het label; past het niet, dan krimpt het label (tekst met …). */

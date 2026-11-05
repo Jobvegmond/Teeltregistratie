@@ -7,7 +7,7 @@ Werkwijze (verkenning tuin 3, november 2026):
 - Het model leert op de historie van beide tuinen samen: dat toetste voor allebei beter dan alleen de eigen
   tuin (tuin 1 heeft pas historie sinds december 2025).
 - Een gift is een dag met minstens MIN_GIFT l/m² op een vak (watergift_dag: Excel tot sept 2026, daarna Priva).
-- De teeltleeftijd bepaalt het meest: dag 0–3 na planten (inwateren) 61 % kans op een gift, dag 4–7 35 %,
+- De teeltleeftijd bepaalt het meest: dag 0–3 na planten (inregenen) 61 % kans op een gift, dag 4–7 35 %,
   week 2 24 %, week 3–4 17 %, daarna 1–2 %. Binnen een fase hangt het af van de straling sinds de vorige gift,
   het aantal dagen sinds die gift en de grootte ervan. Daarom per fase (FASEN) een eigen logistische regressie
   op die kenmerken (kenmerk_vector).

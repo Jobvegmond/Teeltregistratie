@@ -1,6 +1,6 @@
 """
 Werkplanning voor de komende dagen (tuin 3): CXDS-blokken per planting, Florgib met CXDS, planten met Rizolex
-en inwateren, volgens de werkwijze van de kwekerij (logic/werkplanning.py). Alleen lezen.
+en inregenen, volgens de werkwijze van de kwekerij (logic/werkplanning.py). Alleen lezen.
 
 Gebruikt door de geplande taak "Dagelijkse takenlijst" (Claude Code op de werklaptop, elke ochtend 07:00), die de
 taken in de Takenlijst (claude.ai-artifact) zet.
@@ -70,7 +70,7 @@ def bereken_taken(database, tuin, van, dagen=7):
             jongste[t["vak"]] = t
     teelten = list(jongste.values())
     # Concepten van deze week (ook van eerder deze week die nog niet gestart zijn) en verder in de periode; de
-    # vakken die deze week al geplant zijn, tellen mee voor het inwateren.
+    # vakken die deze week al geplant zijn, tellen mee voor het inregenen.
     zondag = van - timedelta(days=(van.weekday() + 1) % 7)
     for _id, vak, start, _duur, _eind, _notitie in database.get_planning(tuin["id"]):
         start = vs.als_datum(start)

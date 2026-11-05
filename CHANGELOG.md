@@ -3,6 +3,22 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.29.1] - 2026-11-05
+
+### Toegevoegd
+- Notificaties **wegklikken**: een kruisje rechtsboven in elk kaartje. Onthouden per gebruiker in de nieuwe tabel
+  `notificatie_weg` (na 60 dagen opgeruimd): water en spuiten blijven die dag weg, een registratie zolang het om
+  dezelfde teelten gaat (komt er een vak bij, dan verschijnt hij opnieuw). `logic/notificaties`: vaste sleutel per
+  melding en `zichtbaar()` (tests).
+- **Naar registreren**: bij een ontbrekende registratie een duidelijke knop die meteen naar Registreren gaat met de
+  juiste keuze (Florgib, Emmers, Lengte en gewicht) in de eigen tuin; het venster is daar dicht.
+
+### Gewijzigd
+- De tekst valt netjes in de kaartjes: het venster is nooit breder dan het scherm, lange regels breken af en de
+  laatste regel valt er niet meer af (Streamlit gaf een tekstblok een negatieve ondermarge).
+- **Inregenen** in plaats van inwateren, overal (werkplanning, notificaties, teksten, `config.INREGEN_DAGEN`,
+  `werkplanning.INREGEN_DAG`, soort "inregenen").
+
 ## [2.29.0] - 2026-11-05
 
 ### Toegevoegd

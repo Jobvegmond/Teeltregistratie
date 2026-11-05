@@ -600,6 +600,7 @@ def init_db():
         cursor.execute(METEO_UUR_TABEL)
         # Vangplaat- en insectentellingen van PATS (pats_import.py, sinds 2.22.0).
         cursor.execute(PATS_TELLING_TABEL)
+        cursor.execute(NOTIFICATIE_WEG_TABEL)
         # Welke rapporten "Teelt afgerond" al gemaild zijn (teelt_rapport.py, sinds 2.16.0).
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS teelt_rapport (
@@ -1702,6 +1703,18 @@ def upsert_watergift_dag_bestand(vaknummer, datum, liter_per_m2, ec, ph, bron, t
         conn.commit()
     return opgeslagen
 
+
+# Notificaties die een gebruiker heeft weggeklikt (knop met het belletje in de kop; logic/notificaties.py geeft
+# elke melding een vaste sleutel). Ouder dan NOTIFICATIE_WEG_DAGEN wordt opgeruimd.
+NOTIFICATIE_WEG_TABEL = """
+    CREATE TABLE IF NOT EXISTS notificatie_weg (
+        gebruiker TEXT NOT NULL,
+        sleutel TEXT NOT NULL,
+        tijdstip TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (gebruiker, sleutel)
+    )
+"""
+NOTIFICATIE_WEG_DAGEN = 60
 
 PATS_TELLING_TABEL = """
     CREATE TABLE IF NOT EXISTS pats_telling (
@@ -4079,3 +4092,24 @@ def get_watervoorspelling_data(tuin_id):
         opmerkingen = rijen(cursor)
     return {"teelten": teelten, "water": water, "straling": straling, "eerste_emmer": eerste_emmer,
             "opmerkingen": opmerkingen}
+
+
+def get_notificaties_weg(gebruiker):
+    """De sleutels van de notificaties die deze gebruiker heeft weggeklikt."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT sleutel FROM notificatie_weg WHERE gebruiker = %s", (gebruiker,))
+        return {r[0] for r in cursor.fetchall()}
+
+
+def zet_notificatie_weg(gebruiker, sleutel):
+    """Een notificatie wegklikken; ruimt meteen wat ouder is dan NOTIFICATIE_WEG_DAGEN op."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO notificatie_weg (gebruiker, sleutel) VALUES (%s, %s)
+            ON CONFLICT (gebruiker, sleutel) DO NOTHING
+        """, (gebruiker, sleutel))
+        cursor.execute("DELETE FROM notificatie_weg WHERE tijdstip < now() - make_interval(days => %s)",
+                       (NOTIFICATIE_WEG_DAGEN,))
+        conn.commit()

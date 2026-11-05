@@ -52,7 +52,7 @@ def teeltvensters(teelten):
 
 
 def in_teelt(vensters, vak, dag):
-    """Of er op die dag een teelt in het vak staat (van planten t/m oogst). Inwateren vóór het planten telt niet."""
+    """Of er op die dag een teelt in het vak staat (van planten t/m oogst). Inregenen vóór het planten telt niet."""
     return any(start <= dag and (oogst is None or dag <= oogst) for start, oogst in vensters.get(vak, ()))
 
 

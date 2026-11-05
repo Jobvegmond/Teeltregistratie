@@ -3,8 +3,10 @@ Notificaties (knop met het belletje in de kop, alleen voor config.NOTIFICATIES_V
 vandaag te doen is in de eigen tuin. Alleen rekenwerk; ophalen en tekenen in app.py, tests in
 tests/test_notificaties.py.
 
-Een notificatie is een dict met soort ("water", "spuiten", "registratie"), titel, regels (lijst korte teksten) en
-eventueel actie: de keuze bij "Wat registreer je?" op Registreren waar je het invult.
+Een notificatie is een dict met soort ("water", "spuiten", "registratie"), sleutel, titel, regels (lijst korte
+teksten) en eventueel actie: de keuze bij "Wat registreer je?" op Registreren waar je het invult. De sleutel is
+vast, zodat een weggeklikte melding weg blijft (zichtbaar()): water en spuiten per dag en per vakken, een
+registratie per soort en per teelt (komt er een vak bij, dan verschijnt hij opnieuw).
 """
 from datetime import timedelta
 
@@ -28,7 +30,11 @@ def _geleden(dag, vandaag):
     return "vandaag" if dagen == 0 else f"{dagen} {'dag' if dagen == 1 else 'dagen'} geleden"
 
 
-def water(lijst):
+def _vakken(vakken):
+    return "-".join(str(v) for v in sorted(vakken))
+
+
+def water(lijst, vandaag=None):
     """
     Uit de watervoorspelling (wv.adviezen): één melding voor de vakken met "water" en één voor "twijfel", met per
     planting een regel (wv.groepen). Vakken die vandaag al water kregen of geen water nodig hebben, geven niets.
@@ -37,15 +43,17 @@ def water(lijst):
     for advies, titel in (("water", "Water geven"), ("twijfel", "Misschien water")):
         groep = [a for a in lijst if a["advies"] == advies]
         if groep:
-            uit.append({"soort": "water", "titel": f"{titel}: vak {wv.vakken_tekst([a['vak'] for a in groep])}",
-                        "regels": wv.groepen(groep)})
+            vakken = [a["vak"] for a in groep]
+            uit.append({"soort": "water", "sleutel": f"water-{advies}-{vandaag}-{_vakken(vakken)}",
+                        "titel": f"{titel}: vak {wv.vakken_tekst(vakken)}", "regels": wv.groepen(groep)})
     return uit
 
 
 def spuiten(taken, vandaag, dagen=2):
-    """De taken uit de werkplanning (bespuitingen, inwateren) van vandaag en de dag(en) erna, elk een melding."""
+    """De taken uit de werkplanning (bespuitingen, inregenen) van vandaag en de dag(en) erna, elk een melding."""
     tot = vandaag + timedelta(days=dagen - 1)
-    return [{"soort": "spuiten", "titel": t["titel"], "regels": [f"{_dag(t['datum'], vandaag)} · {t['toelichting']}"]}
+    return [{"soort": "spuiten", "sleutel": f"spuiten-{t.get('soort', '')}-{t['datum']}-{_vakken(t['vakken'])}",
+             "titel": t["titel"], "regels": [f"{_dag(t['datum'], vandaag)} · {t['toelichting']}"]}
             for t in sorted(taken, key=lambda t: (t["datum"], min(t["vakken"] or [0])))
             if vandaag <= t["datum"] <= tot]
 
@@ -63,6 +71,7 @@ def registraties(vakken, vandaag):
                       and v["florgib_verwacht"] <= vandaag), key=lambda v: (v["florgib_verwacht"], v["vak"]))
     if florgib:
         uit.append({"soort": "registratie", "actie": "Florgib",
+                    "sleutel": f"registratie-florgib-{_vakken(v['id'] for v in florgib)}",
                     "titel": f"Florgib invullen: vak {wv.vakken_tekst([v['vak'] for v in florgib])}",
                     "regels": [f"Vak {v['vak']} · verwacht {v['florgib_verwacht']:%d-%m} "
                                f"({_geleden(v['florgib_verwacht'], vandaag)})" for v in florgib]})
@@ -70,6 +79,7 @@ def registraties(vakken, vandaag):
                     key=lambda v: (v["prognose"], v["vak"]))
     if emmers:
         uit.append({"soort": "registratie", "actie": "Emmers",
+                    "sleutel": f"registratie-emmers-{_vakken(v['id'] for v in emmers)}",
                     "titel": f"Nog geen emmers: vak {wv.vakken_tekst([v['vak'] for v in emmers])}",
                     "regels": [f"Vak {v['vak']} · oogst verwacht {v['prognose']:%d-%m} "
                                f"({_geleden(v['prognose'], vandaag)})" for v in emmers]})
@@ -77,6 +87,7 @@ def registraties(vakken, vandaag):
                     key=lambda v: (v["geplant"], v["vak"]))
     if lengte:
         uit.append({"soort": "registratie", "actie": "Lengte en gewicht",
+                    "sleutel": f"registratie-lengte-{_vakken(v['id'] for v in lengte)}",
                     "titel": f"Oogstlengte invullen: vak {wv.vakken_tekst([v['vak'] for v in lengte])}",
                     "regels": [f"Vak {v['vak']} · in de oogst ({v['emmers']:g} emmers), nog geen lengte"
                                for v in lengte]})
@@ -85,4 +96,9 @@ def registraties(vakken, vandaag):
 
 def alles(water_lijst=(), taken=(), vakken=(), vandaag=None):
     """Alle meldingen in vaste volgorde: water, spuiten, registraties."""
-    return water(water_lijst) + spuiten(taken, vandaag) + registraties(vakken, vandaag)
+    return water(water_lijst, vandaag) + spuiten(taken, vandaag) + registraties(vakken, vandaag)
+
+
+def zichtbaar(meldingen, weg):
+    """De meldingen zonder de weggeklikte (`weg` = de sleutels uit database.get_notificaties_weg)."""
+    return [m for m in meldingen if m["sleutel"] not in weg]

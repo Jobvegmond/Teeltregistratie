@@ -40,7 +40,7 @@ STOOKADVIES_MARGE = 0.5         # huidige stooklijn wijkt zoveel °C of meer af 
 PH_REGELING = {1}               # tuinen met een pH-regeling (tuin 3 heeft die niet: pH daar alleen ter info)
 PATS_STIJGING = 2.0             # gemiddelde van de laatste 3 teldagen ≥ zoveel × de 14 dagen ervoor: let op
 PATS_STIJGING_MIN = 5           # … en minstens zoveel per teldag (anders is een stijging van 0 naar 1 al alarm)
-INWATER_DAGEN = 7               # water of een behandeling tot zoveel dagen vóór het planten hoort bij die teelt
+INREGEN_DAGEN = 7               # water of een behandeling tot zoveel dagen vóór het planten hoort bij die teelt
 HERHALING_DAGEN = 14            # zo ver terug telt het rapport hoe vaak een signaal eerder kwam
 FEEDBACK_DAGEN = 30             # feedback "klopt niet"/"bewust" dempt hetzelfde signaal zolang
 
@@ -120,4 +120,4 @@ PATS_MODEL = "beedrill"
 # --- VERSIE ---
 # Staat rechtsboven in de app. Ophogen bij elke wijziging op main (zie CHANGELOG.md):
 # derde getal bij een correctie, tweede bij iets nieuws, eerste bij een grote omzetting.
-APP_VERSIE = "2.29.0"
+APP_VERSIE = "2.29.1"
