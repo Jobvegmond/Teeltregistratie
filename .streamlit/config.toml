@@ -1,8 +1,36 @@
+[client]
+# Geen Deploy-knop en zo min mogelijk van de eigen Streamlit-balk; de app heeft een eigen kop.
+toolbarMode = "minimal"
+
+[server]
+# Het logo staat in static/ (van tanacetum.nl) en is te bereiken op /app/static/<bestand>.
+enableStaticServing = true
+
 [theme]
-# Groen accent i.p.v. het standaard Streamlit-rood, zodat rood gereserveerd
-# blijft voor fouten en waarschuwingen.
-primaryColor = "#2E6A4C"
-# Licht afgeronde hoeken op knoppen, velden en kaders: strakker dan de
-# standaard. De eigen opmaak in app.py en ui/styles.py volgt dezelfde ronding.
-baseRadius = "0.2rem"
-buttonRadius = "0.2rem"
+# Huisstijl van tanacetum.nl: groen #0A562C als accent (oranje #F8992D alleen in het logo en als klein
+# accent, zie ui/styles.py). Rood blijft gereserveerd voor fouten en waarschuwingen.
+primaryColor = "#0A562C"
+# Strak en modern: Inter, iets kleiner dan de standaard (16 px), en ronde hoeken van 0,5 rem op knoppen,
+# velden en kaders. De eigen opmaak in ui/styles.py volgt dezelfde ronding.
+font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+baseFontSize = 15
+baseRadius = "0.5rem"
+buttonRadius = "0.5rem"
+showWidgetBorder = true
+
+# Licht en donker volgen het apparaat. De pagina zelf is lichtgrijs (ui/styles.py); tabellen, velden en kaarten
+# zijn wit met een dunne rand. Gelijk aan PALET in ui/styles.py.
+[theme.light]
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#ffffff"
+textColor = "#1c2420"
+borderColor = "#dfe3e1"
+dataframeHeaderBackgroundColor = "#f6f7f7"
+
+[theme.dark]
+primaryColor = "#4e9e75"
+backgroundColor = "#171c19"
+secondaryBackgroundColor = "#171c19"
+textColor = "#e6ebe8"
+borderColor = "#2c3530"
+dataframeHeaderBackgroundColor = "#1d2420"

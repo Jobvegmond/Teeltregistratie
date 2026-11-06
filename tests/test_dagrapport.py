@@ -85,7 +85,7 @@ class TestKlimaatEnWater(unittest.TestCase):
         self.assertEqual(sleutels(dr.water(3, waarden, [], {})), ["water:ec:t3"])
         self.assertEqual(sleutels(dr.water(1, waarden, [], {})), ["water:ec:t1", "water:ph:t1"])
 
-    def test_leeg_vak_inwateren_en_uitschieter(self):
+    def test_leeg_vak_inregenen_en_uitschieter(self):
         bezetting = {1: [(date(2026, 9, 1), None)], 2: [(date(2026, 9, 1), None)], 3: [(date(2026, 9, 1), None)],
                      4: [(GISTEREN + timedelta(days=3), None)], 5: [(GISTEREN - timedelta(days=4), None)]}
         giften = [{"vak": v, "afdeling": 1, "datum": GISTEREN, "liter": l}

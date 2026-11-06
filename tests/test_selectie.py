@@ -45,6 +45,12 @@ class TestSelectie(unittest.TestCase):
         self.assertIsNone(sel.laatste(ITEMS, tuin=1, vak=11))
         self.assertEqual([i["id"] for i in sel.gekozen(ITEMS, 3, 10, 33, 2025)], [1])
 
+    def test_teelten_laatst_geplante_onderaan(self):
+        items = [dict(item(1, 3, 12, 2026, 45), start="2026-11-04"), dict(item(2, 3, 3, 2026, 45), start="2026-11-02"),
+                 dict(item(3, 3, 7, 2025, 45), start="2025-11-05"), dict(item(4, 3, 9, 2026, 45), start="2026-11-04")]
+        self.assertEqual([i["id"] for i in sel.teelten(items, 45, 2026)], [2, 4, 1])
+        self.assertEqual(sel.jaren(items, 45), [2025, 2026])     # standaard het laatste jaar
+
     def test_geldig(self):
         self.assertEqual(sel.geldig(33, [33, 45], 45), 33)
         self.assertEqual(sel.geldig(34, [33, 45], 45), 45)

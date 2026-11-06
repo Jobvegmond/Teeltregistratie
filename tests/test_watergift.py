@@ -31,7 +31,7 @@ class TestTeeltvensters(unittest.TestCase):
             {"vaknummer": 21, "datum_teelt_start": "2026-08-24", "datum_oogst": "2026-10-21"},
         ])
         self.assertTrue(wg.in_teelt(vensters, 22, date(2026, 10, 22)))      # oogstdag telt mee
-        self.assertFalse(wg.in_teelt(vensters, 22, date(2026, 10, 25)))     # inwateren voor de volgende teelt
+        self.assertFalse(wg.in_teelt(vensters, 22, date(2026, 10, 25)))     # inregenen voor de volgende teelt
         self.assertFalse(wg.in_teelt(vensters, 22, date(2026, 8, 24)))      # de dag voor het planten
         self.assertTrue(wg.in_teelt(vensters, 21, date(2026, 10, 29)))      # lopende teelt
         self.assertTrue(wg.in_teelt(vensters, 21, date(2026, 10, 21)))

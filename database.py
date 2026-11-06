@@ -600,6 +600,7 @@ def init_db():
         cursor.execute(METEO_UUR_TABEL)
         # Vangplaat- en insectentellingen van PATS (pats_import.py, sinds 2.22.0).
         cursor.execute(PATS_TELLING_TABEL)
+        cursor.execute(NOTIFICATIE_WEG_TABEL)
         # Welke rapporten "Teelt afgerond" al gemaild zijn (teelt_rapport.py, sinds 2.16.0).
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS teelt_rapport (
@@ -899,7 +900,7 @@ def markeer_teelt_afgerond(teelt_id, datum_oogst, gebruiker=None):
 def get_alle_teelten_voor_selectie(tuin_id=None):
     """
     ALLE teelten van een tuin (ook afgeronde) voor "Wijzigen of verwijderen",
-    als dicts: id, tuin_id, vak, jaar en week (ISO, van de startdatum), code.
+    als dicts: id, tuin_id, vak, jaar en week (ISO, van de startdatum), start, code.
     """
     with get_connection() as conn:
         cursor = conn.cursor()
@@ -916,7 +917,7 @@ def get_alle_teelten_voor_selectie(tuin_id=None):
     for teelt_id, tuin, vaknummer, start_datum, code in rijen:
         jaar, week = get_isojaar_week(start_datum)
         resultaat.append({"id": teelt_id, "tuin_id": tuin, "vak": vaknummer, "jaar": jaar, "week": week,
-                          "code": code})
+                          "start": start_datum, "code": code})
     return resultaat
 
 
@@ -1703,6 +1704,18 @@ def upsert_watergift_dag_bestand(vaknummer, datum, liter_per_m2, ec, ph, bron, t
     return opgeslagen
 
 
+# Notificaties die een gebruiker heeft weggeklikt (knop met het belletje in de kop; logic/notificaties.py geeft
+# elke melding een vaste sleutel). Ouder dan NOTIFICATIE_WEG_DAGEN wordt opgeruimd.
+NOTIFICATIE_WEG_TABEL = """
+    CREATE TABLE IF NOT EXISTS notificatie_weg (
+        gebruiker TEXT NOT NULL,
+        sleutel TEXT NOT NULL,
+        tijdstip TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (gebruiker, sleutel)
+    )
+"""
+NOTIFICATIE_WEG_DAGEN = 60
+
 PATS_TELLING_TABEL = """
     CREATE TABLE IF NOT EXISTS pats_telling (
         id SERIAL PRIMARY KEY,
@@ -2389,16 +2402,12 @@ def _df(cursor, sql, params=None):
 
 def get_opzoek_gegevens(teelt_ids, van, tot):
     """
-    Alles wat er is over een groep vakken (pagina Opzoeken), als DataFrames.
-    Op teelt-id: vakken, emmers, stek, opmerkingen, prognoselogboek, teelthistorie
-    en wijzigingen. Per tuin/vak/afdeling binnen [van, tot]: watergift, gietbeurten,
-    behandelingen, klimaat, EC/pH, warmte en gas; logic/opzoeken knipt die daarna
-    per vak op de eigen periode (planten t/m oogst).
+    De gegevens van een groep vakken (pagina Teelt bij één tuin), als DataFrames.
+    Op teelt-id: vakken, emmers, stek en opmerkingen. Per tuin/vak binnen [van, tot]: de
+    behandelingen; logic/opzoeken knipt die daarna per vak op de eigen periode (planten t/m oogst).
     """
     ids = [int(i) for i in teelt_ids]
-    leeg = {k: pd.DataFrame() for k in ("vakken", "emmers", "stek", "opmerkingen", "prognose", "historie",
-                                        "wijzigingen", "water", "beurten", "behandelingen", "klimaat",
-                                        "kwaliteit", "warmte", "gas")}
+    leeg = {k: pd.DataFrame() for k in ("vakken", "emmers", "stek", "opmerkingen", "behandelingen")}
     if not ids:
         return leeg
     van, tot = str(van), str(tot)
@@ -2425,32 +2434,9 @@ def get_opzoek_gegevens(teelt_ids, van, tot):
             SELECT o.teelt_id, t.code, o.datum, o.categorie, o.tekst, o.gebruiker
             FROM opmerkingen o JOIN teelten t ON t.id = o.teelt_id
             WHERE o.teelt_id = ANY(%s) ORDER BY o.datum, t.code""", (ids,))
-        uit["prognose"] = _df(c, """
-            SELECT teelt_id, code, datum, leeftijd_d, fase, gedaan, plan_oogst, prognose_oogst, correctie_c,
-                   stooklijn
-            FROM prognose_log WHERE teelt_id = ANY(%s) ORDER BY datum, code""", (ids,))
-        uit["historie"] = _df(c, """
-            SELECT teelt_id, code, startdatum, oogstdatum, teeltduur_dagen, florgib_datum, florgib_bron,
-                   lengte_eind, oogstgewicht, bron
-            FROM teelt_historie WHERE teelt_id = ANY(%s) ORDER BY code""", (ids,))
-        # Teelt, opmerking en stekbeoordeling loggen met de teelt-id als entiteit_id.
-        uit["wijzigingen"] = _df(c, """
-            SELECT tijdstip, gebruiker, actie, entiteit, entiteit_id, omschrijving FROM wijzigingenlog
-            WHERE entiteit IN ('teelt', 'opmerking', 'stekbeoordeling') AND entiteit_id = ANY(%s)
-            ORDER BY tijdstip""", ([str(i) for i in ids],))
-
         tuinen = sorted({int(t) for t in uit["vakken"]["tuin_id"]}) if not uit["vakken"].empty else []
         vakken = sorted({int(v) for v in uit["vakken"]["vak"]}) if not uit["vakken"].empty else []
-        afdelingen = sorted({int(a) for a in uit["vakken"]["afdeling"].dropna()}) if not uit["vakken"].empty else []
-        bereik = {"tuinen": tuinen, "vakken": vakken, "afdelingen": afdelingen, "van": van, "tot": tot}
-        uit["water"] = _df(c, """
-            SELECT tuin_id, vaknummer AS vak, datum, liter_per_m2, beurten, ec, ph, bron FROM watergift_dag
-            WHERE tuin_id = ANY(%(tuinen)s) AND vaknummer = ANY(%(vakken)s) AND datum BETWEEN %(van)s AND %(tot)s
-            ORDER BY datum, vaknummer""", bereik)
-        uit["beurten"] = _df(c, """
-            SELECT tuin_id, vaknummer AS vak, datum, start, eind, liter_per_m2, ec, ph, flow FROM watergift_beurt
-            WHERE tuin_id = ANY(%(tuinen)s) AND vaknummer = ANY(%(vakken)s) AND datum BETWEEN %(van)s AND %(tot)s
-            ORDER BY start, vaknummer""", bereik)
+        bereik = {"tuinen": tuinen, "vakken": vakken, "van": van, "tot": tot}
         uit["behandelingen"] = _df(c, """
             SELECT b.tuin_id, b.vaknummer AS vak, b.datum, m.naam AS middel, m.type, b.doel, b.dosering, b.eenheid,
                    b.mix, b.aantal_vakken, b.methode, b.opmerking
@@ -2458,24 +2444,6 @@ def get_opzoek_gegevens(teelt_ids, van, tot):
             WHERE b.tuin_id = ANY(%(tuinen)s) AND b.vaknummer = ANY(%(vakken)s)
               AND b.datum BETWEEN %(van)s AND %(tot)s
             ORDER BY b.datum, b.vaknummer""", bereik)
-        uit["klimaat"] = _df(c, """
-            SELECT tuin_id, afdeling, datum, gem_temperatuur AS etmaal_temp, gem_temperatuur_dag AS temp_dag,
-                   gem_temperatuur_nacht AS temp_nacht, gem_rv AS rv, gem_rv_dag AS rv_dag,
-                   gem_rv_nacht AS rv_nacht, stralingssom_dag AS lichtsom
-            FROM klimaatdata_dag
-            WHERE tuin_id = ANY(%(tuinen)s) AND afdeling = ANY(%(afdelingen)s) AND datum BETWEEN %(van)s AND %(tot)s
-            ORDER BY datum, afdeling""", bereik)
-        uit["kwaliteit"] = _df(c, """
-            SELECT tuin_id, datum, watersysteem, ec_gift, ph_gift, ec_gem, ph_gem, ec_doel, ph_doel, ec_aanvoer,
-                   recept
-            FROM water_kwaliteit_dag WHERE tuin_id = ANY(%(tuinen)s) AND datum BETWEEN %(van)s AND %(tot)s
-            ORDER BY datum, watersysteem""", bereik)
-        uit["warmte"] = _df(c, """
-            SELECT tuin_id, datum, warmte_mj_totaal, warmte_mj_per_m2 FROM energiedata_dag
-            WHERE tuin_id = ANY(%(tuinen)s) AND datum BETWEEN %(van)s AND %(tot)s ORDER BY datum""", bereik)
-        uit["gas"] = _df(c, """
-            SELECT tuin_id, datum, gas_m3_totaal, gas_m3_per_m2 FROM gasdata_dag
-            WHERE tuin_id = ANY(%(tuinen)s) AND datum BETWEEN %(van)s AND %(tot)s ORDER BY datum""", bereik)
     return {**leeg, **uit}
 
 
@@ -3159,32 +3127,6 @@ def get_planning(tuin_id=None):
         return cursor.fetchall()
 
 
-def get_planning_per_week(tuin_id=None):
-    """
-    Groepeert alle concept-planningen per plantweek (iso-jaar + weeknummer
-    van verwachte_startdatum), met de vaknummers in oplopende volgorde per
-    week. Geeft een lijst van tuples (jaar, week, [vaknummers], arbeidsaantal)
-    terug, gesorteerd op jaar/week. Het arbeidsaantal is het aantal vakken
-    dat voor de arbeidsplanning telt: vak 19+20 samen tellen daarin als 1
-    (net als bij het maken van de planning), ook al staan ze allebei apart
-    in de vakkenlijst.
-    """
-    rijen = get_planning(tuin_id)
-    groepen = {}
-    for _planning_id, vaknummer, start, _duur, _eind, _notitie in rijen:
-        sleutel = get_isojaar_week(start)
-        groepen.setdefault(sleutel, []).append(vaknummer)
-
-    resultaat = []
-    for jaar, week in sorted(groepen.keys()):
-        vakken = sorted(groepen[(jaar, week)])
-        arbeidsaantal = len(vakken)
-        if VAK_GECOMBINEERD[0] in vakken and VAK_GECOMBINEERD[1] in vakken:
-            arbeidsaantal -= 1
-        resultaat.append((jaar, week, vakken, arbeidsaantal))
-    return resultaat
-
-
 def verwijder_planning(planning_id, gebruiker=None):
     """Verwijdert een concept-planningsregel (zonder gevolgen voor eventuele echte teelten)."""
     with get_connection() as conn:
@@ -3709,6 +3651,35 @@ def get_stek_voor_week(maandag, tuin_id=None):
     ]
 
 
+def get_laatste_stekwaarden(maandag, tuin_id=None):
+    """
+    De laatst ingevulde stekwaarden vóór de week vanaf `maandag`: per veld (wortel, plantmaat, uniformiteit,
+    beoordeling) de waarde van de recentst geplante teelt in deze tuin waarbij dat veld is ingevuld.
+    Voor "Hele week invullen" bij Stek; een veld dat nooit is ingevuld ontbreekt.
+    """
+    velden = ("wortel", "plantmaat", "uniformiteit", "beoordeling")
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT s.wortel, s.plantmaat, s.uniformiteit, s.beoordeling
+            FROM stekbeoordelingen s
+            JOIN teelten t ON t.id = s.teelt_id
+            JOIN teeltvakken v ON v.id = t.teeltvak_id
+            WHERE v.tuin_id = %s AND t.datum_teelt_start < %s
+              AND (s.wortel IS NOT NULL OR s.plantmaat IS NOT NULL OR s.uniformiteit IS NOT NULL
+                   OR s.beoordeling IS NOT NULL)
+            ORDER BY t.datum_teelt_start DESC, v.vaknummer DESC
+            LIMIT 200
+        """, (_tuin_of_standaard(tuin_id), str(maandag)))
+        rijen = cursor.fetchall()
+    uit = {}
+    for rij in rijen:
+        for veld, waarde in zip(velden, rij):
+            if veld not in uit and waarde not in (None, ""):
+                uit[veld] = waarde
+    return uit
+
+
 def sla_stekbeoordeling_op(teelt_id, velden, gebruiker=None):
     """
     Slaat de stekbeoordeling van één teelt op (nieuw of bijwerken). `velden` is
@@ -4076,3 +4047,69 @@ def get_standaard_tuin_van_gebruiker(username):
         cursor.execute("SELECT standaard_tuin FROM gebruikers WHERE username = %s", (username,))
         rij = cursor.fetchone()
     return (rij[0] if rij and rij[0] else STANDAARD_TUIN)
+
+
+def get_watervoorspelling_data(tuin_id):
+    """
+    Alles voor de watervoorspelling van één tuin (watervoorspelling.py), in vijf query's, alleen lezen:
+    - teelten: id, vaknummer, datum_teelt_start, datum_oogst
+    - water: vaknummer, datum, liter_per_m2, bron (watergift_dag, alle bronnen)
+    - straling: {datum: stralingssom van de tuin} (gemiddeld over de afdelingen)
+    - eerste_emmer: {teelt_id: eerste oogstdag}
+    - opmerkingen: teelt_id, datum, tekst van de opmerkingen met categorie Water
+    """
+    def rijen(cursor):
+        kolommen = [k[0] for k in cursor.description]
+        return [dict(zip(kolommen, r)) for r in cursor.fetchall()]
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT t.id, v.vaknummer, t.datum_teelt_start, t.datum_oogst
+            FROM teelten t JOIN teeltvakken v ON v.id = t.teeltvak_id
+            WHERE v.tuin_id = %s AND v.vaknummer IS NOT NULL AND t.datum_teelt_start IS NOT NULL
+        """, (tuin_id,))
+        teelten = rijen(cursor)
+        cursor.execute("SELECT vaknummer, datum, liter_per_m2, bron FROM watergift_dag WHERE tuin_id = %s",
+                       (tuin_id,))
+        water = rijen(cursor)
+        cursor.execute("""
+            SELECT datum, AVG(stralingssom_dag) FROM klimaatdata_dag
+            WHERE tuin_id = %s AND stralingssom_dag IS NOT NULL GROUP BY datum
+        """, (tuin_id,))
+        straling = {d: float(s) for d, s in cursor.fetchall()}
+        cursor.execute("""
+            SELECT o.teelt_id, MIN(o.datum) FROM oogstregistraties o
+            JOIN teelten t ON t.id = o.teelt_id JOIN teeltvakken v ON v.id = t.teeltvak_id
+            WHERE v.tuin_id = %s AND o.aantal_emmers > 0 GROUP BY o.teelt_id
+        """, (tuin_id,))
+        eerste_emmer = {int(i): d for i, d in cursor.fetchall()}
+        cursor.execute("""
+            SELECT o.teelt_id, o.datum, o.tekst FROM opmerkingen o
+            JOIN teelten t ON t.id = o.teelt_id JOIN teeltvakken v ON v.id = t.teeltvak_id
+            WHERE v.tuin_id = %s AND o.categorie = 'Water'
+        """, (tuin_id,))
+        opmerkingen = rijen(cursor)
+    return {"teelten": teelten, "water": water, "straling": straling, "eerste_emmer": eerste_emmer,
+            "opmerkingen": opmerkingen}
+
+
+def get_notificaties_weg(gebruiker):
+    """De sleutels van de notificaties die deze gebruiker heeft weggeklikt."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT sleutel FROM notificatie_weg WHERE gebruiker = %s", (gebruiker,))
+        return {r[0] for r in cursor.fetchall()}
+
+
+def zet_notificatie_weg(gebruiker, sleutel):
+    """Een notificatie wegklikken; ruimt meteen wat ouder is dan NOTIFICATIE_WEG_DAGEN op."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO notificatie_weg (gebruiker, sleutel) VALUES (%s, %s)
+            ON CONFLICT (gebruiker, sleutel) DO NOTHING
+        """, (gebruiker, sleutel))
+        cursor.execute("DELETE FROM notificatie_weg WHERE tijdstip < now() - make_interval(days => %s)",
+                       (NOTIFICATIE_WEG_DAGEN,))
+        conn.commit()
