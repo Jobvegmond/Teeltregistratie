@@ -26,7 +26,7 @@ class TestPerAfdeling(unittest.TestCase):
         # Gas alleen voor de hele kas.
         self.assertEqual(w[HT]["gas"], 700 / 1000)
         self.assertNotIn("gas", w["Afd. 1"])
-        self.assertEqual(u["ontbreekt"]["Afd. 1"]["gas"], "Alleen voor de hele kas gemeten")
+        self.assertIn("geen verdeling over de afdelingen", u["ontbreekt"]["Afd. 1"]["gas"])
         # Bezetting: vak 1 tot de oogst op 25-09 (5 van 7 dagen), vak 2 leeg.
         self.assertAlmostEqual(w["Afd. 1"]["bezetting"], 5 / 7 * 100)
         self.assertEqual(w["Afd. 2"]["bezetting"], 0.0)
@@ -49,6 +49,40 @@ class TestPerAfdeling(unittest.TestCase):
         self.assertEqual((w[HT]["temp_min"], w[HT]["temp_max"]), (14.0, 17.0))
         self.assertEqual(w[HT]["vd"], 2.0)      # alleen afd. 1 heeft een vochtdeficit
         self.assertIn("klimaat per uur", u["ontbreekt"]["Afd. 2"]["vd"])
+
+
+class TestWarmtePerAfdeling(unittest.TestCase):
+    def gegevens(self):
+        g = gegevens()
+        dagen = [str(date(2026, 9, 21 + i)) for i in range(7)]
+        g.energie = pd.DataFrame([{"tuin_id": 3, "datum": d, "warmte_mj": 1000.0} for d in dagen])
+        # Verdeelsleutel op twee dagen: afd. 1 : afd. 2 : afd. 5 (waterruimte) = 3 : 1 : 1 en 1 : 1 : 0.
+        g.verdeling = pd.DataFrame(
+            [{"tuin_id": 3, "datum": dagen[0], "afdeling": a, "sleutel": s} for a, s in ((1, 3.0), (2, 1.0), (5, 1.0))]
+            + [{"tuin_id": 3, "datum": dagen[1], "afdeling": a, "sleutel": s} for a, s in ((1, 50.0), (2, 50.0), (5, 0.0))]
+            # een dag met alleen nullen telt niet; een andere tuin ook niet
+            + [{"tuin_id": 3, "datum": dagen[2], "afdeling": a, "sleutel": 0.0} for a in (1, 2)]
+            + [{"tuin_id": 1, "datum": dagen[0], "afdeling": 1, "sleutel": 1.0}])
+        return g
+
+    def test_warmte_en_gas_verdeeld(self):
+        u = to.tabelwaarden(self.gegevens(), None, 3, VAN, TOT)
+        w, n = u["waarden"], u["n"]
+        # Afd. 1: 600 + 500 MJ op 500 m²; afd. 2: 200 + 500 MJ. De hele tuin: 7 × 1000 MJ op 1000 m².
+        self.assertAlmostEqual(w["Afd. 1"]["warmte"], 1100 / 500)
+        self.assertAlmostEqual(w["Afd. 2"]["warmte"], 700 / 500)
+        self.assertAlmostEqual(w[HT]["warmte"], 7.0)
+        self.assertEqual((n["Afd. 1"]["warmte"], n[HT]["warmte"]), (2, 7))
+        # Gas met dezelfde verdeling: 100 m³ per dag → afd. 1 60 + 50 m³.
+        self.assertAlmostEqual(w["Afd. 1"]["gas"], 110 / 500)
+        self.assertIn("energie", w["Afd. 1"])
+
+    def test_zonder_sleutel_geen_waarde(self):
+        g = self.gegevens()
+        g.verdeling = g.verdeling.iloc[0:0]
+        u = to.tabelwaarden(g, None, 3, VAN, TOT)
+        self.assertNotIn("warmte", u["waarden"]["Afd. 1"])
+        self.assertIn("geen verdeling", u["ontbreekt"]["Afd. 1"]["warmte"])
 
 
 class TestTeeltstrategie(unittest.TestCase):

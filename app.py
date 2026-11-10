@@ -3014,7 +3014,10 @@ def _pagina_tuin():
                "geplante vakken, de watergift en de opmerkingen van de periode.",
                "**Tuin 1 / Tuin 3**: een klik op een regel bij *Wat er gebeurde* opent het vak. In de grafieken: beweeg over een tijdstip voor "
                "alle afdelingen tegelijk."],
-        bron="Watergift en energie uit Priva. Klimaat per uur en per dag uit de Priva-bestanden op de NAS, elk "
+        bron="Watergift en energie uit Priva. Warmte en gas worden per tuin gemeten; per afdeling verdeeld zoals "
+             "Priva dat doet: naar het geleverde vermogen van het verwarmingsnet per afdeling (elke minuut uit de "
+             "Priva-bestanden, sinds oktober 2026) of Priva's eigen verdeling uit een ingelezen Energie-export. "
+             "Klimaat per uur en per dag uit de Priva-bestanden op de NAS, elk "
              "uur bijgewerkt: het gemiddelde van de minuten (tuin 3 vóór 7 oktober 2026 de waarde op het hele uur; "
              "tuin 1 sinds 21 oktober 2026). Per dag: dag = zonsopkomst tot zonsondergang, nacht = tot de "
              "volgende ochtend (pas na zonsopkomst compleet); oudere dagen uit de Priva-API of de CSV-export. "
@@ -3061,7 +3064,17 @@ TU_KENGETALLEN = [
     Kengetal("ph", "pH gift", "Energie & water", "", 1,
              f"pH van de watergift, gewogen naar liters × m² vak. Streven: {fmt_kort(PH_BEREIK[0], 1)}–"
              f"{fmt_kort(PH_BEREIK[1], 1)} (tuin 3 heeft geen pH-regeling).", n_eenheid="dagen"),
-    *(_TV_PER_SLEUTEL[s] for s in ("warmte", "gas", "energie")),
+    Kengetal("warmte", "Warmte", "Energie & water", "MJ/m²", 1,
+             "Geleverde warmte per m² (tuin 3: Pulsteller; tuin 1: warmtewisselaar). Er is één meter per tuin: "
+             "per afdeling is het de gemeten warmte × het deel van die afdeling, zoals Priva het verdeelt (naar het "
+             "geleverde vermogen van het verwarmingsnet per afdeling), gedeeld door de m² van de afdeling. Hele tuin "
+             "= alles gedeeld door de m² kas, inclusief het deel van de waterruimte (tuin 3) of de schuur (tuin 1).",
+             n_eenheid="dagen"),
+    Kengetal("gas", "Gas", "Energie & water", "m³/m²", 2,
+             "Gasverbruik (Pulsteller 1) per m², over de afdelingen verdeeld zoals de warmte.", n_eenheid="dagen"),
+    Kengetal("energie", "Energie totaal", "Energie & water", "MJ/m²", 1,
+             f"Warmte plus gas omgerekend ({fmt_kort(GAS_CALORISCHE_WAARDE_MJ_PER_M3, 2)} MJ per m³), per m².",
+             n_eenheid="dagen"),
 ]
 BUITEN = "Buiten"
 BUITEN_KLEUR = "#8a8a80"
@@ -4674,7 +4687,8 @@ def _pagina_import_1():
             type=["csv"],
             key="energie_csv_upload",
             help="Rapport Energie-export uit Priva, voor de tuin die bovenin gekozen is. Warmte: tuin 3 "
-                 "Pulsteller 2 (GJ), tuin 1 de warmtewisselaar (kWh, omgerekend). Gas: Pulsteller 1 (m³).",
+                 "Pulsteller 2 (GJ), tuin 1 de warmtewisselaar (kWh, omgerekend). Gas: Pulsteller 1 (m³). Ook "
+                 "Priva's verdeling over de afdelingen, voor dagen vóór de Priva-bestanden (oktober 2026).",
         )
         if energie_csv is not None:
             try:
