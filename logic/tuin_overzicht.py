@@ -4,7 +4,8 @@ Pagina Tuin bij Tuin 1 / Tuin 3: wat er op een dag of in een week in één tuin 
 - tabelwaarden(): de kengetallen per afdeling en voor de hele tuin, in de vorm van
   tuinvergelijking.tabelwaarden (kolommen "Afd. n" en HELE_TUIN). Een afdeling rekent met dezelfde
   regels als een tuin (tuinvergelijking.onderdelen op alleen de vakken en het klimaat van die afdeling);
-  warmte en gas zijn er alleen voor de hele kas. Uit het klimaat per uur (tabel klimaat_uur, alleen
+  warmte en gas zijn gemeten voor de hele kas en per dag verdeeld over de afdelingen met Priva's
+  verdeelsleutel (logic/warmte_afdeling.py; afdeling_energie). Uit het klimaat per uur (tabel klimaat_uur, alleen
   waar de Priva-bestanden zijn) komen de laagste/hoogste temperatuur, vochtdeficit, CO2, de berekende
   stooktemperatuur en de uren met een hoge RV. Verder de DIF (dag − nacht) en EC/pH van de gift.
 - gebeurtenissen(): geplant, Florgib, oogst, afgerond en opmerkingen in de periode, per vak.
@@ -14,10 +15,11 @@ Alleen rekenwerk; tests in tests/test_tuin_overzicht.py.
 import copy
 
 from logic import tuinvergelijking as tuinvgl
+from logic import warmte_afdeling as wa
 from utils.format import fmt_getal, fmt_kort
 
 HELE_TUIN = "Hele tuin"
-# Alleen voor de hele kas gemeten (geen meter per afdeling).
+# Gemeten voor de hele kas; per afdeling alleen op dagen met een verdeelsleutel (afdeling_energie).
 ALLEEN_TUIN = ("warmte", "gas", "energie")
 # Uit klimaat_uur: gemiddelden (teller = som, noemer = aantal uren), uitersten en uren met RV ≥ RV_HOOG.
 # "verwarming" = de door Priva berekende verwarmingstemperatuur: de stooklijn (luchttemperatuur), niet de buis.
@@ -39,8 +41,9 @@ def afdelingen(g, tuin_id):
 def afdeling_gegevens(g, tuin_id, afdeling):
     """
     Een kopie van de Gegevens met alleen de vakken, het klimaat en de watergift van één afdeling, zodat
-    tuinvergelijking.onderdelen() die afdeling rekent als een tuin (per m² afdeling). Warmte en gas vallen
-    weg. De eerste teelt en emmer van de tuin blijven: de registratie liep voor de hele tuin.
+    tuinvergelijking.onderdelen() die afdeling rekent als een tuin (per m² afdeling). Warmte en gas: het deel
+    van deze afdeling (afdeling_energie). De eerste teelt en emmer van de tuin blijven: de registratie liep
+    voor de hele tuin.
     """
     vakken = {v for (t, v), a in g.vak_afdeling.items() if t == tuin_id and a == afdeling}
     a = copy.copy(g)
@@ -48,9 +51,39 @@ def afdeling_gegevens(g, tuin_id, afdeling):
     a.teelten = [t for t in g.teelten if t["tuin_id"] == tuin_id and t["vaknummer"] in vakken]
     a.emmers = [e for e in g.emmers if e["tuin_id"] == tuin_id and int(e["vaknummer"]) in vakken]
     a.klimaat = g.klimaat[(g.klimaat["tuin_id"] == tuin_id) & (g.klimaat["afdeling"] == afdeling)]
-    a.energie, a.gas = g.energie.iloc[0:0], g.gas.iloc[0:0]
+    a.energie, a.gas = afdeling_energie(g, tuin_id, afdeling)
     a.water = g.water[(g.water["tuin_id"] == tuin_id) & g.water["vaknummer"].astype(int).isin(vakken)]
     return a
+
+
+def _aandeel_per_dag(g, tuin_id, afdeling):
+    """{datum: aandeel 0–1} van deze afdeling in de warmte van de kas, op de dagen met een verdeelsleutel."""
+    v = g.verdeling
+    if v is None or v.empty:
+        return {}
+    v = v[v["tuin_id"] == tuin_id]
+    uit = {}
+    for datum, groep in v.groupby("datum"):
+        delen = wa.aandelen(dict(zip(groep["afdeling"].astype(int), groep["sleutel"].astype(float))))
+        if delen is not None:
+            uit[str(datum)] = delen.get(afdeling, 0.0)
+    return uit
+
+
+def afdeling_energie(g, tuin_id, afdeling):
+    """
+    (energie, gas) van één afdeling, in de vorm van g.energie en g.gas: de gemeten warmte (MJ) en het gas (m³)
+    van de kas × het aandeel van de afdeling die dag. Dagen zonder verdeelsleutel vallen weg (die tellen dan
+    als niet gemeten, met ⚠). Het gas gaat door dezelfde verwarmingsnetten en krijgt dezelfde verdeling.
+    """
+    aandeel = _aandeel_per_dag(g, tuin_id, afdeling)
+
+    def deel(df, kolom):
+        rijen = df[(df["tuin_id"] == tuin_id) & df["datum"].astype(str).isin(aandeel.keys())].copy()
+        rijen[kolom] = rijen[kolom] * rijen["datum"].astype(str).map(aandeel)
+        return rijen
+
+    return deel(g.energie, "warmte_mj"), deel(g.gas, "gas_m3")
 
 
 def uur_onderdelen(uur, afd_m2, van, tot):
@@ -151,8 +184,9 @@ def tabelwaarden(g, uur, tuin_id, van, tot):
     for k, delen in per.items():
         ontbreekt[k] = {}
         for s in alle - set(delen):
-            if s in ALLEEN_TUIN and k != HELE_TUIN:
-                ontbreekt[k][s] = "Alleen voor de hele kas gemeten"
+            if s in ALLEEN_TUIN and k != HELE_TUIN and s in per[HELE_TUIN]:
+                ontbreekt[k][s] = ("Gemeten voor de hele kas; voor deze dagen is er (nog) geen verdeling over "
+                                   "de afdelingen uit Priva")
             elif s in UUR_SLEUTELS:
                 ontbreekt[k][s] = "Geen klimaat per uur in deze periode (uit de Priva-bestanden op de NAS)"
             elif s == "dif":

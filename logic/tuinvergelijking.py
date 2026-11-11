@@ -83,6 +83,9 @@ class Gegevens:
         self.energie = data["energie"]
         self.gas = data["gas"]
         self.water = data["water"]
+        # De verdeelsleutel van de warmte over de afdelingen (tuin_id, datum, afdeling, sleutel); zie
+        # logic/warmte_afdeling.py en tuin_overzicht.afdeling_gegevens.
+        self.verdeling = data.get("verdeling")
         # Per tuin de eerste en laatste dag met data per registratie.
         self.registratie = {}
         for naam, df, kolom in (("klimaat", self.klimaat, "temp_24h"), ("warmte", self.energie, "warmte_mj"),
