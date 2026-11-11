@@ -3,6 +3,17 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.31.2] - 2026-11-11
+
+### Opgelost
+- **"deadlock detected" bij het opstarten van de taken op de NAS** (de API-taak om 06:00, `prognose_loggen.py` om 08:00
+  en de stap pulsmeters van de uurtaak, sinds 11-10 tientallen keren). `init_db()` voerde bij elke start alle
+  `CREATE/ALTER ... IF NOT EXISTS` uit; die vragen ook op een tabel die al klopt een AccessExclusiveLock, en starten twee
+  taken op hetzelfde uur, dan liepen ze vast. Nu draait het volledige schema (`_init_db_volledig`) alleen als het
+  veranderd is: de vingerafdruk (broncode plus alle `*_TABEL`-teksten) staat in de nieuwe tabel `schema_versie`; is
+  die gelijk, dan is het één leesquery. Een volledige run houdt een advisory lock per transactie vast, zodat nooit twee
+  processen tegelijk het schema aanpassen. Na een update draait het volledige schema dus één keer.
+
 ## [2.31.1] - 2026-11-11
 
 ### Toegevoegd
