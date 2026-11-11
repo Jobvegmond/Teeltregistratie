@@ -235,5 +235,114 @@ class TestTerugtoets(unittest.TestCase):
         self.assertEqual(uit["per_vak"]["dagen"], sum(r["datum"] >= dag(25) for r in rijen))
 
 
+
+class TestFlorgibEnStreef(unittest.TestCase):
+    def test_streef_tussen_winter_en_zomer(self):
+        self.assertEqual(wv.streef(5000), 75.0)
+        self.assertEqual(wv.streef(60000), 150.0)
+        self.assertAlmostEqual(wv.streef(24000), 112.5)
+
+    def test_verloop(self):
+        self.assertEqual(wv.verloop(0), 0.0)
+        self.assertAlmostEqual(wv.verloop(0.5), 0.64)
+        self.assertAlmostEqual(wv.verloop(0.375), (0.38 + 0.64) / 2)
+        self.assertEqual(wv.verloop(2.0), 1.0)
+
+    def test_florgib_schatting_alleen_wat_bij_het_planten_bekend_was(self):
+        teelten = [{"id": 1, "start": date(2025, 11, 1), "florgib": date(2025, 12, 31)},     # 60 dagen
+                   {"id": 2, "start": date(2025, 11, 10), "florgib": date(2026, 1, 9)},      # 60 dagen
+                   {"id": 3, "start": date(2026, 6, 1), "florgib": date(2026, 6, 27)},       # zomer, 26 dagen
+                   {"id": 4, "start": date(2026, 11, 5), "florgib": None},
+                   {"id": 5, "start": date(2025, 11, 5), "florgib": None}]                   # nog niets bekend
+        uit = wv.florgib_schattingen(teelten)
+        self.assertEqual(uit[4], 60)                                    # rond dezelfde plantdatum, vorig jaar
+        self.assertEqual(uit[5], wv.FLORGIB_STANDAARD)
+
+    def test_kenmerken_florgib_en_streef(self):
+        teelten = [{"id": 1, "vak": 5, "start": dag(0), "florgib": dag(20), "eind": None}]
+        gift = {(5, dag(0)): 10.0, (5, dag(3)): 15.0}
+        straling = {dag(i): 400.0 for i in range(40)}
+        klimaat = {n: 400.0 for n in range(1, 366)}
+        rijen = {r["leeftijd"]: r for r in wv.kenmerken(teelten, gift, straling, dag(0), dag(30), klimaat=klimaat,
+                                                        florgib_dagen={1: 30})}
+        r = rijen[10]
+        self.assertEqual(r["gegeven"], 25.0)
+        self.assertFalse(r["na_florgib"])
+        self.assertEqual(r["florgib_dag"], 30)                          # vóór de Florgib: de schatting
+        self.assertEqual(r["lichtsom"], 30 * 400.0)                     # 10 dagen gemeten + 20 gemiddeld
+        self.assertAlmostEqual(r["streef"], wv.streef(12000))
+        self.assertAlmostEqual(wv.achterstand(r), r["streef"] * wv.verloop(10 / 30) - 25.0)
+        self.assertTrue(rijen[20]["na_florgib"])                        # vanaf de dag van de Florgib
+        self.assertEqual(rijen[20]["florgib_dag"], 20)
+        self.assertEqual(rijen[25]["florgib"], dag(20))
+        zonder = wv.kenmerken(teelten, gift, straling, dag(10), dag(10))
+        self.assertIsNone(zonder[0]["streef"])                          # zonder klimaat geen streef
+
+    def test_na_florgib_geen_advies(self):
+        model = wv.train(nep_historie())
+        r = dict(rij(vak=5, S=4500, datum=date(2026, 11, 5)), na_florgib=True, florgib=date(2026, 11, 2))
+        lijst = wv.adviezen(model, [r, rij(vak=6, S=4500, datum=date(2026, 11, 5))])
+        self.assertEqual({a["vak"]: a["advies"] for a in lijst}, {5: "na florgib", 6: "water"})
+        self.assertIn("Florgib op ma 02-11: daarna niet meer gieten", lijst[0]["reden"])
+        self.assertEqual([i["vakken"] for i in wv.feed_items(lijst, date(2026, 11, 5), "Tuin 3")], [[6]])
+        self.assertIn("niet meer gieten", wv.groepen([lijst[0]])[0])
+
+    def test_streef_regels(self):
+        def met_streef(r, gegeven, streefwater=80.0, florgib_dag=40):
+            return dict(r, gegeven=gegeven, streef=streefwater, florgib_dag=florgib_dag)
+        model = wv.train(nep_historie())
+        d = date(2026, 11, 5)
+        # Streefwater al gegeven: water wordt twijfel.
+        lijst = wv.adviezen(model, [met_streef(rij(vak=5, S=4500, datum=d), gegeven=85.0)])
+        self.assertEqual(lijst[0]["advies"], "twijfel")
+        self.assertEqual(lijst[0]["streef_regel"], "streefwater al gegeven")
+        self.assertIn("streefwater al gegeven, daarom twijfel", wv.groepen(lijst)[0])
+        # Ver achter op het schema: niet nodig wordt twijfel.
+        r = met_streef(rij(vak=5, leeftijd=20, S=300, datum=d), gegeven=10.0)
+        self.assertGreaterEqual(wv.achterstand(r), wv.STREEF_ACHTER)
+        lijst = wv.adviezen(model, [r])
+        self.assertEqual((lijst[0]["advies"], lijst[0]["streef_regel"]),
+                         ("twijfel", "ver achter op het schema naar het streefwater"))
+        # Op schema: het advies van het model blijft.
+        r = met_streef(rij(vak=5, leeftijd=20, S=300, datum=d), gegeven=80.0 * wv.verloop(0.5))
+        lijst = wv.adviezen(model, [r])
+        self.assertEqual((lijst[0]["advies"], lijst[0]["streef_regel"]), ("niet nodig", None))
+        self.assertIn("op schema", lijst[0]["reden"])
+
+    def test_klimatologie(self):
+        straling = {date(2025, 1, 1) + timedelta(days=i): float(i % 365) for i in range(730)}
+        k = wv.klimatologie(straling, venster=0)
+        self.assertAlmostEqual(k[10], 9.0)
+        self.assertEqual(len(k), 365)
+
+
+class TestPrivaVerwachting(unittest.TestCase):
+    def test_ijk_priva(self):
+        gemeten = {dag(i): 0.8 * (300 + 10 * i) for i in range(20)}
+        priva = {dag(i): 300.0 + 10 * i for i in range(20)}
+        self.assertAlmostEqual(wv.ijk_priva(gemeten, priva, dag(20)), 0.8)
+        self.assertIsNone(wv.ijk_priva(gemeten, priva, dag(3)))         # te weinig dagen
+
+    def test_priva_bestanden(self):
+        from datetime import datetime
+        from integrations import priva_meteo as pm
+        catalogus = ['"id";"adres";"naam"',
+                     '"7";"/meteo[VP9508:1]/toestand/verwachting[1]/verwachteStralingssomBuitenVandaag";"x"',
+                     '"8";"/meteo[VP9508:1]/toestand/verwachting[1]/verwachteStralingssomBuitenMorgen";"y"']
+        self.assertEqual(pm.ids(catalogus, "VP9508"), ("7", "8"))
+        self.assertIsNone(pm.ids(catalogus, "Matricaria25"))
+        regels = ['{"t":"2026-11-10T12:00:00+01:00","v":{"7":500,"8":300}}',
+                  '{"t":"2026-11-10T20:00:00+01:00","v":{"8":350}}',
+                  '{"t":"2026-11-11T09:00:00+01:00","v":{"7":340,"8":600}}',
+                  'kapot']
+        punten = pm.lees_punten(regels, ("7", "8"))
+        self.assertEqual(len(punten["8"]), 3)
+        # 07:10 in november is vóór zonsopkomst: "morgen" is de dag die begint, voor de dag erna nog niets.
+        self.assertEqual(pm.verwachting_op(punten["7"], punten["8"], datetime(2026, 11, 11, 7, 10)), (350, None))
+        self.assertEqual(pm.verwachting_op(punten["7"], punten["8"], datetime(2026, 11, 11, 10, 0)), (340, 600))
+        reeks, erna = pm.per_dag(punten["7"], punten["8"], date(2026, 11, 11), date(2026, 11, 11))
+        self.assertEqual((reeks, erna), ({date(2026, 11, 11): 350}, None))
+
+
 if __name__ == "__main__":
     unittest.main()

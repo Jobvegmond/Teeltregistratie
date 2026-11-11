@@ -1,7 +1,8 @@
 """
 Watervoorspelling voor vandaag per vak (tuin 3, ook tuin 1): advies "water", "twijfel" of "niet nodig" met een
-korte reden, uit de teeltleeftijd, de giften en de straling sinds de vorige gift en de stralingsverwachting van
-Open-Meteo (logic/watervoorspelling.py). Een hulpmiddel voor de teler, geen sturing. Alleen lezen.
+korte reden, uit de teeltleeftijd, de giften en de straling sinds de vorige gift, het streefwater tot de Florgib
+en de stralingsverwachting van Priva (of Open-Meteo) (logic/watervoorspelling.py). Na de Florgib: geen water meer.
+Een hulpmiddel voor de teler, geen sturing. Alleen lezen.
 
 Gebruik:
     python watervoorspelling.py                       # advies voor vandaag, als tekst
@@ -41,7 +42,7 @@ def lees_data(database, tuin):
     """Gegevens uit de database, met datums als date."""
     data = database.get_watervoorspelling_data(tuin["id"])
     teelten = [{"id": int(t["id"]), "vak": int(t["vaknummer"]), "start": _datum(t["datum_teelt_start"]),
-                "eind": _datum(t["datum_oogst"])} for t in data["teelten"]]
+                "florgib": _datum(t.get("datum_half")), "eind": _datum(t["datum_oogst"])} for t in data["teelten"]]
     water = [{"vaknummer": int(r["vaknummer"]), "datum": _datum(r["datum"]), "liter_per_m2": r["liter_per_m2"],
               "bron": r["bron"]} for r in data["water"]]
     straling = {_datum(d): s for d, s in data["straling"].items()}
@@ -93,7 +94,11 @@ def main():
 
     print(f"Watervoorspelling {tuin['naam']}, {wv.DAG[vandaag.weekday()]} {vandaag:%d-%m-%y} (advies, geen sturing)")
     regel = f"Straling verwacht vandaag ± {wv.getal(verwachting[vandaag])} J/cm²"
-    if vandaag in om:
+    priva, f = uit["priva"], uit["priva_ijk"]
+    if uit["bron"] == "priva":
+        regel += (f" (Priva-verwachting {wv.getal(priva[vandaag])} J/cm² buiten × {f:.2f}".replace(".", ",")
+                  + (f"; Open-Meteo zou ± {wv.getal(wv.omrekenen(om[vandaag], ijk))} geven)" if vandaag in om else ")"))
+    elif vandaag in om:
         regel += f" (Open-Meteo {om[vandaag]:.1f}".replace(".", ",") + f" MJ/m²; ijking {ijk[0]:.0f} + {ijk[1]:.0f} × MJ/m²)"
     if verwacht_morgen is not None:
         regel += f", morgen ± {wv.getal(verwacht_morgen)}"
@@ -123,13 +128,15 @@ def bereken_advies(database, tuin, vandaag):
     dict met lijst (wv.adviezen: per vak advies, kans en reden), data (voorbereid), openmeteo, ijk, verwachting,
     verwacht_morgen en melding (als Open-Meteo niet bereikbaar was). Ook gebruikt door de notificaties in de app.
     """
-    from integrations import openmeteo
+    from datetime import datetime
+    from integrations import openmeteo, priva_meteo
     from logic import watervoorspelling as wv
 
     gisteren = vandaag - timedelta(days=1)
     tuinen = database.get_tuinen()
     alle = {t["nummer"]: voorbereid(database, wv, t, vandaag) for t in tuinen}
     d = alle[tuin["nummer"]]
+    klimaat, florgib_dagen = streef_gegevens(wv, alle.values())
     # Stralingsverwachting: Open-Meteo, omgerekend met de laatste weken (ook voor een dag zonder meting).
     melding = None
     try:
@@ -146,15 +153,40 @@ def bereken_advies(database, tuin, vandaag):
         week = [straling[dag] for dag in straling if dag >= vandaag - timedelta(days=7)]
         verwachting[vandaag] = sum(week) / len(week) if week else 0.0
     verwacht_morgen = verwachting.get(vandaag + timedelta(days=1))
+    # Liever de verwachting van Priva zelf (M4.1), geijkt op de gemeten stralingssom: die zat er in oktober–
+    # november 2026 half zo ver naast als Open-Meteo. Zonder Priva-bestanden of te weinig dagen: Open-Meteo.
+    nu = datetime.now() if vandaag == date.today() else None
+    priva, priva_morgen = priva_meteo.verwachting(priva_meteo.standaard_map(), tuin["nummer"],
+                                                  vandaag - timedelta(days=wv.PRIVA_IJK_DAGEN + 1), vandaag, nu)
+    f = wv.ijk_priva(straling, priva, vandaag)
+    bron = "openmeteo"
+    if f and priva.get(vandaag):
+        verwachting[vandaag], bron = f * priva[vandaag], "priva"
+        if priva_morgen:
+            verwacht_morgen = f * priva_morgen
 
     # Leren op de gemeten straling van de dag zelf (toetste even goed als op de verwachting van die ochtend).
     model = wv.train([r for x in alle.values() for r in
-                      wv.kenmerken(x["teelten"], x["gift"], x["straling"], x["begin"], gisteren)])
-    rijen = wv.kenmerken(d["teelten"], d["gift"], straling, vandaag, vandaag, verwachting, d["eerste_emmer"])
+                      wv.kenmerken(x["teelten"], x["gift"], x["straling"], x["begin"], gisteren,
+                                   klimaat=klimaat, florgib_dagen=florgib_dagen)])
+    rijen = wv.kenmerken(d["teelten"], d["gift"], straling, vandaag, vandaag, verwachting, d["eerste_emmer"],
+                         klimaat, florgib_dagen)
     lijst = wv.adviezen(model, rijen, verwacht_morgen, d["opmerkingen"], d["vandaag_gegeven"])
 
     return {"lijst": lijst, "data": d, "openmeteo": om, "ijk": ijk, "verwachting": verwachting,
-            "verwacht_morgen": verwacht_morgen, "melding": melding}
+            "verwacht_morgen": verwacht_morgen, "melding": melding, "bron": bron, "priva": priva,
+            "priva_ijk": f}
+
+
+def streef_gegevens(wv, tuinen):
+    """(klimaat, florgib_dagen) voor het streefwater, uit beide tuinen samen (tuin 1 heeft weinig historie): de
+    gemiddelde straling per dag van het jaar en de geschatte Florgib per teelt."""
+    per_dag = {}
+    for x in tuinen:
+        for dag, s in x["straling"].items():
+            per_dag.setdefault(dag, []).append(s)
+    klimaat = wv.klimatologie({dag: sum(v) / len(v) for dag, v in per_dag.items()})
+    return klimaat, wv.florgib_schattingen([t for x in tuinen for t in x["teelten"]])
 
 
 def voorbereid(database, wv, tuin, vandaag):
@@ -177,6 +209,7 @@ def terugtoets(wv, openmeteo, tuin, d, andere, tot, maanden, als_json):
     """Leren op het oude deel (beide tuinen), toetsen op de laatste maanden van deze tuin, met de verwachting
     die er die ochtend was."""
     begin = min([d["begin"]] + [x["begin"] for x in andere])
+    klimaat, florgib_dagen = streef_gegevens(wv, [d] + list(andere))
     try:
         om = openmeteo.historie(begin - timedelta(days=wv.IJK_DAGEN), tot)
         bron = "opgeslagen verwachtingen van Open-Meteo, elke dag geijkt op de 4 weken ervoor"
@@ -186,7 +219,7 @@ def terugtoets(wv, openmeteo, tuin, d, andere, tot, maanden, als_json):
     def rijen(x):
         verwachting = wv.verwachting_reeks(x["straling"], om) if om else None
         return [r for r in wv.kenmerken(x["teelten"], x["gift"], x["straling"], x["begin"], tot, verwachting,
-                                        x["eerste_emmer"]) if r["S_vandaag"] is not None]
+                                        x["eerste_emmer"], klimaat, florgib_dagen) if r["S_vandaag"] is not None]
 
     splits = tot - timedelta(days=round(maanden * 30.44))
     uit = wv.terugtoets(rijen(d), splits, [r for x in andere for r in rijen(x)])
@@ -216,6 +249,9 @@ def terugtoets(wv, openmeteo, tuin, d, andere, tot, maanden, als_json):
     v = uit["per_vak"]
     print(f"Per vak gerekend: 'water' {pct(v['water_raak'])} terecht (blind {pct(v['blind_raak'])}), "
           f"{pct(v['gevonden_water_twijfel'])} van de giften water of twijfel ({wv.getal(v['dagen'])} vak-dagen).\n")
+    nf = uit["na_florgib"]
+    print(f"Niet getoetst: {wv.getal(nf['dagen'])} vak-dagen vanaf de Florgib (advies 'na florgib'), waarvan "
+          f"{nf['giften']} toch water kregen.\n")
     print(f"{'fase':<11}{'dagen':>7}{'giften':>8}{'water raak':>12}{'gevonden':>10}{'+twijfel':>10}")
     for naam, v in uit["fasen"].items():
         print(f"{naam:<11}{v['dagen']:>7}{v['giften']:>8}{pct(v['water_raak']):>12}{pct(v['gevonden_water']):>10}"
