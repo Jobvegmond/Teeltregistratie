@@ -59,14 +59,18 @@ class TestLogboek(unittest.TestCase):
 
 
 class TestStatusbestand(unittest.TestCase):
-    def test_dagrapport(self):
-        s = status.statusbestand('﻿{"taak": "dagrapport", "pc": "KLIMAAT", '
-                                 '"tijdstip": "2026-10-29T07:00:12+01:00", "status": "ok", "melding": "verstuurd"}')
-        self.assertEqual(s, {"moment": datetime(2026, 10, 29, 7, 0, 12), "ok": True, "melding": "verstuurd",
-                             "pc": "KLIMAAT"})
-        fout = status.statusbestand('{"tijdstip": "2026-10-29T07:00:12", "status": "fout", "melding": "SMTP weg"}')
-        self.assertFalse(fout["ok"])
-        self.assertEqual(fout["moment"], datetime(2026, 10, 29, 7, 0, 12))   # zonder zone: Nederlandse tijd
+    def test_bom_en_ongeldig(self):
+        # PowerShell 5 schrijft UTF-8 met BOM; een tijd zonder zone geldt als Nederlandse tijd.
+        s = status.statusbestand('﻿{"pc": "KLIMAAT", "syncTijdstip": "2026-10-29T07:08:13+01:00", '
+                                 '"syncStatus": "ok", "pollerStatus": "ok"}')
+        self.assertEqual(s, {"moment": datetime(2026, 10, 29, 7, 8, 13), "ok": True,
+                             "melding": "sync ok, poller ok", "pc": "KLIMAAT"})
+        zonder_zone = status.statusbestand('{"syncTijdstip": "2026-10-29T07:08:13", "syncStatus": "ok", '
+                                           '"pollerStatus": "ok"}')
+        self.assertEqual(zonder_zone["moment"], datetime(2026, 10, 29, 7, 8, 13))
+        zonder_tijd = status.statusbestand('{"syncStatus": "ok", "pollerStatus": "ok"}')
+        self.assertIsNone(zonder_tijd["moment"])
+        self.assertFalse(status.statusbestand('{"syncTijdstip": "2026-10-29T07:08:13"}')["ok"])   # status ontbreekt
         self.assertIsNone(status.statusbestand("geen json"))
         self.assertIsNone(status.statusbestand("[1, 2]"))
 
@@ -80,14 +84,44 @@ class TestStatusbestand(unittest.TestCase):
         self.assertFalse(gestopt["ok"])
         self.assertEqual(gestopt["melding"], "sync ok, poller fout, gestopt")
 
-    def test_dagrapport_schema(self):
-        # Om 08:00 moet het rapport van 07:00 er zijn; om 07:20 telt dat van gisteren nog.
-        self.assertEqual(status.kleur_volgens_schema(datetime(2026, 10, 29, 7, 1), datetime(2026, 10, 29, 8, 0),
-                                                     "dagrapport"), status.GROEN)
-        self.assertEqual(status.kleur_volgens_schema(datetime(2026, 10, 28, 7, 1), datetime(2026, 10, 29, 7, 20),
-                                                     "dagrapport"), status.GROEN)
-        self.assertEqual(status.kleur_volgens_schema(datetime(2026, 10, 28, 7, 1), datetime(2026, 10, 29, 8, 0),
-                                                     "dagrapport"), status.ORANJE)
+    def test_dagrapport_claude_taak(self):
+        # De Claude-taak is om ± 06:40 klaar; tot 07:30 telt het rapport van gisteren nog.
+        def kleur(klaar, nu):
+            return status.kleur_volgens_schema(klaar, nu, "dagrapport")
+        self.assertEqual(kleur(datetime(2026, 11, 11, 6, 37), datetime(2026, 11, 11, 8, 0)), status.GROEN)
+        self.assertEqual(kleur(datetime(2026, 11, 10, 6, 37), datetime(2026, 11, 11, 7, 11)), status.GROEN)
+        self.assertEqual(kleur(datetime(2026, 11, 10, 6, 37), datetime(2026, 11, 11, 8, 0)), status.ORANJE)
+        self.assertEqual(kleur(datetime(2026, 11, 9, 6, 38), datetime(2026, 11, 11, 8, 0)), status.ROOD)
+
+    def test_dagrapport_mail(self):
+        # De uurtaak mailt om 07:00 (met duiding) of om 09:00 (zonder, zoals in het weekend na een uit staande laptop).
+        def kleur(verstuurd, nu):
+            return status.kleur_volgens_schema(verstuurd, nu, "dagrapport_mail")
+        self.assertEqual(kleur(datetime(2026, 11, 11, 7, 1), datetime(2026, 11, 11, 7, 40)), status.GROEN)
+        self.assertEqual(kleur(datetime(2026, 11, 7, 9, 1), datetime(2026, 11, 8, 9, 30)), status.ORANJE)   # nog niet binnen
+        self.assertEqual(kleur(datetime(2026, 11, 8, 9, 1), datetime(2026, 11, 8, 9, 30)), status.GROEN)
+
+
+class TestFouten(unittest.TestCase):
+    def test_fouten_laatste_uren(self):
+        runs = status.lees_runs(UURTAAK)
+        nu = datetime(2026, 10, 29, 7, 30)
+        samen = status.fouten_laatste_uren(runs, nu)
+        self.assertEqual((samen["totaal"], samen["met_fout"]), (2, 1))        # de laatste run loopt nog en telt mee
+        self.assertEqual(samen["recent"], [(datetime(2026, 10, 29, 6, 0), ["priva_klimaat.py --tuin 1"])])
+        ver_weg = status.fouten_laatste_uren(runs, nu + timedelta(days=3))
+        self.assertEqual((ver_weg["totaal"], ver_weg["met_fout"], ver_weg["recent"]), (0, 0, []))
+
+    def test_logboek_zonder_klaar_regel(self):
+        runs = status.lees_runs(PRIVA)
+        samen = status.fouten_laatste_uren(runs, datetime(2026, 10, 29, 7, 0))
+        self.assertEqual((samen["totaal"], samen["met_fout"]), (2, 1))
+        self.assertIn("FOUT bij ophalen", samen["recent"][0][1][0])
+
+    def test_hint_bij_deadlock(self):
+        self.assertIn("uurtaak", status.hint("[11-11-26 05:00] FOUT bij het opstarten: deadlock detected"))
+        self.assertIsNone(status.hint("FOUT: geen klimaatmetingen"))
+        self.assertIsNone(status.hint(None))
 
 
 class TestKleur(unittest.TestCase):

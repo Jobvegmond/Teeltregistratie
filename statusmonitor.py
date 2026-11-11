@@ -10,12 +10,9 @@ Alles wordt alleen gelezen:
 
 De pagina draait alleen op deze laptop (127.0.0.1), van buitenaf is hij niet bereikbaar. Hij ververst elke minuut.
 
-Dagrapport-mail van de klimaat-pc: die taak draait op een andere pc en is van hieruit niet te zien. Daarom zet de
-taak na het versturen zelf een statusbestand `dagrapport-status.json` in \\\\192.168.0.197\\Priva (of in de map
-waar die pc al naartoe kopieert, zie DAGRAPPORT_MAPPEN), gelukt of niet:
-    {"taak": "dagrapport", "pc": "KLIMAAT", "tijdstip": "2026-10-29T07:00:12+01:00", "status": "ok",
-     "melding": "verstuurd"}
-Bij een fout: "status": "fout" en de foutmelding in "melding". Groen als het bestand van na 7 uur vandaag is.
+Het dagrapport loopt zo: de Claude-taak "Dagrapport teelt" op deze laptop (06:30) zet het rapport klaar in
+`agro4all\\rapporten` op de NAS, en de uurtaak mailt het (zonder duiding om 9 uur). De monitor kijkt naar dat
+bestand, naar de uurtaak en naar de tabellen rapport en mail_log in Supabase.
 Rekenwerk (logboeken lezen, kleuren) in logic/status.py; de pagina zelf in status/pagina.html.
 
 Gebruik (of dubbelklik op "Status teeltregistratie.cmd", ook als kopie op het bureaublad):
@@ -49,9 +46,8 @@ LOGS = PROJECT / "logs"
 AGRO4ALL = PROJECT / "agro4all"
 PRIVA = Path(NAS + r"\Priva")
 BACKUP = Path(NAS + r"\backup\postgres")
-# Waar de dagrapport-taak zijn statusbestand mag zetten: de share Priva zelf, of de map waar de klimaat-pc al naartoe
-# kopieert.
-DAGRAPPORT_MAPPEN = (PRIVA, PRIVA / "bron live", PRIVA / "bron historie" / "Tuin 1")
+RAPPORTEN = AGRO4ALL / "rapporten"      # waar de Claude-taak "Dagrapport teelt" zijn rapport klaarzet
+NAS_CONFIG = PROJECT / "config.py"      # de versie van de app op de NAS staat hierin
 NAS_APP = "http://192.168.0.197:8501/_stcore/health"
 RENDER = APP_URL.rstrip("/") + "/_stcore/health"
 
@@ -67,10 +63,12 @@ UUR_STAPPEN = {
     "uur.logboek": ["klimaatregistratie_import.py"],
     "uur.pats": ["pats_import.py"],
     "uur.rapport": ["teelt_rapport.py"],
+    "uur.dagrapport": ["dagrapport.py"],
 }
 UUR_NAMEN = {"uur.pulsmeters": "warmte en gas", "uur.watergift": "watergift per vak",
              "uur.klimaat": "klimaat per uur en dag", "uur.agro4all": "behandelingen",
-             "uur.logboek": "teeltlogboek", "uur.pats": "vangplaten", "uur.rapport": "mail Teelt afgerond"}
+             "uur.logboek": "teeltlogboek", "uur.pats": "vangplaten", "uur.rapport": "mail Teelt afgerond",
+             "uur.dagrapport": "dagrapport mailen"}
 
 GROEPEN = ("Werklaptop", "Bronnen", "NAS", "Cloud", "Gebruikers")
 
@@ -103,6 +101,30 @@ def staart(pad, grootte=300_000):
             return f.read().decode("utf-8", errors="replace")
     except OSError:
         return ""
+
+
+def hints(regels):
+    """De uitleg bij bekende foutmeldingen in `regels`, zonder dubbele."""
+    return list(dict.fromkeys(h for h in (st.hint(r) for r in regels) if h))
+
+
+def fouten_regel(runs, nu, uren):
+    """Eén regel over de runs met een fout in de laatste `uren`, of None als die er niet waren."""
+    samen = st.fouten_laatste_uren(runs, nu, uren)
+    if not samen["met_fout"]:
+        return None
+    wanneer = ", ".join(f"{start:%d-%m %H:%M}" for start, _ in samen["recent"][-4:])
+    periode = f"{uren // 24} dagen" if uren >= 48 else f"{uren} uur"
+    return f"Laatste {periode}: {samen['met_fout']} van {samen['totaal']} runs met een fout ({wanneer})"
+
+
+def nas_versie():
+    """(versie, moment van uitrol) van de app op de NAS uit zijn config.py, of None."""
+    try:
+        match = re.search(r'^APP_VERSIE\s*=\s*"([^"]+)"', NAS_CONFIG.read_text(encoding="utf-8"), re.M)
+    except OSError:
+        return None
+    return (match.group(1), gewijzigd(NAS_CONFIG)) if match else None
 
 
 def lees_statusbestand(pad):
@@ -159,14 +181,15 @@ def controleer_nas(nu):
     if not os.path.isdir(LOGS):
         reden = "NAS niet bereikbaar: staat de VPN aan?"
         ids = [("laptop.agro4all", "Claude-taak Agro4all", "Werklaptop"),
+               ("laptop.dagrapport", "Claude-taak Dagrapport teelt", "Werklaptop"),
                ("laptop.logboek", "Teeltlogboek → JSON", "Werklaptop"),
                ("bron.priva3", "Priva-pc tuin 3", "Bronnen"), ("bron.priva1", "Priva-pc tuin 1", "Bronnen"),
-               ("bron.api", "Priva Horti API", "Bronnen"), ("kas.dagrapport", "Dagrapport-mail", "Bronnen"),
-               ("nas.share", "Share Priva", "NAS"),
+               ("bron.api", "Priva Horti API", "Bronnen"), ("nas.share", "Share Priva", "NAS"),
                ("nas.agro", "Map agro4all", "NAS"), ("nas.uurtaak", "Uurtaak", "NAS"),
                ("nas.api", "API-taak", "NAS"), ("nas.prognose", "Prognose loggen", "NAS"),
+               ("nas.kopie", "Kopie productie naar NAS", "NAS"),
                ("nas.db", "vemteelt-db", "NAS"), ("nas.backup", "Back-up op HDD", "NAS"),
-               ("nas.bouwen", "Image bouwen", "NAS"), ("cloud.m365", "Mail Teelt afgerond", "Cloud")]
+               ("nas.bouwen", "Image bouwen", "NAS"), ("cloud.mail", "Mail via Graph", "Cloud")]
         uit = [onderdeel(i, n, g, st.GRIJS, nu, kort="niet bereikbaar", details=[reden]) for i, n, g in ids]
         uit += [onderdeel(i, UUR_NAMEN[i], "NAS", st.GRIJS, nu, kort="") for i in UUR_STAPPEN]
         return uit, False
@@ -185,7 +208,11 @@ def controleer_nas(nu):
         kleur = st.ROOD
         kort = f"fout {afgerond['start']:%H:%M}"
         details.append(f"Run van {st.leeftijd_tekst(afgerond['start'], nu)} klaar met code {afgerond['code']}")
-        details += afgerond["fouten"][-5:]
+        details += afgerond["fouten"][-5:] + hints(afgerond["fouten"])
+    samen = st.fouten_laatste_uren(runs, nu)
+    if samen["met_fout"]:
+        details.append(fouten_regel(runs, nu, 24))
+        details += [f"{st.leeftijd_tekst(start, nu)}: {', '.join(scripts)[:160]}" for start, scripts in samen["recent"][-4:]]
     if laatste and laatste["code"] is None and nu - laatste["start"] < timedelta(minutes=15):
         kort = f"bezig sinds {laatste['start']:%H:%M}"
         details.append(f"Run van {laatste['start']:%H:%M} loopt nog")
@@ -230,22 +257,18 @@ def controleer_nas(nu):
         uit.append(onderdeel(f"bron.priva{tuin}", f"Priva-pc tuin {tuin}", "Bronnen", kleur, nu, moment,
                              details=details))
 
-    # De dagrapport-mail van de klimaat-pc: die zet na het versturen zelf een statusbestand op de share Priva.
-    gevonden = [(pad, lees_statusbestand(pad)) for map_ in DAGRAPPORT_MAPPEN if os.path.isdir(map_)
-                for pad in map_.glob("dagrapport-status*.json")]
-    # Staan er meer (bijv. één per klimaat-pc), dan telt het nieuwste.
-    gevonden = sorted(((pad, s) for pad, s in gevonden if s), key=lambda g: g[1]["moment"] or datetime.min)[-1:]
-    if not gevonden:
-        uit.append(onderdeel("kas.dagrapport", "Dagrapport-mail", "Bronnen", st.GRIJS, nu, kort="nog niet gemeten",
-                             details=["Elke dag om 7 uur vanaf de klimaat-pc",
-                                      r"Nog geen dagrapport-status.json in \\192.168.0.197\Priva; "
-                                      "zie de uitleg bovenaan statusmonitor.py"]))
-    for pad, s in gevonden:
-        kleur = st.kleur_volgens_schema(s["moment"], nu, "dagrapport") if s["ok"] else st.ROOD
-        uit.append(onderdeel("kas.dagrapport", "Dagrapport-mail", "Bronnen", kleur, nu, s["moment"],
-                             kort=None if s["ok"] else f"fout {st.leeftijd_tekst(s['moment'], nu)}",
-                             details=[f"Elke dag om 7 uur vanaf {s['pc'] or 'de klimaat-pc'}", s["melding"],
-                                      f"Statusbestand: {pad.name}"]))
+    # De Claude-taak "Dagrapport teelt" (laptop, 06:30): zijn rapport staat in agro4all\rapporten.
+    try:
+        nieuwste = max(RAPPORTEN.glob("rapport-*-dag.json"), default=None)    # de datum staat in de naam
+    except OSError:
+        nieuwste = None
+    klaar = gewijzigd(nieuwste) if nieuwste else None
+    uit.append(onderdeel("laptop.dagrapport", "Claude-taak Dagrapport teelt", "Werklaptop",
+                         st.kleur_volgens_schema(klaar, nu, "dagrapport"), nu, klaar,
+                         details=[f"Nieuwste rapport op de NAS: {nieuwste.name if nieuwste else 'geen'} "
+                                  f"({st.leeftijd_tekst(klaar, nu)})",
+                                  "Elke ochtend 06:30, alleen als de laptop aan staat. Komt er niets, dan mailt de "
+                                  "NAS om 9 uur de cijfers zonder duiding"]))
 
     # Map agro4all en de Claude-taak die de export schrijft.
     export = gewijzigd(AGRO4ALL / "registraties.json")
@@ -259,23 +282,28 @@ def controleer_nas(nu):
                          details=[f"Laatst omgezet: {st.leeftijd_tekst(logboek, nu)} (met de hand)"]))
     kleur = st.ergste([stappen["uur.agro4all"], stappen["uur.logboek"], st.GROEN if export else st.ROOD])
     uit.append(onderdeel("nas.agro", "Map agro4all", "NAS", kleur, nu, export,
-                         details=["Ingelezen door de uurtaak (behandelingen en teeltlogboek)"]))
+                         details=["Ingelezen door de uurtaak: behandelingen, teeltlogboek en klaargezette rapporten",
+                                  f"Map rapporten: {nieuwste.name if nieuwste else 'geen'} "
+                                  f"({st.leeftijd_tekst(klaar, nu)})"]))
 
     # API-taak (priva_ophalen.py) en de Priva-API zelf.
     runs = st.lees_runs(staart(LOGS / "priva.log"))
     gelukt = st.laatste_gelukte(runs)
     laatste = runs[-1] if runs else None
-    kleur = st.kleur_volgens_schema(gelukt["start"] if gelukt else None, nu, "api")
+    fout = bool(laatste and laatste["fouten"])
+    kleur = st.ROOD if fout else st.kleur_volgens_schema(gelukt["start"] if gelukt else None, nu, "api")
     regels = [r.strip() for r in (laatste["regels"] if laatste else []) if r.strip()]
-    uit.append(onderdeel("nas.api", "API-taak", "NAS", st.ROOD if laatste and laatste["fouten"] else kleur, nu,
-                         gelukt["start"] if gelukt else None,
-                         f"fout {laatste['start']:%H:%M}" if laatste and laatste["fouten"] else None,
-                         ["Om 6, 12 en 18 u"] + regels[-4:]))
+    uit.append(onderdeel("nas.api", "API-taak", "NAS", kleur, nu, gelukt["start"] if gelukt else None,
+                         f"fout {laatste['start']:%H:%M}" if fout else None,
+                         ["Om 6, 12 en 18 u", fouten_regel(runs, nu, 168)] + regels[-4:]
+                         + hints(laatste["fouten"] if fout else [])))
+    # Een taak die al bij het opstarten omvalt heeft de Priva-API niet eens aangeroepen.
+    niet_bereikt = fout and all("bij het opstarten" in f for f in laatste["fouten"])
     uit.append(onderdeel("bron.api", "Priva Horti API", "Bronnen",
-                         st.ROOD if laatste and laatste["fouten"] else (st.GROEN if laatste else st.GRIJS), nu,
-                         laatste["start"] if laatste else None,
-                         details=(laatste["fouten"][-3:] if laatste and laatste["fouten"]
-                                  else ["Laatste ophaalronde zonder fouten"])))
+                         st.GRIJS if niet_bereikt else (st.ROOD if fout else (st.GROEN if laatste else st.GRIJS)),
+                         nu, laatste["start"] if laatste else None, "niet bereikt" if niet_bereikt else None,
+                         details=(["De API-taak viel om vóór hij de API aanriep"] if niet_bereikt
+                                  else laatste["fouten"][-3:] if fout else ["Laatste ophaalronde zonder fouten"])))
 
     # Prognose loggen, kopie naar de NAS, image bouwen.
     for id_, naam, logboek_, taak, uitleg in (
@@ -290,7 +318,8 @@ def controleer_nas(nu):
         regels = [r.strip() for r in (laatste["regels"] if laatste else []) if r.strip() and not r.startswith("#")]
         uit.append(onderdeel(id_, naam, "NAS", kleur, nu, gelukt["start"] if gelukt else None,
                              f"fout {laatste['start']:%H:%M}" if fout else None,
-                             [uitleg] + [r[:200] for r in regels[-3:]]))
+                             [uitleg, fouten_regel(runs, nu, 336)] + [r[:200] for r in regels[-3:]]
+                             + hints(laatste["fouten"] if fout else [])))
 
     # Back-up: het nieuwste bestand in backup/postgres.
     try:
@@ -304,13 +333,17 @@ def controleer_nas(nu):
                          details=[f"{pad.name}: {grootte // 1024} kB" if pad else "Geen back-up gevonden",
                                   "Elke nacht om 2 u, 30 dagen bewaard"]))
 
-    # Microsoft 365: de mailstap van de uurtaak.
-    rapport = st.stap(afgerond, "teelt_rapport.py")[1]
-    uit.append(onderdeel("cloud.m365", "Mail Teelt afgerond", "Cloud", stappen["uur.rapport"], nu,
+    # Mail: alle rapporten gaan via Microsoft Graph (klimaat@tanacetum.nl) en worden door de uurtaak verstuurd.
+    # Een "LET OP"-regel in de laatste run waarschuwt dat het Graph-geheim bijna verloopt.
+    waarschuwingen = [r.strip() for r in (afgerond["regels"] if afgerond else []) if "LET OP" in r]
+    kleur = st.ergste([stappen["uur.rapport"], stappen["uur.dagrapport"]] + ([st.ORANJE] if waarschuwingen else []))
+    uit.append(onderdeel("cloud.mail", "Mail via Graph", "Cloud", kleur, nu,
                          afgerond["start"] if afgerond else None,
-                         details=["teelt_rapport.py kijkt elk uur in de uurtaak of het laatste vak van een plantweek "
-                                  "geoogst is en mailt dan via Microsoft 365 naar info@",
-                                  f"Laatste controle: {rapport}"]))
+                         details=["Verstuurd door de uurtaak: Teelt afgerond naar info@, dagrapport naar job@ en "
+                                  "weekrapport (maandag) naar info@",
+                                  f"Teelt afgerond (laatste controle): {st.stap(afgerond, 'teelt_rapport.py')[1]}",
+                                  f"Dagrapport (laatste controle): {st.stap(afgerond, 'dagrapport.py')[1]}"]
+                         + waarschuwingen))
     return uit, True
 
 
@@ -351,8 +384,15 @@ def controleer_supabase(nu):
                       "max(tijdstip), count(*) FILTER (WHERE tijdstip > now() - interval '1 day') "
                       "FROM wijzigingenlog WHERE gebruiker IS NOT NULL AND gebruiker NOT LIKE 'priva-%%' "
                       "GROUP BY 1",
-            "mail": "SELECT plantweek, verstuurd_op, (SELECT count(*) FROM teelt_rapport WHERE verstuurd_op IS NOT NULL) "
-                    "FROM teelt_rapport WHERE verstuurd_op IS NOT NULL ORDER BY verstuurd_op DESC LIMIT 1",
+            # Elke mailpoging staat in mail_log; het nieuwste per soort, en de mislukte van de laatste 7 dagen.
+            "mail": "SELECT DISTINCT ON (soort) soort, sleutel, status, tijdstip, weg, left(coalesce(melding, ''), 120) "
+                    "FROM mail_log ORDER BY soort, tijdstip DESC",
+            "mail_fouten": "SELECT soort, count(*) FROM mail_log WHERE status = 'fout' "
+                           "AND tijdstip > now() - interval '7 days' GROUP BY soort",
+            # De verstuurde dag- en weekrapporten, en of er een duiding van Claude bij zat.
+            "rapport": "SELECT sleutel, soort, verstuurd_op, duiding IS NOT NULL FROM rapport "
+                       "WHERE verstuurd_op IS NOT NULL ORDER BY verstuurd_op DESC LIMIT 8",
+            "feedback": "SELECT count(*), max(tijdstip) FROM rapport_feedback",
             "water": "SELECT max(datum) FROM watergift_dag WHERE bron = 'priva-vandaag'",
         })
     except Exception as fout:
@@ -377,6 +417,34 @@ def controleer_http(nu):
         uit.append(onderdeel(id_, naam, groep, st.GROEN if ok else st.ROOD, nu, nu if ok else None,
                              kort="draait" if ok else "plat", details=[url, tekst]))
     return uit
+
+
+def _mail_uit_supabase(o, rijen, nu):
+    """Zet in het kader Mail via Graph wat mail_log en rapport zeggen: laatste mail, fouten, dagrapport met duiding."""
+    namen = {"dagrapport": "Dag- en weekrapport", "teelt_rapport": "Teelt afgerond"}
+    laatste = []
+    for soort, sleutel, status, tijdstip, weg, melding in rijen["mail"]:
+        tijdstip = st.utc_naar_nl(tijdstip)
+        laatste.append(tijdstip)
+        o["details"].append(f"{namen.get(soort, soort)}: laatste mail {sleutel}, {status}, "
+                            f"{st.leeftijd_tekst(tijdstip, nu)} via {weg}" + (f" ({melding})" if melding else ""))
+        if status == "fout":
+            o["kleur"] = st.ROOD
+    if rijen["mail_fouten"]:
+        o["details"].append("Mislukte pogingen in de laatste 7 dagen: "
+                            + ", ".join(f"{namen.get(s, s)} {n}×" for s, n in rijen["mail_fouten"]))
+
+    dag = next(((s, v, d) for s, soort, v, d in rijen["rapport"] if soort == "dag"), None)
+    week = next(((s, v, d) for s, soort, v, d in rijen["rapport"] if soort == "week"), None)
+    for naam, rapport in (("dagrapport", dag), ("weekrapport", week)):
+        if rapport:
+            sleutel, verstuurd, duiding = rapport
+            o["details"].append(f"Laatste {naam} {sleutel}: verstuurd {st.leeftijd_tekst(st.utc_naar_nl(verstuurd), nu)}, "
+                                f"{'met' if duiding else 'zonder'} duiding van Claude")
+    if dag and o["kleur"] != st.GRIJS:
+        o["kleur"] = st.ergste([o["kleur"], st.kleur_volgens_schema(st.utc_naar_nl(dag[1]), nu, "dagrapport_mail")])
+    if laatste and o["kleur"] == st.GROEN:
+        o["kort"] = f"laatste mail {st.leeftijd_tekst(max(laatste), nu)}"
 
 
 def verfijn_met_data(onderdelen, data, nu):
@@ -419,17 +487,14 @@ def verfijn_met_data(onderdelen, data, nu):
                                     details=[f"Laatste wijziging aan {wat}: {st.leeftijd_tekst(moment, nu)}",
                                              f"{aantal} in de laatste 24 uur",
                                              "Een indeling naar soort invoer, niet naar apparaat"])
+        aantal, laatste = rijen["feedback"][0]
+        per_id["gebruiker.kantoor"]["details"].append(
+            f"Feedback op rapporten: {aantal}" + (f", laatste {st.leeftijd_tekst(st.utc_naar_nl(laatste), nu)}"
+                                                   if laatste else ""))
 
-        o = per_id.get("cloud.m365")
-        if o and rijen["mail"]:
-            plantweek, verstuurd, aantal = rijen["mail"][0]
-            verstuurd = st.utc_naar_nl(verstuurd)
-            if o["kleur"] == st.GROEN:
-                o["kort"] = f"laatste mail {verstuurd:%d-%m}"
-            o["details"] += [f"Laatste mail: plantweek {plantweek}, verstuurd {st.leeftijd_tekst(verstuurd, nu)}",
-                             f"{aantal} rapporten verstuurd sinds 20-10-2026"]
-        elif o:
-            o["details"].append("Nog geen rapport verstuurd")
+        o = per_id.get("cloud.mail")
+        if o:
+            _mail_uit_supabase(o, rijen, nu)
     else:
         for id_, naam, groep in (("bron.pats", "PATS", "Bronnen"), ("bron.agro4all", "Agro4all", "Bronnen"),
                                  ("gebruiker.kantoor", "Browser op kantoor", "Gebruikers"),
@@ -478,10 +543,17 @@ def controleer():
             onderdelen += controleer_nas_database(nu, kopie)
         except Exception as fout:
             onderdelen.append(onderdeel("nas.db", "vemteelt-db", "NAS", st.ROOD, nu, details=[str(fout)]))
+        versie, app = nas_versie(), next((o for o in onderdelen if o["id"] == "nas.app"), None)
+        if app and versie:
+            app["details"].append(f"Versie {versie[0]}, uitgerold {st.leeftijd_tekst(versie[1], nu)}")
+            if app["kleur"] == st.GROEN:
+                app["kort"] = f"draait · {versie[0]}"
     onderdelen = verfijn_met_data(onderdelen, data, nu)
-    onderdelen.append(onderdeel("laptop.takenlijst", "Claude-taak Takenlijst", "Werklaptop", st.GRIJS, nu,
+    onderdelen.append(onderdeel("laptop.takenlijst", "Claude-taak Takenlijst-app", "Werklaptop", st.GRIJS, nu,
                                 kort="niet gemeten",
-                                details=["De Claude-app houdt de runs zelf bij; zie Geplande taken in de app"]))
+                                details=["Elke ochtend 07:10: werkplanning en wateradvies van tuin 3 en de "
+                                         "Agro4all-plannen in de Takenlijst van app.jobvanegmond.com",
+                                         "De Claude-app houdt de runs zelf bij; zie Geplande taken in de app"]))
     onderdelen.sort(key=lambda o: (GROEPEN.index(o["groep"]), st.ERNST[o["kleur"]], o["naam"]))
     return {"gecontroleerd": datetime.now().isoformat(timespec="seconds"), "nas_bereikbaar": nas_ok,
             "onderdelen": onderdelen}

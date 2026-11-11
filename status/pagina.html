@@ -142,8 +142,9 @@ td.groep { color: var(--muted); }
 
         <!-- Pijlen eerst, zodat de kaders erbovenop liggen -->
         <path class="lijn" d="M120 170 V104" marker-end="url(#pijl)"/>
-        <path class="lijn" d="M210 74 H330 V168" marker-end="url(#pijl)"/>
-        <path class="lijn" d="M420 102 V168" marker-end="url(#pijl)"/>
+        <path class="lijn" d="M210 74 H310 V168" marker-end="url(#pijl)"/>
+        <path class="lijn" d="M370 102 V168" marker-end="url(#pijl)"/>
+        <path class="lijn" d="M600 102 V122 H410 V168" marker-end="url(#pijl)"/>
         <path class="lijn" d="M210 288 H288" marker-end="url(#pijl)"/>
         <path class="lijn" d="M210 358 H288" marker-end="url(#pijl)"/>
         <path class="lijn" d="M440 202 H498" marker-end="url(#pijl)"/>
@@ -154,7 +155,7 @@ td.groep { color: var(--muted); }
         <path class="lijn" d="M650 270 H888" marker-end="url(#pijl)"/>
         <text class="label" x="770" y="262" text-anchor="middle">schrijft naar productie</text>
         <path class="lijn" d="M650 192 H888" marker-end="url(#pijl)"/>
-        <text class="label" x="770" y="184" text-anchor="middle">rapport Teelt afgerond</text>
+        <text class="label" x="770" y="184" text-anchor="middle">mail: rapporten</text>
         <path class="lijn" d="M975 332 V408" marker-start="url(#pijl)" marker-end="url(#pijl)"/>
         <path class="lijn" d="M1060 436 H1080 V424 H1098" marker-start="url(#pijl)" marker-end="url(#pijl)"/>
         <path class="lijn" d="M1060 464 H1080 V494 H1098" marker-start="url(#pijl)" marker-end="url(#pijl)"/>
@@ -167,10 +168,12 @@ td.groep { color: var(--muted); }
         <!-- Kaders: data-id = het onderdeel uit /status.json; .st krijgt de korte status -->
         <g class="vak" data-id="laptop.agro4all" tabindex="0" role="button"><rect x="30" y="46" width="180" height="56" rx="5"/>
           <text class="t" x="44" y="68">Claude-taak Agro4all</text><text class="st" x="44" y="88">…</text></g>
-        <g class="vak" data-id="laptop.logboek" tabindex="0" role="button"><rect x="400" y="46" width="170" height="56" rx="5"/>
-          <text class="t" x="414" y="68">Teeltlogboek → JSON</text><text class="st" x="414" y="88">…</text></g>
+        <g class="vak" data-id="laptop.logboek" tabindex="0" role="button"><rect x="340" y="46" width="170" height="56" rx="5"/>
+          <text class="t" x="354" y="68">Teeltlogboek → JSON</text><text class="st" x="354" y="88">…</text></g>
+        <g class="vak" data-id="laptop.dagrapport" tabindex="0" role="button"><rect x="540" y="46" width="180" height="56" rx="5"/>
+          <text class="t" x="554" y="68">Dagrapport teelt</text><text class="st" x="554" y="88">…</text></g>
         <g class="vak" data-id="laptop.takenlijst" tabindex="0" role="button"><rect x="1100" y="46" width="160" height="56" rx="5"/>
-          <text class="t" x="1114" y="68">Claude-taak Takenlijst</text><text class="st" x="1114" y="88">…</text></g>
+          <text class="t" x="1114" y="68">Takenlijst-app</text><text class="st" x="1114" y="88">…</text></g>
 
         <g class="vak" data-id="bron.agro4all" tabindex="0" role="button"><rect x="30" y="170" width="180" height="56" rx="5"/>
           <text class="t" x="44" y="192">Agro4all</text><text class="st" x="44" y="212">…</text></g>
@@ -182,11 +185,10 @@ td.groep { color: var(--muted); }
           <text class="t" x="44" y="442">PATS</text><text class="st" x="44" y="462">…</text></g>
         <g class="vak" data-id="bron.api" tabindex="0" role="button"><rect x="30" y="520" width="180" height="56" rx="5"/>
           <text class="t" x="44" y="542">Priva Horti API</text><text class="st" x="44" y="562">…</text></g>
-        <g class="vak" data-id="kas.dagrapport" tabindex="0" role="button"><rect x="30" y="600" width="180" height="56" rx="5"/>
-          <text class="t" x="44" y="622">Dagrapport-mail</text><text class="st" x="44" y="642">…</text></g>
 
         <g class="vak" data-id="nas.agro" tabindex="0" role="button"><rect x="290" y="170" width="150" height="64" rx="5"/>
-          <text class="t" x="304" y="194">Map agro4all</text><text class="st" x="304" y="214">…</text></g>
+          <text class="t" x="304" y="194">Map agro4all</text><text class="st" x="304" y="212">…</text>
+          <text class="m" x="304" y="227">met rapporten</text></g>
         <g class="vak" data-id="nas.share" tabindex="0" role="button"><rect x="290" y="260" width="150" height="130" rx="5"/>
           <text class="t" x="304" y="284">Share Priva</text><text class="st" x="304" y="306">…</text></g>
 
@@ -200,7 +202,8 @@ td.groep { color: var(--muted); }
           <circle class="stip" data-id="uur.logboek" cx="518" cy="352" r="4.5"/><text class="lijst" x="530" y="356">teeltlogboek</text>
           <circle class="stip" data-id="uur.pats" cx="518" cy="374" r="4.5"/><text class="lijst" x="530" y="378">vangplaten</text>
           <circle class="stip" data-id="uur.rapport" cx="518" cy="396" r="4.5"/><text class="lijst" x="530" y="400">mail Teelt afgerond</text>
-          <text class="st" x="514" y="440">stippen: laatste run</text></g>
+          <circle class="stip" data-id="uur.dagrapport" cx="518" cy="418" r="4.5"/><text class="lijst" x="530" y="422">dagrapport mailen</text>
+          <text class="st" x="514" y="458">stippen: laatste run</text></g>
         <g class="vak" data-id="nas.api" tabindex="0" role="button"><rect x="500" y="520" width="150" height="56" rx="5"/>
           <text class="t" x="514" y="542">API-taak</text><text class="st" x="514" y="562">…</text></g>
         <g class="vak" data-id="nas.prognose" tabindex="0" role="button"><rect x="500" y="592" width="150" height="56" rx="5"/>
@@ -213,8 +216,8 @@ td.groep { color: var(--muted); }
         <g class="vak" data-id="nas.backup" tabindex="0" role="button"><rect x="690" y="540" width="160" height="56" rx="5"/>
           <text class="t" x="704" y="562">Back-up op HDD</text><text class="st" x="704" y="582">…</text></g>
 
-        <g class="vak" data-id="cloud.m365" tabindex="0" role="button"><rect x="890" y="164" width="170" height="56" rx="5"/>
-          <text class="t" x="904" y="186">Mail Teelt afgerond</text><text class="st" x="904" y="206">…</text></g>
+        <g class="vak" data-id="cloud.mail" tabindex="0" role="button"><rect x="890" y="164" width="170" height="56" rx="5"/>
+          <text class="t" x="904" y="186">Mail via Graph</text><text class="st" x="904" y="206">…</text></g>
         <g class="vak" data-id="cloud.supabase" tabindex="0" role="button"><rect x="890" y="240" width="170" height="90" rx="5"/>
           <text class="t" x="904" y="264">Supabase</text><text class="st" x="904" y="284">…</text>
           <text class="m" x="904" y="312">productiedatabase</text></g>

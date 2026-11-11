@@ -38,10 +38,12 @@ SCHEMA = {
     "backup": ((2,), False),                    # DSM: nas_backup_database.sh
     "bouwen": ((0,), False),                    # DSM: app-image bijwerken (vangnet; op aanvraag tussendoor)
     "agro4all": ((7, 12, 17), True),            # Claude-taak op de werklaptop, alleen als die aan staat
-    "dagrapport": ((7,), False),                # dagrapport-mail van de klimaat-pc
+    "dagrapport": ((6,), False),                # Claude-taak "Dagrapport teelt" op de werklaptop (06:30, klaar ± 06:40)
+    "dagrapport_mail": ((7,), False),           # de uurtaak mailt het klaargezette rapport (zonder duiding om 9 u)
 }
 # Zoveel ruimte krijgt een taak na het geplande moment voordat hij als gemist telt (looptijd, jitter van Claude).
-SPELING = {"uurtaak": timedelta(minutes=10), "agro4all": timedelta(minutes=30), "dagrapport": timedelta(minutes=30)}
+SPELING = {"uurtaak": timedelta(minutes=10), "agro4all": timedelta(minutes=30),
+           "dagrapport": timedelta(minutes=90), "dagrapport_mail": timedelta(minutes=120)}
 STANDAARD_SPELING = timedelta(minutes=20)
 
 _KOP = re.compile(r"^--- (\d\d-\d\d-\d\d \d\d:\d\d) (.*)$")
@@ -104,14 +106,10 @@ def utc_naar_nl(moment):
 
 def statusbestand(tekst):
     """
-    Een statusbestand dat een pc zelf op de NAS zet, als {moment, ok, melding, pc}, of None als het geen geldig
-    bestand is. Twee vormen:
-    - sync-status.json van de klimaat-pc van tuin 1:
+    sync-status.json, het statusbestand dat de klimaat-pc van tuin 1 zelf op de NAS zet, als
+    {moment, ok, melding, pc}, of None als het geen geldig bestand is:
       {"pc": "KLIMAAT", "syncTijdstip": "2026-10-29T07:08:13+01:00", "syncStatus": "ok", "pollerStatus": "ok",
        "stop": false}
-    - dagrapport-status.json van de dagrapport-taak:
-      {"taak": "dagrapport", "pc": "KLIMAAT", "tijdstip": "2026-10-29T07:00:12+01:00", "status": "ok",
-       "melding": "verstuurd"}  (status "fout" met de foutmelding in melding)
     `moment` is Nederlandse tijd; een tijd zonder zone geldt als Nederlandse tijd.
     """
     import json
@@ -121,19 +119,15 @@ def statusbestand(tekst):
         return None
     if not isinstance(gegevens, dict):
         return None
-    tijd = gegevens.get("tijdstip") or gegevens.get("syncTijdstip")
     try:
-        moment = datetime.fromisoformat(tijd)
+        moment = datetime.fromisoformat(gegevens.get("syncTijdstip"))
         moment = utc_naar_nl(moment) if moment.tzinfo else moment
     except (TypeError, ValueError):
         moment = None
-    statussen = [gegevens[k] for k in ("status", "syncStatus", "pollerStatus") if k in gegevens]
-    ok = bool(statussen) and all(str(s).lower() == "ok" for s in statussen) and not gegevens.get("stop")
-    melding = gegevens.get("melding") or ", ".join(
-        f"{k[:-6] or 'status'} {gegevens[k]}" for k in ("syncStatus", "pollerStatus") if k in gegevens)
-    if gegevens.get("stop"):
-        melding += ", gestopt"
-    return {"moment": moment, "ok": ok, "melding": melding or str(statussen), "pc": gegevens.get("pc")}
+    statussen = {"sync": gegevens.get("syncStatus"), "poller": gegevens.get("pollerStatus")}
+    ok = all(str(s).lower() == "ok" for s in statussen.values()) and not gegevens.get("stop")
+    melding = ", ".join(f"{naam} {s}" for naam, s in statussen.items()) + (", gestopt" if gegevens.get("stop") else "")
+    return {"moment": moment, "ok": ok, "melding": melding, "pc": gegevens.get("pc")}
 
 
 def lees_runs(tekst):
@@ -210,6 +204,28 @@ def laatste_gelukte(runs):
     for run in reversed(runs):
         if run["code"] == 0 or (run["code"] is None and not run["fouten"] and run["regels"]):
             return run
+    return None
+
+
+def fouten_laatste_uren(runs, nu, uren=24):
+    """
+    Hoeveel runs van de laatste `uren` met een fout eindigden: {"totaal", "met_fout", "recent"}, met
+    recent = [(start, scripts)] van de runs met een fout, oudste eerst. `scripts` komt uit "FOUT in:" (de uurtaak),
+    anders staat de eerste foutregel erin. Een run telt mee als hij klaar is of regels heeft; een logboek zonder
+    "klaar met code" (priva.log) telt een run met een foutregel als fout.
+    """
+    sinds = nu - timedelta(hours=uren)
+    recente = [r for r in runs if r["start"] >= sinds and (r["code"] is not None or r["regels"])]
+    fout = [r for r in recente if r["fouten"] or r["code"] not in (None, 0)]
+    return {"totaal": len(recente), "met_fout": len(fout),
+            "recent": [(r["start"], r["fout_in"] or r["fouten"][:1]) for r in fout]}
+
+
+def hint(melding):
+    """Een uitleg bij een bekende foutmelding, of None."""
+    if "deadlock" in (melding or "").lower():
+        return ("Deadlock in de database: de taak startte waarschijnlijk op hetzelfde moment als de uurtaak; "
+                "beide passen bij het opstarten de database aan en blokkeren elkaar. De volgende run lukt meestal weer.")
     return None
 
 
