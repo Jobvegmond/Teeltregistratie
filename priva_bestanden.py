@@ -1,6 +1,6 @@
 """
 Alle imports uit de bestanden op de NAS achter elkaar: uit de Priva-bestanden de pulsmeters (warmte en gas),
-de watergift en het klimaat per uur, voor elke tuin in config.PRIVA_BESTANDEN (tuin 3 en tuin 1), en de behandelingen uit de Agro4all-export en de historie uit de
+de watergift en het klimaat per uur (en eens per dag de gietbeurten en EC/pH naast de API), voor elke tuin in config.PRIVA_BESTANDEN (tuin 3 en tuin 1), en de behandelingen uit de Agro4all-export en de historie uit de
 klimaatregistratie (klimaatregistratie-tuin*.json in de map agro4all) en de vangplaattellingen van PATS
 (pats_import.py, via internet). Eén taak in de Synology
 Taakplanner hoeft zo niet bij elke nieuwe import aangepast te worden.
@@ -24,6 +24,8 @@ from pathlib import Path
 # vóór de eerste Agro4all-behandeling. De rapporten ("Teelt afgerond", het dagrapport) als laatste, met alle data van
 # dit uur erin.
 PRIVA_SCRIPTS = ("priva_pulsmeters.py", "priva_watergift.py", "priva_klimaat.py")
+# Gietbeurten en EC/pH uit de bestanden naast de API leggen: eens per dag, na de ochtendronde van de API (06 NL).
+VERGELIJK_SCRIPTS = (("priva_water_bestanden.py", ["--alleen-om", "6"]),)
 SCRIPTS = ("agro4all_import.py", "klimaatregistratie_import.py", "pats_import.py", "teelt_rapport.py",
            "dagrapport.py")
 
@@ -32,7 +34,10 @@ def main():
     from config import PRIVA_BESTANDEN
     map_ = Path(__file__).resolve().parent
     stappen = [(script, ["--tuin", str(tuin)]) for tuin in sorted(PRIVA_BESTANDEN, reverse=True)
-               for script in PRIVA_SCRIPTS] + [(script, []) for script in SCRIPTS]
+               for script in PRIVA_SCRIPTS]
+    stappen += [(script, ["--tuin", str(tuin), *extra]) for tuin in sorted(PRIVA_BESTANDEN, reverse=True)
+                for script, extra in VERGELIJK_SCRIPTS]
+    stappen += [(script, []) for script in SCRIPTS]
     fouten = []
     for script, extra in stappen:
         naam = f"{script} {' '.join(extra)}".strip()
