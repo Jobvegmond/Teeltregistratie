@@ -112,8 +112,10 @@ def smtp_bericht(onderwerp, tekst, html_tekst, aan, bijlagen=()):
     bericht["Subject"] = onderwerp
     bericht["From"] = afzender()
     bericht["To"] = ", ".join(aan)
-    bericht.set_content(tekst)
-    bericht.add_alternative(html_tekst, subtype="html")
+    # Vaste transportcodering: de automatische keuze (quoted-printable) kwam via Graph's MIME-route verminkt aan
+    # (losse "=", "=B0C" voor "°C"); base64 is overal veilig.
+    bericht.set_content(tekst, cte="base64")
+    bericht.add_alternative(html_tekst, subtype="html", cte="base64")
     html_deel = bericht.get_payload()[1]
     for b in bijlagen:
         if b.cid:

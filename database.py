@@ -1580,6 +1580,15 @@ def log_mail(soort, sleutel, onderwerp, aan, weg, status, melding=None):
         conn.commit()
 
 
+def mail_log_bestaat(soort, sleutel):
+    """True als er in de mail-log al een geslaagde poging met deze soort en sleutel staat."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1 FROM mail_log WHERE soort = %s AND sleutel = %s AND status = 'ok' LIMIT 1",
+                       (soort, sleutel))
+        return cursor.fetchone() is not None
+
+
 RAPPORT_TABEL = """
     CREATE TABLE IF NOT EXISTS rapport (
         sleutel TEXT PRIMARY KEY,

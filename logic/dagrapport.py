@@ -370,12 +370,15 @@ KENGETALLEN = [("temp", "Etmaal", 1, "°C"), ("temp_dag", "Dag", 1, "°C"), ("te
                ("rv", "RV", 0, "%"), ("rv_hoog", "Uren RV ≥ 90", 0, ""), ("stook_max", "Stooklijn max", 1, "°C"),
                ("water", "Water", 1, "l/m²"), ("ec", "EC", 2, ""), ("ph", "pH", 1, ""), ("energie", "Energie", 1,
                                                                                          "MJ/m²")]
-# De tegels per tuin in het dagrapport: (sleutel, kop, decimalen, eenheid).
+# Alleen in de vergelijking van het dagrapport (tuin 1 registreert niet in Agro4all: daar staat dan een streepje).
+DAG_EXTRA = [("geoogst", "Geoogst", 0, "stelen")]
+# De kengetallen in de tekstversie van het dagrapport: (sleutel, kop, decimalen, eenheid).
 TEGELS = [("temp", "Etmaal", 1, "°C"), ("afwijking", "Afw. lichtlijn", 1, "°C"), ("rv", "RV", 0, "%"),
           ("water", "Water", 1, "l/m²"), ("energie", "Energie", 1, "MJ/m²"), ("geoogst", "Geoogst", 0, "stelen")]
 # Het weekrapport vergelijkt de tuinen en gaat niet over de lichtlijn of Agro4all (oogst).
 VERGELIJK_NIET = {"afwijking"}
-AFWIJKING_GRENS = 0.5            # |afwijking van de lichtlijn| die als te warm of te koud kleurt
+DAGEN_TABEL = 7                  # het dagrapport toont het klimaat van de laatste zoveel dagen
+AFWIJKING_GRENS = 0.5          # |afwijking van de lichtlijn| die als te warm of te koud kleurt
 ERNST_KLEUR = {"fout": mo.ROOD, "let op": mo.ORANJE, "info": mo.GRIJS}
 # De conclusies van Claude als kaart: soort → (badge, kleur), de ernstigste eerst.
 CONCLUSIE_SOORT = {"fout": ("Fout", mo.ROOD), "advies": ("Advies", mo.ORANJE), "opvallend": ("Opvallend", mo.BLAUW)}
@@ -406,28 +409,9 @@ def _periode(bundel):
     return f"{DAG[van.weekday()]} {_maand_kort(van)} {van.year}"
 
 
-def _tegels_tuin(t, vergelijk):
-    """De tegels van één tuin (dagrapport) uit de kengetallen van de hele tuin, met het verschil met de vorige dag."""
-    nu = (t.get("kengetallen") or {}).get(HELE_TUIN) or {}
-    toen = (t.get("kengetallen_vorige") or {}).get(HELE_TUIN) or {}
-    rij = []
-    for sleutel, naam, dec, eenheid in TEGELS:
-        w = nu.get(sleutel)
-        if w is None and sleutel != "geoogst":
-            continue
-        if sleutel == "afwijking":
-            waarde = fmt_verschil(w, dec)
-            toon = "let op" if w is not None and abs(w) >= AFWIJKING_GRENS else None
-        else:
-            waarde, toon = fmt_getal(w if w is not None else 0, dec), None
-        verschil = mo.verschil_tekst(w if w is not None else 0, toen.get(sleutel), dec)
-        rij.append({"label": naam, "waarde": waarde, "eenheid": eenheid, "toon": toon,
-                    "sub": f"{mo.pijl(verschil)} {vergelijk}" if verschil else None})
-    return rij
-
-
-def _tegels_week(bundel):
-    """De vier tegels van het weekrapport: etmaal per tuin, PATS-vangsten en het aantal aandachtspunten."""
+def _tegels_vergelijk(bundel):
+    """De vier tegels van dag- en weekrapport: etmaal per tuin, PATS-vangsten en het aantal aandachtspunten."""
+    vergelijk = "t.o.v. vorige week" if bundel["soort"] == "week" else "t.o.v. vorige dag"
     rij = []
     for t in bundel.get("tuinen", []):
         nu = (t.get("kengetallen") or {}).get(HELE_TUIN) or {}
@@ -435,13 +419,13 @@ def _tegels_week(bundel):
         if nu.get("temp") is not None:
             verschil = mo.verschil_tekst(nu["temp"], toen.get("temp"), 1)
             rij.append({"label": f"Etmaal {t['naam'].lower()}", "waarde": fmt_getal(nu["temp"], 1), "eenheid": "°C",
-                        "sub": f"{mo.pijl(verschil)} t.o.v. vorige week" if verschil else None})
+                        "sub": f"{mo.pijl(verschil)} {vergelijk}" if verschil else None})
     pats = [p for t in bundel.get("tuinen", []) for p in t.get("pats") or []]
     if pats:
         totaal, vorige = sum(p["totaal"] for p in pats), sum(p.get("vorige") or 0 for p in pats)
         verschil = mo.verschil_tekst(totaal, vorige, 0)
         rij.append({"label": "PATS-vangsten", "waarde": fmt_getal(totaal, 0),
-                    "sub": f"{mo.pijl(verschil)} t.o.v. vorige week" if verschil else None})
+                    "sub": f"{mo.pijl(verschil)} {vergelijk}" if verschil else None})
     actief = [s for s in bundel["signalen"] if not s.get("feedback")]
     fouten, letop = sum(s["ernst"] == "fout" for s in actief), sum(s["ernst"] == "let op" for s in actief)
     rij.append({"label": "Aandachtspunten", "waarde": str(len(actief)),
@@ -495,35 +479,46 @@ def _grafieken(bundel):
 
 
 def _vergelijking(bundel):
-    """Het weekrapport: de kengetallen van de hele tuin naast elkaar, met het verschil tussen de eerste en de tweede."""
+    """
+    De kengetallen van de hele tuin naast elkaar, met het verschil tussen de eerste en de tweede. Het weekrapport laat
+    de lichtlijn weg (geen strategie); het dagrapport toont die wel, en de oogst.
+    """
     tuinen = bundel.get("tuinen", [])
     if len(tuinen) < 2:
         return ""
+    week = bundel["soort"] == "week"
     eerste, tweede = tuinen[0], tuinen[1]
     rijen = []
-    for s, naam, dec, eenheid in KENGETALLEN:
-        if s in VERGELIJK_NIET:
+    for s, naam, dec, eenheid in KENGETALLEN + ([] if week else DAG_EXTRA):
+        if week and s in VERGELIJK_NIET:
             continue
         a = (eerste["kengetallen"].get(HELE_TUIN) or {}).get(s)
         b = (tweede["kengetallen"].get(HELE_TUIN) or {}).get(s)
         if a is None and b is None:
             continue
-        rijen.append([f"{naam}{' ' + eenheid if eenheid else ''}", fmt_getal(a, dec), fmt_getal(b, dec),
+        opmaak = fmt_verschil if s == "afwijking" else fmt_getal
+        rijen.append([f"{naam}{' ' + eenheid if eenheid else ''}", opmaak(a, dec), opmaak(b, dec),
                       fmt_verschil(a - b, dec) if a is not None and b is not None else LEEG])
     if not rijen:
         return ""
     return (mo.sectiekop(f"{eerste['naam']} naast {tweede['naam']}")
             + mo.tabel(["Kengetal", eerste["naam"], tweede["naam"], "Verschil"], rijen)
-            + mo.voetnoot(f"Hele tuin, deze week; verschil = {eerste['naam']} min {tweede['naam']}."))
+            + mo.voetnoot(f"Hele tuin, {'deze week' if week else 'deze dag'}; verschil = {eerste['naam']} min "
+                          f"{tweede['naam']}."))
 
 
 def _klimaat_per_dag(bundel):
-    """Het weekrapport: per dag de etmaaltemperatuur en de uren RV ≥ 90 % van beide tuinen, kleurgecodeerd."""
+    """
+    Per dag de etmaaltemperatuur en de uren RV ≥ 90 % van beide tuinen, kleurgecodeerd: de dagen van de week
+    (weekrapport) of de laatste DAGEN_TABEL dagen t/m de rapportdag (dagrapport).
+    """
     tuinen = [t for t in bundel.get("tuinen", []) if t.get("reeksen")]
     if len(tuinen) < 2 or not all(t["reeksen"].get("temp") for t in tuinen[:2]):
         return ""
     eerste, tweede = tuinen[:2]
-    van, tot = date.fromisoformat(bundel["van"]), date.fromisoformat(bundel["tot"])
+    week = bundel["soort"] == "week"
+    tot = date.fromisoformat(bundel["tot"])
+    van = date.fromisoformat(bundel["van"]) if week else tot - timedelta(days=DAGEN_TABEL - 1)
     dagen = [date.fromisoformat(d) for d in eerste["reeksen"]["dagen"]]
     verschil = reeks_verschil(eerste["reeksen"]["temp"], tweede["reeksen"]["temp"])
 
@@ -542,7 +537,7 @@ def _klimaat_per_dag(bundel):
     if not rijen:
         return ""
     namen = (eerste["naam"], tweede["naam"])
-    return (mo.sectiekop("Klimaat per dag")
+    return (mo.sectiekop("Klimaat per dag" if week else f"Klimaat laatste {DAGEN_TABEL} dagen")
             + mo.tabel(["Dag", f"Etmaal {namen[0]}", f"Etmaal {namen[1]}", "Verschil", f"RV-uren {namen[0]}",
                         f"RV-uren {namen[1]}"], rijen)
             + mo.voetnoot(f"Etmaaltemperatuur in °C; RV-uren = uren per etmaal met RV ≥ 90 % (oranje vanaf "
@@ -628,27 +623,16 @@ def _samenvatting(duiding):
 def bericht(bundel, duiding, app_url=None):
     """(onderwerp, html) van het rapport. duiding: {samenvatting, conclusies: [{id, soort, tuin, titel, tekst, actie}]} of None."""
     week = bundel["soort"] == "week"
-    vergelijk = "t.o.v. vorige week" if week else "t.o.v. vorige dag"
     titel = "Weekrapport teelt" if week else "Dagrapport teelt"
-    delen = []
-    if week:
-        delen.append(mo.tegels(_tegels_week(bundel)))
-        delen.append(_vergelijking(bundel))        # de vergelijking tussen de tuinen staat bovenaan
-    else:
-        for t in bundel.get("tuinen", []):
-            rij = _tegels_tuin(t, vergelijk)
-            if rij:
-                delen.append(mo.tegels(rij, label=t["naam"], breedte=3))
-        delen.append(mo.voetnoot(f"Kleine regel onder een tegel = verschil {vergelijk}; cijfers voor de hele tuin."))
-    delen.append(_samenvatting(duiding))
+    # Dag- en weekrapport hebben dezelfde opzet: tegels, de tuinen naast elkaar, samenvatting, aandachtspunten.
+    delen = [mo.tegels(_tegels_vergelijk(bundel)), _vergelijking(bundel), _samenvatting(duiding)]
     uitsluiten, extra = set(), ()
     if duiding and (duiding.get("conclusies") or []):
         kaarten, getoond, rest = _kaarten(bundel, duiding, app_url)
         delen.append(mo.sectiekop("Aandachtspunten") + kaarten)
         uitsluiten = {s for c in getoond for s in c.get("signalen") or []}
         extra = rest
-    if week:
-        delen.append(_klimaat_per_dag(bundel))
+    delen.append(_klimaat_per_dag(bundel))
     delen.append(_grafieken(bundel))
     if not week:
         delen.append(_afdelingstabellen(bundel))

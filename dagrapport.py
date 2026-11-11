@@ -343,7 +343,8 @@ def verstuur_rapport(database, mail, bundel, duiding, args, stempel):
               f"{len(bundel['signalen'])} signalen) aan {', '.join(aan)}")
         return
     sleutel = bundel["sleutel"]
-    mail.verstuur_en_log("dagrapport", sleutel + (" (proef)" if args.test else ""), onderwerp, html_tekst, aan,
+    logsleutel = getattr(args, "proef_sleutel", None) or sleutel + (" (proef)" if args.test else "")
+    mail.verstuur_en_log("dagrapport", logsleutel, onderwerp, html_tekst, aan,
                          tekst=dr.tekst_bericht(bundel, duiding, APP_URL), log=database.log_mail)
     if not args.test:
         database.bewaar_rapport(sleutel, bundel["soort"], bundel["van"], bundel["tot"], als_json(bundel),
@@ -358,8 +359,9 @@ PROEF_DOMEIN = "@tanacetum.nl"
 def verstuur_proeven(database, mail, args, stempel, map_):
     """
     Proefbestanden proef-*.json in de rapportenmap ({bundel, duiding, aan}): één proefmail naar `aan` (alleen een adres
-    van het eigen domein), zonder het rapport te bewaren of mee te tellen. Het bestand wordt eerst verwijderd, zodat
-    een proef nooit twee keer verstuurd wordt; lukt het verwijderen niet, dan gaat er niets uit. True bij een fout.
+    van het eigen domein), zonder het rapport te bewaren of mee te tellen. De rapportenmap is op de NAS alleen-lezen
+    aangekoppeld, dus het bestand blijft staan; dat een proef (bestandsnaam + wijzigingstijd) al verstuurd is, staat in
+    de mail-log. Kan dat niet worden nagegaan, dan gaat er niets uit. True bij een fout.
     """
     fout = False
     for bestand in sorted(map_.glob("proef-*.json")) if map_.is_dir() else []:
@@ -368,14 +370,16 @@ def verstuur_proeven(database, mail, args, stempel, map_):
             bundel, aan = proef["bundel"], proef["aan"].strip()
             if not aan.lower().endswith(PROEF_DOMEIN) or "," in aan:
                 raise ValueError(f"een proefmail gaat naar één adres @tanacetum.nl, niet naar '{aan}'")
-            bestand.unlink()
-        except (ValueError, KeyError, OSError) as e:
+            merk = f"proef {bestand.name} {int(bestand.stat().st_mtime)}"
+            if database.mail_log_bestaat("dagrapport", merk):
+                continue
+        except Exception as e:
             print(f"[{stempel}] FOUT: proefbestand {bestand.name} niet verstuurd ({e})", file=sys.stderr)
             fout = True
             continue
         try:
             verstuur_rapport(database, mail, bundel, proef.get("duiding"),
-                             argparse.Namespace(**{**vars(args), "test": aan}), stempel)
+                             argparse.Namespace(**{**vars(args), "test": aan, "proef_sleutel": merk}), stempel)
         except mail.MailFout as e:
             print(f"[{stempel}] FOUT bij de proefmail {bestand.name}: {e}", file=sys.stderr)
             fout = True

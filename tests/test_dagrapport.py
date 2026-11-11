@@ -184,6 +184,38 @@ class TestHerhalingFeedbackMail(unittest.TestCase):
         _, dag = dr.bericht({**bundel, "soort": "dag", "sleutel": "2026-10-31-dag", "van": "2026-10-31"}, None)
         self.assertIn("Afwijking van de lichtlijn", dag)
 
+    def test_dagrapport_heeft_dezelfde_opzet_als_het_weekrapport(self):
+        dagen = [str(date(2026, 11, 5) - timedelta(days=13 - i)) for i in range(14)]
+
+        def tuin(nr, temp, oogst):
+            return {"naam": f"Tuin {nr}", "kolommen": ["Afd. 1"],
+                    "kengetallen": {"Afd. 1": {"temp": temp, "afwijking": 0.9},
+                                    "Hele tuin": {"temp": temp, "afwijking": 0.9, "rv": 85.0, "geoogst": oogst}},
+                    "kengetallen_vorige": {"Hele tuin": {"temp": temp - 0.5}},
+                    "pats": [{"insect": "Trips", "totaal": 4, "vorige": 2}],
+                    "reeksen": {"dagen": dagen, "afwijking": [0.9] * 14, "temp": [temp + i / 10 for i in range(14)],
+                                "rv_uren": [i for i in range(14)], "pats": {"Trips": [1.0] * 14}}}
+
+        bundel = {"sleutel": "2026-11-05-dag", "soort": "dag", "van": "2026-11-05", "tot": "2026-11-05",
+                  "signalen": [], "tuinen": [tuin(1, 15.0, None), tuin(3, 14.0, 52000.0)]}
+        duiding = {"samenvatting": "Rustig.", "conclusies": [
+            {"id": "c1", "soort": "advies", "tuin": 3, "titel": "Titel", "tekst": "Tekst"}]}
+        _, tekst = dr.bericht(bundel, duiding, "https://app.example")
+        volgorde = ["Etmaal tuin 1", "Etmaal tuin 3", "PATS-vangsten", "Tuin 1 naast Tuin 3", "Rustig.",
+                    "Aandachtspunten", "Klimaat laatste 7 dagen", "Verloop", "Per afdeling", "Controles"]
+        posities, vanaf = [], 0
+        for x in volgorde:                  # elk onderdeel komt na het vorige (de tegel "Aandachtspunten" telt niet mee)
+            vanaf = tekst.index(x, vanaf if x != "Aandachtspunten" else tekst.index("Rustig."))
+            posities.append(vanaf)
+        self.assertEqual(posities, sorted(posities))
+        self.assertIn("Afw. lichtlijn", tekst)                       # het dagrapport gaat wel over de strategie
+        self.assertIn("Geoogst", tekst)
+        self.assertIn("▲ +0,5 t.o.v. vorige dag", tekst)
+        self.assertEqual(tekst.count("Klimaat laatste 7 dagen"), 1)
+        self.assertIn("do 05-11", tekst)                             # laatste rij = de rapportdag
+        self.assertIn("vr 30-10", tekst)                             # zeven dagen terug
+        self.assertNotIn("do 29-10", tekst)                          # de achtste niet meer
+
 
 class TestKaartenEnTekst(unittest.TestCase):
     def bundel(self):
@@ -294,19 +326,42 @@ class TestProefbestand(unittest.TestCase):
         bestand.write_text(json.dumps({"bundel": {"sleutel": "x", "soort": "dag"}, **proef}), encoding="utf-8")
         return bestand
 
-    def draai(self, map_):
+    def setUp(self):
+        self.gelogd = set()                                          # de mail-log: geslaagde proefsleutels
+
+    def draai(self, map_, db=None):
         verstuurd = []
-        with mock.patch.object(script, "verstuur_rapport",
-                               side_effect=lambda db, ml, bundel, duiding, args, stempel: verstuurd.append(args.test)):
-            fout = script.verstuur_proeven(None, mail, argparse.Namespace(droog=False, test=None), "t", Path(map_))
+        if db is None:
+            db = mock.Mock(mail_log_bestaat=lambda soort, sleutel: sleutel in self.gelogd)
+
+        def stuur(_db, _ml, bundel, duiding, args, stempel):
+            verstuurd.append(args.test)
+            self.gelogd.add(args.proef_sleutel)
+
+        with mock.patch.object(script, "verstuur_rapport", side_effect=stuur):
+            fout = script.verstuur_proeven(db, mail, argparse.Namespace(droog=False, test=None), "t", Path(map_))
         return fout, verstuurd
 
     def test_proefmail_gaat_een_keer_naar_het_opgegeven_adres(self):
         with tempfile.TemporaryDirectory() as map_:
             bestand = self.maak(map_, aan="job@tanacetum.nl", duiding=None)
             self.assertEqual(self.draai(map_), (False, ["job@tanacetum.nl"]))
-            self.assertFalse(bestand.exists())                       # weg, dus nooit twee keer
-            self.assertEqual(self.draai(map_), (False, []))
+            self.assertTrue(bestand.exists())                        # alleen-lezen map: het bestand blijft staan
+            self.assertEqual(self.draai(map_), (False, []))          # maar de mail-log voorkomt een tweede keer
+
+    def test_een_gewijzigd_proefbestand_gaat_opnieuw(self):
+        with tempfile.TemporaryDirectory() as map_:
+            bestand = self.maak(map_, aan="job@tanacetum.nl", duiding=None)
+            self.assertEqual(self.draai(map_)[1], ["job@tanacetum.nl"])
+            os.utime(bestand, (bestand.stat().st_atime, bestand.stat().st_mtime + 60))
+            self.assertEqual(self.draai(map_)[1], ["job@tanacetum.nl"])
+
+    def test_zonder_mail_log_gaat_er_niets_uit(self):
+        def stuk(soort, sleutel):
+            raise RuntimeError("geen database")
+        with tempfile.TemporaryDirectory() as map_:
+            self.maak(map_, aan="job@tanacetum.nl", duiding=None)
+            self.assertEqual(self.draai(map_, mock.Mock(mail_log_bestaat=stuk)), (True, []))
 
     def test_alleen_een_adres_van_het_eigen_domein(self):
         with tempfile.TemporaryDirectory() as map_:
