@@ -6,6 +6,12 @@ daar van de warmtewisselaar: Priva's dagwaarde "warmte gisteren" (scherm M302.1,
 het gerealiseerde vermogen (scherm M340.0, kW) maal de tijd, uit overig-<datum>.jsonl;
 logic/warmtewisselaar.py). Het rekenwerk staat in logic/pulsmeters.py.
 
+Daarnaast per dag de verdeling van de warmte over de afdelingen (warmte_afdeling_dag): het gerealiseerde vermogen
+van het verwarmingsnet per afdeling (scherm M112.0) maal de tijd, uit alles-<datum>.jsonl; logic/warmte_afdeling.py.
+Zonder --vanaf vanaf de laatst opgeslagen dag (3 dagen terug), of bij een lege tabel vanaf het eerste bestand. Een
+dag uit de bestanden vervangt een verdeling uit de Energie-export (bron 'export'): de export van tuin 1 schuift
+sinds de wintertijd een dag op.
+
 Standaard vult het alleen dagen aan die nog niet in de database staan: cijfers uit de
 energie-export van Priva (handmatig ingelezen) blijven staan. Uitzondering: de dagwaarde "warmte gisteren"
 van tuin 1 gaat altijd voor (hetzelfde als de export, die alleen de dag van de wintertijd verschuift). Met
@@ -75,6 +81,50 @@ def lees_bestanden(live, historie, vanaf):
         with open(pad, encoding="utf-8") as f:
             bronnen.append(pm.lees_live_jsonl(f))
     return pm.samenvoegen(*bronnen)
+
+
+def verdeling_opslaan(database, tuin, live, args, tot):
+    """
+    De verdeelsleutel van de warmte over de afdelingen per dag uit alles-<datum>.jsonl (zie
+    logic/warmte_afdeling.py); geeft de opgeslagen dagen. Dagen die er nog niet staan of alleen uit de
+    Energie-export komen (met --overschrijven ook die al uit de bestanden kwamen).
+    """
+    from logic import warmte_afdeling as wa
+    catalogus = live / "catalogus.csv"
+    if not catalogus.is_file():
+        print(f"verdeling: geen {catalogus}")
+        return []
+    with open(catalogus, encoding="utf-8-sig") as f:
+        punten = wa.punten(f)
+    if not punten:
+        print("verdeling: geen vermogen per afdeling (M112.0) in de catalogus")
+        return []
+    al = database.get_warmte_afdeling_dagen(tuin["id"])
+    bestanden = {}
+    for pad in live.glob("alles-*.jsonl"):
+        gevonden = re.search(r"(\d{4}-\d{2}-\d{2})", pad.name)
+        if gevonden:
+            bestanden[date.fromisoformat(gevonden.group(1))] = pad
+    if args.vanaf:
+        vanaf = args.vanaf
+    elif al:
+        vanaf = date.fromisoformat(max(al)) - timedelta(days=3)
+    else:
+        vanaf = min(bestanden, default=tot)
+    opgeslagen = []
+    for dag in sorted(d for d in bestanden if vanaf <= d <= tot):
+        if al.get(str(dag)) == "bestanden" and not args.overschrijven:
+            continue
+        with open(bestanden[dag], encoding="utf-8") as f:
+            dag_bestand, kwh = wa.dag_kwh(f, punten)
+        if dag_bestand != dag or kwh is None or wa.aandelen(kwh) is None:
+            continue
+        delen = wa.aandelen(kwh)
+        print(f"{dag}  verdeling  " + "  ".join(f"afd {a} {delen[a] * 100:4.1f} %" for a in sorted(delen)))
+        opgeslagen.append(dag)
+        if not args.droog:
+            database.upsert_warmte_afdeling(tuin["id"], dag, {a: round(w, 1) for a, w in kwh.items()}, "bestanden")
+    return opgeslagen
 
 
 def main():
@@ -187,12 +237,15 @@ def main():
             overgeslagen.append(dag)
         dag += timedelta(days=1)
 
-    samenvatting = (f"{tuin['naam']}: warmte {len(warmte_dagen)} dagen, gas {len(gas_dagen)} dagen opgeslagen "
+    verdeeld = verdeling_opslaan(database, tuin, live, args, tot)
+
+    samenvatting = (f"{tuin['naam']}: warmte {len(warmte_dagen)} dagen, gas {len(gas_dagen)} dagen, verdeling over "
+                    f"de afdelingen {len(verdeeld)} dagen opgeslagen "
                     f"({vanaf:%d-%m-%y} t/m {tot:%d-%m-%y}; {len(overgeslagen)} dagen onvolledig)")
     if args.droog:
         print(f"[{stempel}] DROOG, niets opgeslagen; zou opslaan: {samenvatting.replace(' opgeslagen', '')}")
         return
-    if warmte_dagen or gas_dagen:
+    if warmte_dagen or gas_dagen or verdeeld:
         database.log_wijziging(GEBRUIKER, "opgehaald", "energie_pulsmeters", None, samenvatting)
     print(f"[{stempel}] {samenvatting}")
 
