@@ -3,6 +3,37 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.31.1] - 2026-11-11
+
+### Toegevoegd
+- **Gietbeurten en EC/pH uit de Priva-bestanden naast de API**: `priva_water_bestanden.py` (rekenwerk in
+  `logic/priva_water_bestanden.py`) berekent watergift_beurt, water_kwaliteit_dag en het aantal beurten per vak-dag uit
+  `water-<datum>.jsonl` en vergelijkt dat eens per dag (uurtaak, in het uur 6 UTC, over gisteren) met wat de API
+  opsloeg. Nog niets opgeslagen; de API blijft de bron tot de vergelijking een week of twee klopt. Over 10-10 t/m
+  9-11: tuin 3 169 van 169 beurten gekoppeld, tuin 1 52 van 52; liters exact, EC/pH per beurt mediaan 0,02 af.
+- **Statusmonitor** op de laptop (`statusmonitor.py`, poort 8600, `Status teeltregistratie.cmd`): per onderdeel
+  groen/oranje/rood/grijs met het laatste moment; leest de NAS-logboeken, de Priva-share, de back-ups, Supabase
+  (alleen lezen), Render en de NAS-app. Lokaal gereedschap, niet in de app.
+
+## [2.31.0] - 2026-11-10
+
+### Toegevoegd
+- **Warmte, gas en energie per afdeling** op de pagina Tuin (Tuin 1 / Tuin 3). Er is één warmtemeter per tuin;
+  Priva verdeelt die over de afdelingen naar het gerealiseerde vermogen van het verwarmingsnet per afdeling (scherm
+  M112.0, "VERW.REG - ger verm vwn"). Gecontroleerd op tuin 1, 22–25 oktober: de aandelen uit dat vermogen vielen
+  binnen ± 1 procentpunt samen met de verdeling in Priva's Energie-export. De som van het vermogen ligt 25–40 %
+  onder de meter, dus het is alleen een verdeelsleutel: warmte afdeling = gemeten warmte × aandeel, per m²
+  afdeling. Gas krijgt dezelfde verdeling. Dagen zonder sleutel tellen als niet gemeten (⚠).
+- Nieuwe tabel `warmte_afdeling_dag` (tuin, dag, Priva-afdeling, sleutel, bron) en `logic/warmte_afdeling.py`.
+  `priva_pulsmeters.py` vult hem elk uur uit `alles-<datum>.jsonl` (bron 'bestanden'; tuin 3 sinds 9-10, tuin 1
+  sinds 21-10-2026). Een ingelezen Energie-export levert Priva's eigen verdeling (Sum_24h_Gas_use per afdeling,
+  bron 'export') voor dagen zonder bestanden; de bestanden gaan voor, want de export van tuin 1 schuift sinds de
+  wintertijd een dag op.
+
+### Waarom
+- Op de pagina Tuin stonden warmte, gas en energie alleen bij Hele tuin ("Alleen voor de hele kas gemeten"),
+  terwijl Priva de verdeling over de afdelingen wel bijhoudt.
+
 ## [2.30.2] - 2026-11-05
 
 ### Gewijzigd

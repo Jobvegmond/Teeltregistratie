@@ -601,6 +601,8 @@ def init_db():
         # Vangplaat- en insectentellingen van PATS (pats_import.py, sinds 2.22.0).
         cursor.execute(PATS_TELLING_TABEL)
         cursor.execute(NOTIFICATIE_WEG_TABEL)
+        # De verdeling van de warmte over de afdelingen per dag (logic/warmte_afdeling.py, sinds 2.31.0).
+        cursor.execute(WARMTE_AFDELING_TABEL)
         # Welke rapporten "Teelt afgerond" al gemaild zijn (teelt_rapport.py, sinds 2.16.0).
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS teelt_rapport (
@@ -1725,6 +1727,21 @@ NOTIFICATIE_WEG_TABEL = """
 """
 NOTIFICATIE_WEG_DAGEN = 60
 
+# Per tuin, dag en Priva-afdeling de verdeelsleutel van de warmte (logic/warmte_afdeling.py): bron 'bestanden' =
+# het vermogen van het verwarmingsnet × de tijd in kWh (priva_pulsmeters.py; gaat voor), 'export' = Priva's eigen
+# verdeling uit de Energie-export (m³ aardgasequivalent; vult de dagen vóór de bestanden aan). Alleen de
+# verhouding binnen een dag telt.
+WARMTE_AFDELING_TABEL = """
+    CREATE TABLE IF NOT EXISTS warmte_afdeling_dag (
+        tuin_id INTEGER NOT NULL,
+        datum TEXT NOT NULL,
+        afdeling INTEGER NOT NULL,
+        sleutel REAL NOT NULL,
+        bron TEXT NOT NULL,
+        PRIMARY KEY (tuin_id, datum, afdeling)
+    )
+"""
+
 PATS_TELLING_TABEL = """
     CREATE TABLE IF NOT EXISTS pats_telling (
         id SERIAL PRIMARY KEY,
@@ -2223,6 +2240,72 @@ def upsert_gasdata_dag(datum, gas_m3_totaal, tuin_id=None):
         conn.commit()
 
 
+def upsert_warmte_afdeling(tuin_id, datum, sleutel, bron):
+    """De verdeelsleutel {afdeling: waarde} van één dag; vervangt wat er die dag stond."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        # De taak op de NAS kan draaien vóór de app de tabel maakte. Alleen dan DDL: een CREATE/ALTER op een
+        # bestaande tabel vraagt toch een zwaar slot, en de uurtaken lopen elkaar al eens in de weg (deadlock).
+        cursor.execute("SELECT to_regclass('warmte_afdeling_dag')")
+        if cursor.fetchone()[0] is None:
+            cursor.execute(WARMTE_AFDELING_TABEL)
+        cursor.execute("DELETE FROM warmte_afdeling_dag WHERE tuin_id = %s AND datum = %s", (tuin_id, str(datum)))
+        for afdeling, waarde in sorted(sleutel.items()):
+            cursor.execute("""
+                INSERT INTO warmte_afdeling_dag (tuin_id, datum, afdeling, sleutel, bron)
+                VALUES (%s, %s, %s, %s, %s)
+            """, (tuin_id, str(datum), int(afdeling), float(waarde), bron))
+        conn.commit()
+
+
+def get_warmte_afdeling_dagen(tuin_id):
+    """{datum (tekst): bron} van de dagen met een verdeelsleutel."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT to_regclass('warmte_afdeling_dag')")
+        if cursor.fetchone()[0] is None:
+            return {}
+        cursor.execute("SELECT DISTINCT datum, bron FROM warmte_afdeling_dag WHERE tuin_id = %s", (tuin_id,))
+        return dict(cursor.fetchall())
+
+
+# Priva's verdeling van de energie over de afdelingen in de Energie-export (m³ aardgasequivalent per afdeling).
+ENERGIE_AFDELING_LABEL = "Sum_24h_Gas_use"
+
+
+def _lees_energie_df(bestand):
+    """De regels van een "Rapport Energie"-CSV als DataFrame, met datum, datum_tot, value en idx_1 als getal."""
+    try:
+        df = pd.read_csv(bestand, sep=None, engine="python", decimal=",")
+    except Exception:
+        bestand.seek(0)
+        df = pd.read_csv(bestand, sep="	", decimal=",")
+    df.columns = df.columns.str.strip()
+    df["datum"] = pd.to_datetime(df["startdate"], dayfirst=True, format="mixed").dt.date
+    df["datum_tot"] = pd.to_datetime(df["enddate"], dayfirst=True, format="mixed").dt.date
+    df["value"] = pd.to_numeric(df["value"], errors="coerce")
+    df["idx_1"] = pd.to_numeric(df["idx_1"], errors="coerce")
+    return df
+
+
+def energie_verdeling(df):
+    """
+    {datum: {afdeling: m³}}: Priva's verdeling van de energie over de afdelingen (Sum_24h_Gas_use, type
+    Afdeling) uit een ingelezen Energie-export (_lees_energie_df). Alleen voorbije dagen waarop er iets te
+    verdelen is (som > 0).
+    """
+    regels = df[(df["label"] == ENERGIE_AFDELING_LABEL) & (df["type_1"] == "Afdeling")
+                & (df["datum_tot"] < date.today())].dropna(subset=["value", "idx_1"])
+    uit = {}
+    for datum, groep in regels.groupby("datum"):
+        sleutel = {}
+        for afdeling, waarde in zip(groep["idx_1"].astype(int), groep["value"].astype(float)):
+            sleutel[afdeling] = sleutel.get(afdeling, 0.0) + waarde
+        if sum(sleutel.values()) > 0:
+            uit[datum] = sleutel
+    return uit
+
+
 def lees_energie_csv(bestand, tuin_nummer):
     """
     Leest een energiecomputer-CSV (Priva-export "Rapport Energie") zonder iets
@@ -2231,17 +2314,7 @@ def lees_energie_csv(bestand, tuin_nummer):
     die nog niet voorbij zijn en dagen vóór ENERGIE_METING_VANAF tellen niet.
     Geeft ({datum: warmte in MJ}, {datum: gas in m3}, aantal dagen overgeslagen).
     """
-    try:
-        df = pd.read_csv(bestand, sep=None, engine="python", decimal=",")
-    except Exception:
-        bestand.seek(0)
-        df = pd.read_csv(bestand, sep="	", decimal=",")
-
-    df.columns = df.columns.str.strip()
-    df["datum"] = pd.to_datetime(df["startdate"], dayfirst=True, format="mixed").dt.date
-    df["datum_tot"] = pd.to_datetime(df["enddate"], dayfirst=True, format="mixed").dt.date
-    df["value"] = pd.to_numeric(df["value"], errors="coerce")
-    df["idx_1"] = pd.to_numeric(df["idx_1"], errors="coerce")
+    df = bestand if isinstance(bestand, pd.DataFrame) else _lees_energie_df(bestand)
     vanaf = ENERGIE_METING_VANAF.get(tuin_nummer, date.min)
     bronnen = ENERGIE_BRONNEN.get(tuin_nummer, ENERGIE_BRONNEN[3])
 
@@ -2266,20 +2339,28 @@ def verwerk_energie_csv(bestand, gebruiker=None, tuin_id=None):
     """
     Leest een "Rapport Energie"-CSV in (zie lees_energie_csv) en slaat per dag
     de warmte (MJ, energiedata_dag) en het gas (m3, omgerekend naar MJ in
-    gasdata_dag) op; een dag die er al staat wordt overschreven. Geeft terug:
+    gasdata_dag) op; een dag die er al staat wordt overschreven. Ook Priva's
+    verdeling over de afdelingen (energie_verdeling, warmte_afdeling_dag), maar
+    niet op dagen met een verdeling uit de Priva-bestanden: die gaat voor (de
+    export van tuin 1 schuift sinds de wintertijd een dag op). Geeft terug:
     (aantal dagen warmte verwerkt, aantal dagen overgeslagen, aantal dagen gas verwerkt).
     """
     tuin_id = _tuin_of_standaard(tuin_id)
-    warmte, gas, overgeslagen = lees_energie_csv(bestand, _tuinnummer(tuin_id))
+    df = _lees_energie_df(bestand)
+    warmte, gas, overgeslagen = lees_energie_csv(df, _tuinnummer(tuin_id))
     for datum, mj in warmte.items():
         upsert_energiedata_dag(datum, mj, tuin_id=tuin_id)
     for datum, m3 in gas.items():
         upsert_gasdata_dag(datum, m3, tuin_id=tuin_id)
+    uit_bestanden = {d for d, bron in get_warmte_afdeling_dagen(tuin_id).items() if bron == "bestanden"}
+    verdeling = {d: s for d, s in energie_verdeling(df).items() if str(d) not in uit_bestanden}
+    for datum, sleutel in verdeling.items():
+        upsert_warmte_afdeling(tuin_id, datum, sleutel, "export")
 
     log_wijziging(
         gebruiker, "geupload", "energiedata_csv", None,
         f"tuin {_tuinnummer(tuin_id)}: {len(warmte)} dagen warmte verwerkt, {overgeslagen} overgeslagen "
-        f"(nog niet afgerond), {len(gas)} dagen gasverbruik verwerkt"
+        f"(nog niet afgerond), {len(gas)} dagen gasverbruik verwerkt, {len(verdeling)} dagen verdeling over de afdelingen"
     )
     return len(warmte), overgeslagen, len(gas)
 
@@ -2526,6 +2607,7 @@ def get_vergelijking_data():
     - emmers: elke oogstregistratie met tuin, vak, teelt, datum en emmers
     - klimaat: per tuin/afdeling/dag etmaal-, dag- en nachttemperatuur, RV en lichtsom
     - energie / gas: per tuin per dag warmte (MJ) en gas (m3)
+    - verdeling: per tuin/dag/Priva-afdeling de verdeelsleutel van de warmte (logic/warmte_afdeling.py)
     - water: per tuin/vak/dag liter per m², EC en pH van de gift
     """
     with get_connection() as conn:
@@ -2559,6 +2641,7 @@ def get_vergelijking_data():
         energie = _df(cursor, "SELECT tuin_id, datum, warmte_mj_totaal AS warmte_mj FROM energiedata_dag")
         gas = _df(cursor, "SELECT tuin_id, datum, gas_m3_totaal AS gas_m3 FROM gasdata_dag")
         water = _df(cursor, "SELECT tuin_id, vaknummer, datum, liter_per_m2, ec, ph FROM watergift_dag")
+        verdeling = _df(cursor, "SELECT tuin_id, datum, afdeling, sleutel FROM warmte_afdeling_dag")
 
     vakken["m2"] = [
         float(m2) if m2 else _standaard_oppervlakte(vak, nummer)
@@ -2567,7 +2650,7 @@ def get_vergelijking_data():
     for kolom in ("lengte_eind", "oogstgewicht"):
         teelten[kolom] = teelten[kolom].map(meting)
     return {"vakken": vakken, "teelten": teelten, "emmers": emmers, "klimaat": klimaat,
-            "energie": energie, "gas": gas, "water": water}
+            "energie": energie, "gas": gas, "water": water, "verdeling": verdeling}
 
 
 def get_teeltvergelijking_data():

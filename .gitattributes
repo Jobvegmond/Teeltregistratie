@@ -1,2 +1,5 @@
 # Shellscripts draaien op de NAS (Linux); Windows-regeleindes breken ze.
 *.sh text eol=lf
+
+# Windows-opdrachtbestanden (Status teeltregistratie.cmd) houden Windows-regeleindes.
+*.cmd text eol=crlf
