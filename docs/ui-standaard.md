@@ -9,7 +9,7 @@ Elke pagina, van boven naar beneden:
 
 | | Onderdeel | Component |
 |---|---|---|
-| a | Knop **Uitleg**, klein rechts in de kopbalk (tabbladknoppen, daarachter de tuinkeuze). Geen paginatitel: de gevulde knop in de navigatiebalk laat de pagina zien | `layout.pagina_kop()` |
+| a | Knop **Uitleg**, klein rechts in de kopbalk (tuinkeuze links; op een smal scherm ervoor de tabbladknoppen). Geen paginatitel: de huidige pagina licht op in de zijbalk of de navigatie | `layout.pagina_kop()` |
 | b | Eén filterbalk (één regel, loopt door op een smal scherm) | `layout.filterbalk()` + `ui/filters.py` |
 | c | Samenvatting (tabel) | `layout.sectie()` |
 | d | Hoofdweergave (matrix, tabel of grafiek), met legenda eronder | `legend.legenda()` |
@@ -18,7 +18,7 @@ Elke pagina, van boven naar beneden:
 
 Een onderdeel dat een pagina niet heeft, valt weg. De volgorde blijft.
 
-**Schermnummers.** De tabbladen zijn genummerd (1. Registreren … 6. Meer) en elke sectie en elk
+**Schermnummers.** De tabbladen zijn genummerd (1. Registreren … 6. Rapporten, 7. Meer) en elke sectie en elk
 openklapmenu op een pagina krijgt automatisch een volgnummer ("2.3"), zodat feedback naar een scherm kan
 verwijzen. Geef daarom elke hoofdweergave een `layout.sectie()`-kop en gebruik voor openklapmenu's
 `layout.uitklap()` (niet `st.expander`).
@@ -132,8 +132,8 @@ alles = filters.schakelaar("Alle concepten tonen", "planning_alles", False, plek
 | Lijst van vakken | Vakkenregister (Overzicht) | Doorklik-link met het juiste filter |
 | Registraties invoeren (Florgib, emmers, lengte/gewicht, opmerking, wijzigen) | Tabblad Registreren | Een concept starten als teelt: venster op de tijdlijn (Overzicht) |
 | Opmerkingen | Pagina Opmerkingen | Vakpopup; elders één regel "n opmerkingen →" |
+| Wat er vandaag te doen is (water, spuiten, registraties) | Notificaties: de knop met het belletje in de kop, alleen voor `NOTIFICATIES_VOOR` (`logic/notificaties.py`) | – |
 | Planning (concepten) | Tijdlijn op Overzicht (klik op een concept of een lege plek) | Concepttabel en jaarplanning in openklapmenu's op dezelfde pagina |
-| Vooruitblik | Openklapmenu op Overzicht | – |
 
 ## 5. Legenda's
 
@@ -161,9 +161,25 @@ nooit `isocalendar()` direct.
 
 ## 7. Vormgeving
 
-- **Ronding**: knoppen, velden en kaders zijn licht afgerond, 0,2 rem (`baseRadius` en `buttonRadius` in
-  `.streamlit/config.toml`). Eigen opmaak (navigatiebalk, kop, vakblokken, tegels, tabellen) gebruikt dezelfde
-  0,2 rem; geen pilvormen.
-- **Zijbalk**: 330 px breed, zodat de knoppen van *Wat wil je doen?* op één regel passen (`ui/styles.py`).
-- **Vergelijkingstabellen** (`ui/vergelijkingstabel.py`, opmaak in `ui/styles.py`): alleen horizontale lijnen, geen
-  zebra, waarden op één regel; op een smal scherm zijwaarts scrollen met de eerste kolom vast.
+Alle opmaak staat in `ui/styles.py` (CSS, kleuren per thema in `PALET`) en `.streamlit/config.toml` (thema).
+Geen losse `<style>`-blokken in de pagina's.
+
+- **Huisstijl** van tanacetum.nl: groen `#0A562C` als accent, oranje `#F8992D` alleen als klein accent (logo,
+  streepje bij de huidige pagina, "Teeltregistratie" onder het logo), lettertype Inter (15 px). Het logo en het
+  bloemetje staan in `static/` (`styles.LOGO`, `styles.BLOEM`). Rood blijft voor fouten en waarschuwingen.
+- **Pagina**: lichtgrijze achtergrond; tabellen, grafieken, formulieren, openklapmenu's, kengetallen en
+  vergelijkingstabellen staan erop als witte kaart met een dunne rand en ronde hoeken (0,75 rem). Velden en
+  gewone knoppen zijn wit met een dunne rand, de hoofdknop groen. Weinig witruimte tussen de blokken (0,7 rem).
+- **Navigatie**: op een breed scherm (≥ 900 px) links een vaste zijbalk met het logo, de pagina's met icoon
+  (`PAGINA_ICONEN` in app.py; de huidige als witte kaart met een oranje streepje) en onderaan week, versie en
+  gebruiker. Op een smal scherm de kop met het logo en de genummerde knoppen bovenin.
+- **Keuzegroepen** (`filters.weergave`, de tuinkeuze): één grijs spoor, de gekozen optie wit met groene tekst.
+  Op een telefoon (≤ 700 px) staat de tuinkeuze als vaste balk onderin het scherm; op een breed scherm rechts
+  op de regel van de filterbalk (als de pagina daarmee begint), met Uitleg ernaast.
+- **Uitleg** op een smal scherm: alleen het ?-icoon, rond, rechtsboven in de kop.
+- **Ronding**: 0,5 rem op knoppen en velden (`baseRadius`, `buttonRadius`), 0,75 rem op kaarten.
+- **Licht en donker** volgen het apparaat (`[theme.light]` en `[theme.dark]`); in het donker staat het logo op
+  een wit plaatje.
+- **Vergelijkingstabellen** (`ui/vergelijkingstabel.py`): alleen horizontale lijnen, geen zebra, kleine grijze
+  kolomkoppen in hoofdletters, waarden op één regel; op een smal scherm zijwaarts scrollen met de eerste kolom
+  vast.

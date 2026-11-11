@@ -27,6 +27,28 @@ RAPPORT_AAN = "info@tanacetum.nl"
 RAPPORT_VANAF = _date(2026, 10, 20)
 APP_URL = "https://vemteelt.onrender.com"
 
+# --- DAGRAPPORT (dagrapport.py, logic/dagrapport.py) ---
+# Elke ochtend een rapport van gisteren, op maandag ook een van de afgelopen week (zondag t/m zaterdag): wat er
+# gebeurde, de controles hieronder en de duiding van Claude (geplande taak op de werklaptop). De NAS mailt.
+# Zonder duiding gaat het rapport vanaf RAPPORT_UITERLIJK uur toch, met alleen de cijfers.
+RAPPORT_UITERLIJK = 9
+# Ontvangers (meer adressen met komma's); de omgeving (.env.taak) kan ze overschrijven met dezelfde naam.
+DAGRAPPORT_AAN = "job@tanacetum.nl"
+WEEKRAPPORT_AAN = "info@tanacetum.nl"
+RV_HOOG_UREN = (12, 20)         # uren RV ≥ 90 % per etmaal: vanaf 12 info, vanaf 20 let op (roest, schimmel)
+STOOKADVIES_MARGE = 0.5         # huidige stooklijn wijkt zoveel °C of meer af van het advies: let op
+PH_REGELING = {1}               # tuinen met een pH-regeling (tuin 3 heeft die niet: pH daar alleen ter info)
+PATS_STIJGING = 2.0             # gemiddelde van de laatste 3 teldagen ≥ zoveel × de 14 dagen ervoor: let op
+PATS_STIJGING_MIN = 5           # … en minstens zoveel per teldag (anders is een stijging van 0 naar 1 al alarm)
+INREGEN_DAGEN = 7               # water of een behandeling tot zoveel dagen vóór het planten hoort bij die teelt
+HERHALING_DAGEN = 14            # zo ver terug telt het rapport hoe vaak een signaal eerder kwam
+FEEDBACK_DAGEN = 30             # feedback "klopt niet"/"bewust" dempt hetzelfde signaal zolang
+
+# --- NOTIFICATIES (knop met het belletje in de kop) ---
+# Alleen voor deze gebruikers (username): wat er vandaag te doen is in hun eigen tuin (standaard_tuin), uit de
+# watervoorspelling, de werkplanning (bespuitingen) en de registraties die er al hadden moeten zijn.
+NOTIFICATIES_VOOR = ("job",)
+
 # --- ENERGIE ---
 # Calorische waarde van aardgas (bovenwaarde Groningen-gas, geen rendementscorrectie),
 # om m³ gas om te rekenen naar MJ.
@@ -90,8 +112,12 @@ PATS_SECTIONS = {58: 3, 869: 1}
 # rij 39, tussen vak 37 en 38; die tellen alleen voor de hele tuin.)
 PATS_TRAPEYE_VAKKEN = {3: (-1, 0)}
 PATS_SERVER = "beta"
+# Telmodel van de Trap-Eyes (verplicht bij PATS sinds 31-10-2026): "beedrill" = de telling bij elke foto (± 3 per
+# week), zoals vanaf het begin in de app; "vertel" = het nieuwe model, elke dag en hoger (bijna 2x zoveel trips).
+# Bij overstappen de hele historie opnieuw ophalen, anders springen de cijfers.
+PATS_MODEL = "beedrill"
 
 # --- VERSIE ---
 # Staat rechtsboven in de app. Ophogen bij elke wijziging op main (zie CHANGELOG.md):
 # derde getal bij een correctie, tweede bij iets nieuws, eerste bij een grote omzetting.
-APP_VERSIE = "2.24.1"
+APP_VERSIE = "2.30.1"

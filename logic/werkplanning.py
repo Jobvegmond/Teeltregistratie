@@ -16,7 +16,7 @@ Regels (opgegeven door de teler, oktober 2026):
 - Op zondag wordt niet gespoten: een blok dat op zondag valt, gaat naar maandag.
 - Planten: op de plantdag ook Rizolex, zodra het vak volgepoot is. Een concept van eerder in de week dat nog
   niet gestart is, komt op vandaag ("loopt achter").
-- Inwateren van de nieuwe vakken van een week (al geplant of nog te planten): op vrijdag (donderdag mag ook).
+- Inregenen van de nieuwe vakken van een week (al geplant of nog te planten): op vrijdag (donderdag mag ook).
 """
 from datetime import date, timedelta
 
@@ -27,7 +27,7 @@ MARGE_FLORGIB = (3, 5)              # Florgib 3 d vóór t/m 5 d na het blok: ni
 MARGE_OOGST = 7                     # prognose-oogst binnen zoveel dagen na het blok: geen CXDS meer
 MIN_SINDS_CXDS = 7                  # een vak met CXDS korter dan zoveel dagen vóór het blok gaat niet mee
 GEEN_CXDS = {1}                     # vak 1: waterteelt (proef), geen CXDS
-INWATER_DAG = 4                     # vrijdag (maandag = 0)
+INREGEN_DAG = 4                     # vrijdag (maandag = 0)
 DAG = ["ma", "di", "wo", "do", "vr", "za", "zo"]
 
 
@@ -72,7 +72,7 @@ def taken(teelten, cxds, concepten, van, dagen=7, geplant=()):
              florgib_verwacht, prognose (oogst), emmers;
     cxds: {vak: laatste CXDS}; concepten: [(vak, plantdatum)] (concepten en bevestigde teelten die nog
     geplant moeten worden); geplant: [(vak, plantdatum)] van de vakken die deze week al geplant zijn (alleen voor
-    het inwateren).
+    het inregenen).
     Wat al achter loopt (Florgib of CXDS vóór `van`) komt op `van`, met "achter" in de toelichting.
     """
     tot = van + timedelta(days=dagen - 1)
@@ -150,7 +150,7 @@ def taken(teelten, cxds, concepten, van, dagen=7, geplant=()):
                 toelichting += ", loopt achter"
             taak(dag, "cxds", blok, f"CXDS-blok {_naam(blok)}", toelichting)
 
-    # Planten + Rizolex, per dag (wat nog niet gebeurd is: vandaag); inwateren op vrijdag van die week.
+    # Planten + Rizolex, per dag (wat nog niet gebeurd is: vandaag); inregenen op vrijdag van die week.
     per_dag = {}
     for vak, dag in concepten:
         per_dag.setdefault(dag, []).append(vak)
@@ -165,8 +165,8 @@ def taken(teelten, cxds, concepten, van, dagen=7, geplant=()):
         zondag = dag - timedelta(days=(dag.weekday() + 1) % 7)
         per_week_plant.setdefault(zondag, []).extend(vakken)
     for zondag, vakken in sorted(per_week_plant.items()):
-        vrijdag = zondag + timedelta(days=(INWATER_DAG - 6) % 7)
-        taak(vrijdag, "inwateren", vakken, f"Inwateren nieuwe vakken {_naam(vakken)[4:]}",
+        vrijdag = zondag + timedelta(days=(INREGEN_DAG - 6) % 7)
+        taak(vrijdag, "inregenen", vakken, f"Inregenen nieuwe vakken {_naam(vakken)[4:]}",
              "Tuin 3 · donderdag of vrijdag, na de laatste planting van de week")
-    return sorted(uit, key=lambda t: (t["datum"], ("florgib", "cxds", "planten", "inwateren").index(t["soort"]),
+    return sorted(uit, key=lambda t: (t["datum"], ("florgib", "cxds", "planten", "inregenen").index(t["soort"]),
                                       t["vakken"]))

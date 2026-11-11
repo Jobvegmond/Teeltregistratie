@@ -5,17 +5,9 @@ priva_bestanden.py; een verstuurd rapport staat in de tabel teelt_rapport en gaa
 
 Alleen teelten die op of na RAPPORT_VANAF (config) zijn afgerond: oudere teelten worden niet alsnog gemaild.
 
-Versturen, instellingen in de omgeving (.env.taak):
-- Microsoft Graph (Microsoft 365; SMTP met wachtwoord staat daar uit): een app-registratie met de
-  toepassingsmachtiging Mail.Send. GRAPH_TENANT_ID, GRAPH_CLIENT_ID, GRAPH_GEHEIM en RAPPORT_VAN (de mailbox
-  waarvandaan het verstuurd wordt). Gaat voor SMTP als beide zijn ingesteld.
-- Of SMTP: SMTP_SERVER, SMTP_POORT (587 = STARTTLS, 465 = SSL), SMTP_GEBRUIKER, SMTP_WACHTWOORD, RAPPORT_VAN
-  (standaard SMTP_GEBRUIKER).
-- Of Direct Send van Microsoft 365 (zonder inloggen, alleen naar adressen binnen het eigen domein):
-  SMTP_SERVER=tanacetum-nl.mail.protection.outlook.com, SMTP_POORT=25, RAPPORT_VAN=…@tanacetum.nl. Het openbare
-  IP-adres van de NAS moet dan in het SPF-record van tanacetum.nl staan, anders belandt de mail in de spam.
-RAPPORT_AAN (standaard config.RAPPORT_AAN; meer adressen met komma's). Zonder Graph- of SMTP-instellingen: een
-melding, niets verstuurd en niets als verstuurd gemarkeerd.
+Versturen via integrations/mail.py (Microsoft Graph, of Direct Send / SMTP; instellingen in .env.taak); elke
+poging staat in de tabel mail_log. RAPPORT_AAN (standaard config.RAPPORT_AAN; meer adressen met komma's). Zonder
+verzendweg: een melding, niets verstuurd en niets als verstuurd gemarkeerd.
 
 Gebruik:
     python teelt_rapport.py                              # nieuwe afgeronde teelten mailen
@@ -26,11 +18,11 @@ Gebruik:
 """
 import argparse
 import os
-import smtplib
 import sys
 from datetime import date, datetime, timedelta, timezone
-from email.message import EmailMessage
 from pathlib import Path
+
+from integrations import mail
 
 
 def lees_argumenten():
@@ -62,67 +54,6 @@ def vakken_en_tuinen(database):
         if t["start"] <= vandaag:
             vakken.append(teeltvgl.met_dagdata(t, dagdata, gisteren))
     return vakken, [(t["naam"], t["id"]) for t in tuinen], {t["id"]: t["nummer"] for t in tuinen}
-
-
-def instelling(naam, standaard=None):
-    """Een instelling uit de omgeving, zonder spaties of een Windows-regeleinde (\r) eromheen."""
-    waarde = os.environ.get(naam)
-    return waarde.strip() if waarde and waarde.strip() else standaard
-
-
-GRAPH = ("GRAPH_TENANT_ID", "GRAPH_CLIENT_ID", "GRAPH_GEHEIM", "RAPPORT_VAN")
-SMTP = ("SMTP_SERVER", "SMTP_GEBRUIKER", "SMTP_WACHTWOORD")
-DIRECT_SEND = ("SMTP_SERVER", "RAPPORT_VAN")       # poort 25, zonder inloggen
-
-
-def verzendweg():
-    """"graph", "smtp" of None: welke instellingen compleet zijn (Graph gaat voor)."""
-    if all(instelling(k) for k in GRAPH):
-        return "graph"
-    if instelling("SMTP_POORT") == "25" and all(instelling(k) for k in DIRECT_SEND):
-        return "direct send"
-    if all(instelling(k) for k in SMTP):
-        return "smtp"
-    return None
-
-
-def mailen_graph(onderwerp, html_tekst, aan):
-    """Versturen via Microsoft Graph (client credentials, Mail.Send) namens de mailbox RAPPORT_VAN."""
-    import requests
-    token = requests.post(
-        f"https://login.microsoftonline.com/{instelling('GRAPH_TENANT_ID')}/oauth2/v2.0/token", timeout=60,
-        data={"client_id": instelling("GRAPH_CLIENT_ID"), "client_secret": instelling("GRAPH_GEHEIM"),
-              "scope": "https://graph.microsoft.com/.default", "grant_type": "client_credentials"})
-    if not token.ok:
-        raise RuntimeError(f"aanmelden bij Microsoft mislukt ({token.status_code}): {token.text[:300]}")
-    r = requests.post(
-        f"https://graph.microsoft.com/v1.0/users/{instelling('RAPPORT_VAN')}/sendMail", timeout=60,
-        headers={"Authorization": f"Bearer {token.json()['access_token']}"},
-        json={"message": {"subject": onderwerp, "body": {"contentType": "HTML", "content": html_tekst},
-                          "toRecipients": [{"emailAddress": {"address": a}} for a in aan]},
-              "saveToSentItems": True})
-    if r.status_code != 202:
-        raise RuntimeError(f"versturen mislukt ({r.status_code}): {r.text[:300]}")
-
-
-def mailen(onderwerp, tekst, html_tekst, aan):
-    if verzendweg() == "graph":
-        mailen_graph(onderwerp, html_tekst, aan)
-        return
-    bericht = EmailMessage()
-    bericht["Subject"] = onderwerp
-    bericht["From"] = instelling("RAPPORT_VAN") or instelling("SMTP_GEBRUIKER")
-    bericht["To"] = ", ".join(aan)
-    bericht.set_content(tekst)
-    bericht.add_alternative(html_tekst, subtype="html")
-    poort = int(instelling("SMTP_POORT", "587"))
-    verbinding = smtplib.SMTP_SSL if poort == 465 else smtplib.SMTP
-    with verbinding(instelling("SMTP_SERVER"), poort, timeout=60) as smtp:
-        if poort != 465:
-            smtp.starttls()
-        if poort != 25:                 # Direct Send (poort 25) levert af zonder in te loggen
-            smtp.login(instelling("SMTP_GEBRUIKER"), instelling("SMTP_WACHTWOORD"))
-        smtp.send_message(bericht)
 
 
 def main():
@@ -165,8 +96,10 @@ def main():
         lijst = list(sorteer_afdelingen({afdeling}, nummer)) if afdeling is not None else []
         return lijst.index(afdeling) if afdeling in lijst else 99
 
-    aan = [a.strip() for a in (args.test or instelling("RAPPORT_AAN", RAPPORT_AAN)).split(",") if a.strip()]
-    weg = verzendweg()
+    aan = mail.ontvangers(args.test or mail.instelling("RAPPORT_AAN", RAPPORT_AAN))
+    weg = mail.verzendweg()
+    if waarschuwing := mail.waarschuwing():
+        print(f"[{stempel}] {waarschuwing}")
     fout = False
     for week in nieuw:
         laatste, groep = afgerond[week]
@@ -187,8 +120,9 @@ def main():
                   "(GRAPH_… of SMTP_… in .env.taak).")
             continue
         try:
-            mailen(onderwerp, tekst, html_tekst, aan)
-        except Exception as e:          # één mislukte mail stopt de rest niet; volgende run opnieuw
+            mail.verstuur_en_log("teelt_rapport", sleutel + (" (proef)" if args.test else ""), onderwerp, html_tekst,
+                                 aan, tekst, log=database.log_mail)
+        except mail.MailFout as e:      # één mislukte mail stopt de rest niet; volgende run opnieuw
             print(f"[{stempel}] FOUT bij mailen '{onderwerp}': {e}", file=sys.stderr)
             fout = True
             continue

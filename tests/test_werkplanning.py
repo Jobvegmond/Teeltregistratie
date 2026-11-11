@@ -1,4 +1,4 @@
-"""Tests voor logic/werkplanning.py: CXDS-blokken, Florgib met CXDS, planten met Rizolex en inwateren."""
+"""Tests voor logic/werkplanning.py: CXDS-blokken, Florgib met CXDS, planten met Rizolex en inregenen."""
 import unittest
 from datetime import date
 
@@ -48,13 +48,13 @@ class TestWerkplanning(unittest.TestCase):
         self.assertEqual(titels(uit), [(date(2026, 10, 29), "CXDS-blok vak 7"),
                                        (date(2026, 10, 29), "CXDS-blok vak 9")])
 
-    def test_planten_met_rizolex_en_inwateren_op_vrijdag(self):
+    def test_planten_met_rizolex_en_inregenen_op_vrijdag(self):
         concepten = [(22, MA), (23, date(2026, 10, 27)), (24, date(2026, 10, 27)), (25, date(2026, 10, 29))]
         uit = wp.taken([], {}, concepten, MA)
         self.assertEqual(titels(uit), [
             (MA, "Planten vak 22 + Rizolex"), (date(2026, 10, 27), "Planten vak 23–24 + Rizolex"),
             (date(2026, 10, 29), "Planten vak 25 + Rizolex"),
-            (date(2026, 10, 30), "Inwateren nieuwe vakken 22–25")])
+            (date(2026, 10, 30), "Inregenen nieuwe vakken 22–25")])
 
     def test_florgib_telt_als_cxds_en_waterteelt_overslaan(self):
         teelten = [teelt(3, date(2026, 9, 21), florgib=date(2026, 10, 26)), teelt(4, date(2026, 9, 21)),
@@ -64,11 +64,11 @@ class TestWerkplanning(unittest.TestCase):
         # Vak 3 had CXDS met de Florgib op 26-10 (nog niet in Agro4all): niet in het blok met vak 4. Vak 1 nooit.
         self.assertEqual(titels(uit), [(MA, "CXDS-blok vak 4")])
 
-    def test_concept_van_eerder_deze_week_en_inwateren_met_geplante_vakken(self):
+    def test_concept_van_eerder_deze_week_en_inregenen_met_geplante_vakken(self):
         di = date(2026, 10, 27)
         uit = wp.taken([], {}, [(22, MA), (23, di)], di, geplant=[(21, date(2026, 10, 25))])
         self.assertEqual(titels(uit), [(di, "Planten vak 22 + Rizolex"), (di, "Planten vak 23 + Rizolex"),
-                                       (date(2026, 10, 30), "Inwateren nieuwe vakken 21–23")])
+                                       (date(2026, 10, 30), "Inregenen nieuwe vakken 21–23")])
         self.assertIn("loopt achter", uit[0]["toelichting"])
 
     def test_niet_op_zondag(self):

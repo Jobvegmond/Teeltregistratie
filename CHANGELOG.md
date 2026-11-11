@@ -3,6 +3,230 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.30.2] - 2026-11-05
+
+### Gewijzigd
+- **Wateradvies als losse items in de Takenlijst**: `watervoorspelling.py --json` geeft één item per planting
+  met water of twijfel ("Water · vak 22–24", "Twijfel · vak 17–21"), met de redenen in de note en de velden
+  soort en vakken; id `water-tuin3-<datum>-<eerste>-<laatste vak>`, zodat vinkje en feedback bij het item
+  blijven als het advies die dag opnieuw wordt gezet. In de Takenlijst-app: per item een vinkje en een
+  openklapmenu "Waarom en feedback".
+
+## [2.30.1] - 2026-11-05
+
+### Toegevoegd
+- Notificaties **wegklikken**: een kruisje rechtsboven in elk kaartje. Onthouden per gebruiker in de nieuwe tabel
+  `notificatie_weg` (na 60 dagen opgeruimd): water en spuiten blijven die dag weg, een registratie zolang het om
+  dezelfde teelten gaat (komt er een vak bij, dan verschijnt hij opnieuw). `logic/notificaties`: vaste sleutel per
+  melding en `zichtbaar()` (tests).
+- **Naar registreren**: bij een ontbrekende registratie een duidelijke knop die meteen naar Registreren gaat met de
+  juiste keuze (Florgib, Emmers, Lengte en gewicht) in de eigen tuin; het venster is daar dicht.
+
+### Gewijzigd
+- De tekst valt netjes in de kaartjes: het venster is nooit breder dan het scherm, lange regels breken af en de
+  laatste regel valt er niet meer af (Streamlit gaf een tekstblok een negatieve ondermarge).
+- Notificaties water: de titel noemt de plantingen ("Water geven: vak 22–24, 25–28"), zoals de watervoorspelling
+  per planting (2.30.0).
+- **Inregenen** in plaats van inwateren, overal (werkplanning, notificaties, teksten, `config.INREGEN_DAGEN`,
+  `werkplanning.INREGEN_DAG`, soort "inregenen").
+
+## [2.30.0] - 2026-11-05
+
+### Gewijzigd
+- **Watervoorspelling per planting** in plaats van per vak (wens van de teler: "werk altijd vanuit de
+  teelten"). Een planting = de vakken van één plantweek in een aaneengesloten reeks, zoals de werkplanning
+  (bijv. 17–21, 22–24, 25–28; `logic/watervoorspelling.plantingen()`). Het advies geldt voor de hele planting,
+  met de gemiddelde kans van de vakken; de kans per vak staat erbij ("kans 87 % (per vak 83–92 %)"), met
+  `--alles` ook de reden per vak. Nieuw in de regel: hoeveel er in die teeltfase meestal gegeven wordt
+  ("meestal ± 18 l/m²", mediaan uit de historie).
+- Takenlijst-item en notificaties tonen de plantingen ("Water: vak 22–24, 25–28 · twijfel: 17–21").
+- Terugtoets per planting per dag (water gekregen = minstens de helft van de vakken): tuin 3 *water* 79 %
+  terecht (per vak was 72 %; blind gokken 18 %), 98 % van de giften water of twijfel; tuin 1 67 % (was 63 %).
+
+## [2.29.0] - 2026-11-05
+
+### Toegevoegd
+- **Notificaties**: een knop met een belletje en het aantal meldingen rechtsboven (naast Uitleg; op de telefoon
+  naast het ?-icoon), alleen voor de gebruikers in `config.NOTIFICATIES_VOOR` (nu job), over de eigen tuin
+  (standaard_tuin). Elke melding een kaartje (logic/notificaties.py, tests):
+  - **Water** volgens de watervoorspelling: "Water geven" en "Misschien water", met per planting de reden;
+  - **Spuiten** volgens de werkplanning: CXDS-blokken, Florgib + CXDS en inwateren van vandaag en morgen;
+  - **Registreren**: Florgib die verwacht was maar niet is ingevuld, oogst verwacht maar nog geen emmers, in de
+    oogst maar nog geen oogstlengte; met een knop *Invullen* die naar Registreren gaat met de juiste keuze.
+  De voorspelling en de werkplanning rekenen een paar seconden en worden een uur bewaard; de knop wordt pas na
+  de pagina gevuld, zodat die er niet op wacht.
+- `werkplanning.bereken_taken` en `watervoorspelling.bereken_advies`: het rekenwerk van de scripts als functie
+  (de scripts geven dezelfde uitvoer).
+
+### Verwijderd
+- Registreren: het kader **Nog te doen** (nu de notificaties); `registreren.nog_te_doen`.
+
+## [2.28.0] - 2026-11-05
+
+### Toegevoegd
+- **Watervoorspelling per vak** (`watervoorspelling.py`, `logic/watervoorspelling.py`, tests in
+  `tests/test_watervoorspelling.py`): voor vandaag per lopende teelt het advies *water*, *twijfel* of *niet nodig*
+  met een korte reden, bijv. "Vak 23 · 9 dagen na planten · 2.362 J/cm² straling sinds de gift van vr 30-10
+  (10 l/m²) · kans 88 %". Een hulpmiddel voor de teler, geen sturing; alleen lezen. Zelfde opzet als
+  `werkplanning.py` (`--json`, `--tuin`, `--doel`, `--van`), plus `--terugtoets` en `--alles`.
+  - Kenmerken per vak-dag: dagen na planten, dagen sinds de vorige gift (≥ 1 l/m²), straling sinds die gift
+    (`klimaatdata_dag`) plus de verwachting voor vandaag, grootte van de vorige gift, al in de oogst.
+  - Per teeltfase (dag 0–3, 4–7, week 2, week 3–4, daarna) een eigen logistische regressie, geleerd op beide
+    tuinen samen (toetste voor allebei beter dan alleen de eigen tuin).
+  - Stralingsverwachting van Open-Meteo (`integrations/openmeteo.py`, gratis, geen sleutel), omgerekend naar de
+    Priva-stralingssom met een rechte lijn door de laatste 4 weken: de verhouding verschilt per seizoen.
+  - Een opmerking met categorie *Water* in de laatste 7 dagen maakt van *niet nodig* een *twijfel*; wat vandaag al
+    gegeven is (Priva) staat als *gegeven*; tuin 3 vak 1 (waterteelt) krijgt geen advies. Ook "morgen
+    waarschijnlijk wel" als de kans morgen boven de drempel komt zonder gift vandaag.
+  - Terugtoets (leren tot juli 2026, toetsen op juli–november, met de opgeslagen verwachtingen van Open-Meteo):
+    tuin 3 *water* 72 % terecht (blind gokken 17 %), 81 % van de giften kreeg *water* en 98 % *water* of
+    *twijfel*; tuin 1 63 % terecht (blind 15 %), 96 % gevonden.
+  - `--json` geeft één item per dag voor de Takenlijst ({id, date, title, area, note}), bijv. "Water: vak 22–28
+    · twijfel: 17–20". Nog niet gekoppeld aan de geplande taak `takenlijst-app`.
+- `database.get_watervoorspelling_data()`: teelten, watergift, straling, eerste emmer en water-opmerkingen van
+  één tuin in vijf query's.
+
+## [2.27.3] - 2026-11-05
+
+### Gewijzigd
+- Kengetallen (de tegels bovenaan Teelt en in de vakpopup) weer compact: kleinere waarde (≈ 1 rem i.p.v. 1,35),
+  minder binnenruimte en kleinere tussenruimte; ze blijven witte kaartjes met een dunne rand.
+
+## [2.27.2] - 2026-11-05
+
+### Gewijzigd
+- Navigatie: **Meer** staat onderaan, onder Rapporten. Rapporten is nu 6 (schermnummers 6.x), Meer 7 (7.x).
+
+## [2.27.1] - 2026-11-05
+
+### Gewijzigd
+- Breed scherm: de tuinkeuze (Tuin 1 / Tuin 3 / Beide) en Uitleg staan rechts op de regel van de filters (periode,
+  weergave …) in plaats van op een eigen regel erboven; de filters breken ervoor af, zodat ze er nooit onder
+  schuiven. Alleen als de pagina met een filterbalk begint (op Meer blijft het een eigen regel).
+- ◀ [label] ▶ blijft altijd op één regel; past het niet, dan krimpt het label.
+
+## [2.27.0] - 2026-11-05
+
+### Gewijzigd
+- **Nieuw uiterlijk**, strakker en moderner, in de huisstijl van tanacetum.nl (groen `#0A562C`, oranje `#F8992D`,
+  het logo van Van Egmond Matricaria in `static/`), lettertype Inter:
+  - Lichtgrijze pagina met witte kaarten (tabellen, grafieken, formulieren, openklapmenu's, kengetallen,
+    vergelijkingstabellen); velden en knoppen wit met een dunne rand in plaats van grijze "Windows"-knoppen.
+  - Breed scherm: de navigatie links in een vaste zijbalk met het logo en een icoon per pagina; de groene kopbalk
+    en de Streamlit-balk bovenin (met Deploy) zijn weg, de inhoud begint direct bovenaan.
+  - Smal scherm: een smalle kop met het logo en de navigatie bovenin; op een telefoon de tuinkeuze als vaste balk
+    onderin het scherm.
+  - Keuzegroepen (tuin, periode, weergave, wat registreer je) als één spoor met de gekozen optie wit.
+  - Minder witruimte: de lege blokjes met alleen opmaak en het inlogcookie nemen geen ruimte meer in, en de
+    tussenruimte tussen blokken is kleiner.
+  - Kengetallen als kaart met een grote vette waarde; kolomkoppen van de vergelijkingstabel klein en grijs.
+  - Smal scherm: de knop Uitleg als klein rond ?-icoon rechtsboven in de kop, niet op een eigen regel.
+- Alle opmaak op één plek: `ui/styles.py` (ook de kop en de kengetallen, eerst in app.py), thema in
+  `.streamlit/config.toml` (licht en donker). UI-standaard §7 bijgewerkt.
+
+## [2.26.2] - 2026-11-05
+
+### Verwijderd
+- Overzicht: de openklapmenu's **Overzicht per plantweek** (2.4) en **Vooruitblik komende 6 weken** (2.5), op
+  verzoek. Het plannen staat nog in de tijdlijn, de concepttabel en de jaarplanning. Weg uit de code:
+  `toon_vooruitblik`, `_planning_per_plantweek` en `database.get_planning_per_week`.
+- Teelt (bij Tuin 1 / Tuin 3): de openklapmenu's **Oogst (emmers), Watergift, Gietbeurten, EC/pH watersysteem,
+  Klimaat van de afdeling, Warmte en gas, Verloop van de prognose, Teelthistorie en Wijzigingen** (3.2,
+  3.6–3.11, 3.13 en 3.14), op verzoek. Over blijven Vakken in deze teelt, Florgib en lengtes, Opmerkingen, Stek en
+  Behandelingen; de Excel bevat alleen die nog. `get_opzoek_gegevens` haalt alleen nog op wat getoond wordt.
+
+### Gewijzigd
+- Registreren › Lengte en gewicht: de vakken op plantdatum (oudste eerst, dan op vak) in plaats van eerst de
+  vakken in de oogst en dan op vaknummer.
+- Registreren › Wijzigen: kiezen in de volgorde **plantweek → jaar → teelt**. Na een plantweek staat het jaar
+  meteen op het laatste jaar met die week en de teelt op de laatst geplante van die week (eerst week → vak → jaar,
+  met als standaard het laagste vaknummer, ook uit oude jaren). De teelt toont vak, code en plantdatum; altijd de
+  teelten van de tuin uit de kop (`selectie.teelten`, test).
+- Registreren › Stek, *Hele week invullen*: in een week waarin een veld nog bij geen enkel vak is ingevuld, staan
+  wortel, plantmaat, uniformiteit en cijfer op de laatst ingevulde waarde uit een eerdere week (in plaats van
+  "zo laten"); `database.get_laatste_stekwaarden`. Bakjes en opmerking blijven per week.
+
+### Gecorrigeerd
+- Overzicht: het Florgib-bolletje stond op de grens tussen twee dagen (middernacht); nu midden in de dag, net als
+  de watergift en de bespuitingen.
+
+## [2.26.1] - 2026-11-04
+
+### Gewijzigd
+- **Dagrapport en weekrapport gaan naar andere adressen**: het dagrapport naar job@tanacetum.nl, het weekrapport
+  (maandag) naar info@tanacetum.nl (`config.DAGRAPPORT_AAN` en `WEEKRAPPORT_AAN`; `.env.taak` kan ze overschrijven
+  met dezelfde namen, meer adressen met komma's). Het rapport "Teelt afgerond" blijft naar `RAPPORT_AAN`.
+
+## [2.26.0] - 2026-11-04
+
+### Toegevoegd
+- **Dagrapport en weekrapport** (`dagrapport.py`, `logic/dagrapport.py`, tests in `tests/test_dagrapport.py`): elke
+  ochtend een mail over gisteren, op maandag ook over de afgelopen week (zondag t/m zaterdag), voor beide tuinen.
+  Vervangt straks het dagrapport dat Claude op de klimaat-pc maakt.
+  - **Controles** op wat er misging of opvalt, als signalen met ernst *fout* / *let op* / *info*:
+    - *data*: klimaat, watergift, warmte/gas, Agro4all en PATS die achterlopen;
+    - *registraties*: Florgib verwacht maar niet geregistreerd, oogstrijp (teeltmodel) zonder emmers, emmers maar
+      niet afgerond, afgerond zonder lengte/gewicht, geen stekbeoordeling, concept niet gestart;
+    - *bespuitingen* (alleen een tuin die in Agro4all registreert): CXDS-blok loopt achter (werkplanning), geen
+      Rizolex bij het planten, een behandeling op een leeg vak, hetzelfde middel 3× in 4 weken;
+    - *klimaat* per afdeling: DIF < 2 °C, stooklijn > 15,5 °C, uren RV ≥ 90 % (roest), stooklijn t.o.v. de
+      lichtlijn die afwijkt van het stookadvies;
+    - *water*: EC/pH van de gift buiten het streven (pH alleen waar een pH-regeling is), water op een leeg vak,
+      een gift ver boven de rest van de afdeling (inwateren telt niet);
+    - *plagen*: trips of turkse mot die oplopen (PATS).
+  - Per signaal hoe vaak het in de dagrapporten van de laatste 14 dagen stond.
+  - **Duiding door Claude**: de geplande taak "Dagrapport teelt" op de werklaptop (06:30) maakt de bundel
+    (`dagrapport.py bundel --doel productie`, alleen lezen), leest de bedrijfswiki, schrijft de samenvatting en
+    de conclusies en zet ze op de NAS (`dagrapport.py klaarzetten`, map `agro4all/rapporten`, die de uurtaak
+    al leest). Geen Anthropic-API.
+  - De **uurtaak op de NAS** (`priva_bestanden.py`) mailt een klaargezet rapport (`integrations/mail.py`, ook in
+    `mail_log`) en bewaart het in de nieuwe tabel `rapport`. Staat er om 9 uur (`RAPPORT_UITERLIJK`) nog niets
+    klaar, dan mailt de NAS het rapport zonder duiding. Ontvangers: `DAGRAPPORT_AAN`, anders `RAPPORT_AAN`.
+- **Pagina 7. Rapporten**: per rapport de samenvatting, de conclusies met **feedback** (klopt / klopt niet /
+  bewust zo + toelichting, tabel `rapport_feedback`), de controles, per tuin de kengetallen en alle feedback.
+  Elke conclusie in de mail linkt hierheen. Feedback *klopt niet* of *bewust zo* dempt dezelfde controles
+  30 dagen (in de mail onderaan als gedempt) en gaat mee naar Claude, die er een les van maakt in de wiki
+  (`wiki/rapporten`).
+- Instellingen in `config.py` (sectie DAGRAPPORT): grenzen voor RV, stookadvies, PATS-stijging, inwateren en de
+  dagen voor herhaling en feedback.
+
+## [2.25.0] - 2026-11-04
+
+### Toegevoegd
+- **Eén verzendweg voor alle mail** (`integrations/mail.py`): Microsoft Graph, Direct Send of SMTP met inloggen,
+  in die volgorde, met bijlagen en afbeeldingen in de tekst (voor het dagrapport dat naar de NAS komt). Direct
+  Send kwam in de spam (het IP-adres van de NAS staat niet in het SPF-record); sinds 04-11-2026 staat Graph in
+  `.env.taak`, met klimaat@tanacetum.nl als afzender. Een kopie staat in Verzonden items van die mailbox.
+- Tabel **`mail_log`**: elke mailpoging (soort, sleutel, onderwerp, ontvangers, verzendweg, ok/fout met de
+  melding), zodat de statusmonitor straks alle mails op één plek ziet.
+- `GRAPH_GEHEIM_VERLOOPT` (jjjj-mm-dd): vanaf een maand voor het verlopen van het Graph-geheim een regel
+  "LET OP: …" in het logboek van de uurtaak.
+
+### Gewijzigd
+- `teelt_rapport.py` verstuurt via de nieuwe module en logt in `mail_log`; de tabel `teelt_rapport` blijft
+  bijhouden welke plantweken al gemaild zijn.
+
+## [2.24.4] - 2026-11-04
+
+### Gecorrigeerd
+- **PATS-tellingen kwamen sinds 31-10 niet meer binnen**: de API van PATS wil sindsdien bij de tellingen een
+  verplicht telmodel voor de Trap-Eyes ("beedrill" of "vertel") en gaf anders HTTP 400. Nu altijd
+  `config.PATS_MODEL` = "beedrill": dezelfde tellingen als voorheen. De import haalt elk uur 14 dagen op, dus
+  het gat vanaf 31-10 vult zich vanzelf.
+
+## [2.24.3] - 2026-10-30
+
+### Gewijzigd
+- Overzicht: de regels op de tijdlijn zijn lager (17 px in plaats van 22), de balken blijven even hoog. Er passen
+  zo meer vakken op het scherm.
+
+## [2.24.2] - 2026-10-29
+
+### Gewijzigd
+- Overzicht: water dat een vak krijgt terwijl er geen teelt in staat (inwateren vóór het planten, ook na de
+  oogst voor de volgende ronde) staat niet meer op de tijdlijn en niet in de Excel van de watergift. Het totaal
+  achter het vaknummer telde al alleen vanaf het planten. `logic.watergift.teeltvensters` / `in_teelt` (tests).
+
 ## [2.24.1] - 2026-10-28
 
 ### Gecorrigeerd
