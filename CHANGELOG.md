@@ -3,7 +3,7 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
-## [2.31.0] - 2026-11-11
+## [2.32.0] - 2026-11-11
 
 ### Toegevoegd
 - **Watervoorspelling: na de Florgib niet meer gieten.** Vakken vanaf de dag van de (geregistreerde) Florgib krijgen
