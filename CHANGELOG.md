@@ -3,6 +3,18 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.31.1] - 2026-11-11
+
+### Toegevoegd
+- **Gietbeurten en EC/pH uit de Priva-bestanden naast de API**: `priva_water_bestanden.py` (rekenwerk in
+  `logic/priva_water_bestanden.py`) berekent watergift_beurt, water_kwaliteit_dag en het aantal beurten per vak-dag uit
+  `water-<datum>.jsonl` en vergelijkt dat eens per dag (uurtaak, in het uur 6 UTC, over gisteren) met wat de API
+  opsloeg. Nog niets opgeslagen; de API blijft de bron tot de vergelijking een week of twee klopt. Over 10-10 t/m
+  9-11: tuin 3 169 van 169 beurten gekoppeld, tuin 1 52 van 52; liters exact, EC/pH per beurt mediaan 0,02 af.
+- **Statusmonitor** op de laptop (`statusmonitor.py`, poort 8600, `Status teeltregistratie.cmd`): per onderdeel
+  groen/oranje/rood/grijs met het laatste moment; leest de NAS-logboeken, de Priva-share, de back-ups, Supabase
+  (alleen lezen), Render en de NAS-app. Lokaal gereedschap, niet in de app.
+
 ## [2.31.0] - 2026-11-10
 
 ### Toegevoegd
