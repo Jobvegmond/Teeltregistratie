@@ -2235,7 +2235,11 @@ def upsert_warmte_afdeling(tuin_id, datum, sleutel, bron):
     """De verdeelsleutel {afdeling: waarde} van één dag; vervangt wat er die dag stond."""
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute(WARMTE_AFDELING_TABEL)      # de taak op de NAS kan draaien vóór de app de tabel maakte
+        # De taak op de NAS kan draaien vóór de app de tabel maakte. Alleen dan DDL: een CREATE/ALTER op een
+        # bestaande tabel vraagt toch een zwaar slot, en de uurtaken lopen elkaar al eens in de weg (deadlock).
+        cursor.execute("SELECT to_regclass('warmte_afdeling_dag')")
+        if cursor.fetchone()[0] is None:
+            cursor.execute(WARMTE_AFDELING_TABEL)
         cursor.execute("DELETE FROM warmte_afdeling_dag WHERE tuin_id = %s AND datum = %s", (tuin_id, str(datum)))
         for afdeling, waarde in sorted(sleutel.items()):
             cursor.execute("""
@@ -2249,8 +2253,9 @@ def get_warmte_afdeling_dagen(tuin_id):
     """{datum (tekst): bron} van de dagen met een verdeelsleutel."""
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute(WARMTE_AFDELING_TABEL)
-        conn.commit()
+        cursor.execute("SELECT to_regclass('warmte_afdeling_dag')")
+        if cursor.fetchone()[0] is None:
+            return {}
         cursor.execute("SELECT DISTINCT datum, bron FROM warmte_afdeling_dag WHERE tuin_id = %s", (tuin_id,))
         return dict(cursor.fetchall())
 
