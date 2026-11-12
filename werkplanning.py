@@ -7,7 +7,7 @@ taken in de Takenlijst (claude.ai-artifact) zet.
 
 Gebruik:
     python werkplanning.py                       # komende 7 dagen, als tekst
-    python werkplanning.py --json                # als JSON (voor de Takenlijst)
+    python werkplanning.py --json                # als JSON (voor de Takenlijst; met de onkruidcontrole, veld "tot")
     python werkplanning.py --van 2026-10-25      # vanaf een andere dag
     python werkplanning.py --doel productie      # de online database (DATABASE_URL_PRODUCTIE)
 """
@@ -29,7 +29,7 @@ def lees_argumenten():
     return parser.parse_args()
 
 
-def bereken_taken(database, tuin, van, dagen=7):
+def bereken_taken(database, tuin, van, dagen=7, onkruid=False):
     """
     De taken van `dagen` dagen vanaf `van` voor één tuin (dict uit database.get_tuinen()): lijst van dicts met
     datum, soort, vakken, titel en toelichting (logic/werkplanning.taken). Ook gebruikt door de notificaties in
@@ -82,7 +82,7 @@ def bereken_taken(database, tuin, van, dagen=7):
         b["datum"] = vs.als_datum(b["datum"])
     cxds = wp.laatste_cxds(behandelingen)
 
-    return wp.taken(teelten, cxds, concepten, van, dagen, geplant)
+    return wp.taken(teelten, cxds, concepten, van, dagen, geplant, onkruid)
 
 
 def main():
@@ -105,11 +105,12 @@ def main():
         sys.exit(1)
     van, tot = args.van, args.van + timedelta(days=args.dagen - 1)
     from logic import werkplanning as wp
-    taken = bereken_taken(database, tuin, van, args.dagen)
+    taken = bereken_taken(database, tuin, van, args.dagen, onkruid=True)   # onkruid alleen voor de Takenlijst
     if args.json:
         print(json.dumps([{"id": f"{t['soort']}-{'-'.join(map(str, t['vakken']))}-{t['datum']}",
                            "date": str(t["datum"]), "title": t["titel"], "note": t["toelichting"],
-                           "soort": t["soort"], "vakken": t["vakken"]} for t in taken], ensure_ascii=False, indent=1))
+                           "soort": t["soort"], "vakken": t["vakken"], **({"tot": str(t["tot"])} if t.get("tot") else {})}
+                          for t in taken], ensure_ascii=False, indent=1))
         return
     print(f"Werkplanning {tuin['naam']}, {van:%d-%m-%y} t/m {tot:%d-%m-%y}")
     for t in taken:
