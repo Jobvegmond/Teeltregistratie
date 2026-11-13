@@ -3,7 +3,40 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
-## [2.32.0] - 2026-11-11
+## [2.35.0] - 2026-11-13
+
+### Toegevoegd
+- **Fotoherkenning van plagen** (Registreren → *Foto*): stuur een foto van het gewas of een vangplaat in, met vakken
+  (mag leeg) en een toelichting. De geplande Claude-taak "Foto's beoordelen" op de werklaptop (elk uur 07–19) zegt wat
+  erop zit: trips, luis, wittevlieg, mineervlieg, spint, ziekten, en apart nuttige bestrijders zoals roofmijten en
+  luismummies. Per bevinding staan er de zekerheid, het aantal, het stadium en de kenmerken bij, met een kort advies.
+  De uurtaak op de NAS zet de uitslag in de app en als opmerking (Ziekte/plagen) bij de gekozen vakken. Er gaat niets
+  via de Anthropic-API, dus er zijn geen extra kosten. De foto blijft 60 dagen na de beoordeling bewaard, de uitslag
+  altijd. Nieuw: tabel `foto_beoordeling`, `fotobeoordeling.py` (ophalen / klaarzetten / verwerk) en
+  `logic/plaagherkenning.py`. Op verzoek van de teler, 13 november 2026.
+
+## [2.34.0] - 2026-11-13
+
+### Toegevoegd
+- **Vangplaatfoto's van PATS** in het venster van de plaattelling (Overzicht › Waarnemingen, klik op de telling bij
+  een vak): per plaat met nieuwe vangst de nieuwe plekken als uitsneden (vorige foto boven, nieuwe onder, klein → groot)
+  en in een uitklapmenu de hele foto met genummerde ringen. `logic/pats_foto.py` vergelijkt de foto van de teldag met
+  de laatste foto van een eerdere dag (donkerte t.o.v. de plaat, uitlijnen met fasecorrelatie); alleen numpy en
+  Pillow. `integrations/pats.py`: `fotomomenten()` en `foto()`, alleen lezen. De app heeft `PATS_USER` en
+  `PATS_PASSW` nodig; zonder die gegevens staat er "Foto's niet beschikbaar".
+
+## [2.33.0] - 2026-11-13
+
+### Gewijzigd
+- **Dagrapport in de opzet van het weekrapport**: tegels Etmaal T1/T3, PATS en Aandachtspunten; de tabel "Tuin 1 naast
+  Tuin 3", samenvatting, aandachtspunten, "Klimaat laatste 7 dagen", verloop, per afdeling en de controles. Het
+  dagrapport houdt de lichtlijn en de oogst, het weekrapport niet.
+- Mail: tekst- en HTML-deel in base64 (quoted-printable kwam via Graph verminkt aan: losse "=", "=B0C" voor "°C").
+- Proefmails via proef-*.json (alleen naar één adres @tanacetum.nl). De rapportenmap is in de container alleen-lezen;
+  "al verstuurd" staat in de mail-log op bestandsnaam + wijzigingstijd (`database.mail_log_bestaat`).
+- Hiermee staat de code die sinds 9-11 op de NAS draaide (handmatig gekopieerd) ook in git.
+
+## [2.32.0] - 2026-11-13
 
 ### Toegevoegd
 - **Watervoorspelling: na de Florgib niet meer gieten.** Vakken vanaf de dag van de (geregistreerde) Florgib krijgen
