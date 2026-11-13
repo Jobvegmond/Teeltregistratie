@@ -192,8 +192,82 @@ def _standaard_oppervlakte(vaknummer, tuinnummer):
     return None
 
 
+# --- SCHEMA ---
+#
+# init_db() draait bij elke start van de app en van bijna elk script op de NAS. Een CREATE/ALTER ... IF NOT EXISTS
+# vraagt ook op een tabel die al klopt een zwaar slot (AccessExclusiveLock); startten twee taken tegelijk (de uurtaak
+# en de API-taak om 06:00, prognose_loggen.py om 08:00), dan gaf dat een "deadlock detected". Daarom: het volledige
+# schema (_init_db_volledig) alleen als het veranderd is. De vingerafdruk is de broncode van _init_db_volledig plus
+# alle *_TABEL-teksten; die staat na een geslaagde run in de tabel schema_versie. Een volledige run houdt een
+# advisory lock (per transactie) vast, zodat twee processen het schema nooit tegelijk aanpassen.
+SCHEMA_VERSIE_TABEL = """
+    CREATE TABLE IF NOT EXISTS schema_versie (
+        sleutel TEXT PRIMARY KEY,
+        waarde TEXT NOT NULL,
+        bijgewerkt TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+"""
+_SCHEMA_SLOT = 7_202_611   # vast nummer voor pg_advisory_lock
+
+
+def schema_vingerafdruk():
+    """sha1 van de broncode van _init_db_volledig en alle *_TABEL-teksten; None als de broncode niet te lezen is."""
+    import hashlib
+    import inspect
+    try:
+        delen = [inspect.getsource(_init_db_volledig)]
+    except (OSError, TypeError):
+        return None
+    delen += [f"{naam}={waarde}" for naam, waarde in sorted(globals().items())
+              if naam.endswith("_TABEL") and isinstance(waarde, str)]
+    return hashlib.sha1("\n".join(delen).encode("utf-8")).hexdigest()
+
+
+def _schema_bijgewerkt(cursor, vingerafdruk):
+    """True als het schema in de database al bij deze vingerafdruk hoort (alleen lezen, geen DDL)."""
+    if vingerafdruk is None:
+        return False
+    cursor.execute("SELECT to_regclass('schema_versie')")
+    if cursor.fetchone()[0] is None:
+        return False
+    cursor.execute("SELECT waarde FROM schema_versie WHERE sleutel = 'init_db'")
+    rij = cursor.fetchone()
+    return bool(rij) and rij[0] == vingerafdruk
+
+
 def init_db():
-    """Maakt de tabellen aan als ze nog niet bestaan."""
+    """
+    Zorgt dat alle tabellen en kolommen er zijn. Klopt het schema al (zelfde vingerafdruk), dan alleen één lichte
+    leesquery; anders het volledige schema, één proces tegelijk.
+    """
+    vingerafdruk = schema_vingerafdruk()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        bijgewerkt = _schema_bijgewerkt(cursor, vingerafdruk)
+        conn.rollback()
+        if bijgewerkt:
+            return
+        # Een slot voor de duur van deze transactie (geen sessieslot: via de Supabase-pooler kan een sessieslot op een
+        # andere serververbinding blijven hangen). Het schema zelf past _init_db_volledig aan op een eigen verbinding.
+        try:
+            cursor.execute("SELECT pg_advisory_xact_lock(%s)", (_SCHEMA_SLOT,))
+            # Een ander proces kan het schema bijgewerkt hebben terwijl dit wachtte.
+            if not _schema_bijgewerkt(cursor, vingerafdruk):
+                _init_db_volledig()
+                if vingerafdruk is not None:
+                    cursor.execute(SCHEMA_VERSIE_TABEL)
+                    cursor.execute("""
+                        INSERT INTO schema_versie (sleutel, waarde) VALUES ('init_db', %s)
+                        ON CONFLICT (sleutel) DO UPDATE SET waarde = EXCLUDED.waarde, bijgewerkt = now()
+                    """, (vingerafdruk,))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+
+def _init_db_volledig():
+    """Maakt de tabellen aan als ze nog niet bestaan (het volledige schema; zie init_db)."""
     with get_connection() as conn:
         cursor = conn.cursor()
 
