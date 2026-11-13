@@ -23,6 +23,20 @@ Werkwijze (verkenning tuin 3, november 2026):
   ± 90 % van de giften.
 - Een opmerking met categorie "Water" bij de teelt in de laatste OPMERKING_DAGEN dagen maakt van "niet nodig"
   een "twijfel" en staat in de reden.
+- Florgib: vanaf de dag van de Florgib wordt er niet meer gegoten (historie: 1 gift op ± 3.200 vak-dagen na de
+  Florgib, 1 op 384 Florgibdagen). Die vakken krijgen "na florgib" en geen advies. In het leren tellen die dagen
+  wel mee: zonder toetste vooral tuin 1 slechter.
+- Streefwater (bedrijfsomschrijving): ± 75 l/m² per teelt in de winter, ± 150 in de zomer, tot de Florgib.
+  Daartussen naar de straling over de teelt (streef(); in de historie volgt het water de straling met r = 0,83),
+  met de Florgib geregistreerd of geschat uit eerdere teelten rond dezelfde plantdatum (florgib_schattingen())
+  en voor de dagen die nog komen de gemiddelde straling van andere jaren (klimatologie()). Het schema (VERLOOP)
+  is hoe het water in de historie over de teelt verdeeld werd. Als extra kenmerk in de regressie voorspelde de
+  achterstand niet beter wanneer er gegoten wordt; daarom twee regels per planting (streef_regel()): al op het
+  streefwater → "water" wordt "twijfel"; STREEF_ACHTER l/m² of meer achter → "niet nodig" wordt "twijfel". In
+  de toets (juli–november 2026) veranderde dat bijna niets (tuin 1: 4× water → twijfel, geen van die dagen gift).
+- Verwachting vandaag: liefst die van Priva zelf (M4.1, integrations/priva_meteo.py), geijkt op de gemeten
+  stralingssom (ijk_priva()): oktober–november 2026 ± 50–60 J/cm² ernaast tegen ± 105–115 voor Open-Meteo.
+  Zonder Priva-bestanden of met minder dan PRIVA_MIN_DAGEN dagen: Open-Meteo.
 - Wat niet in de data staat (droge plekken, voelen en kijken, ras en oogstfase) weegt de teler zelf; een eigen
   factor per vak maakte de terugtoets slechter, dus die zit er niet in.
 """
@@ -38,10 +52,25 @@ DREMPEL_TWIJFEL = 0.15
 GEEN_ADVIES = {3: {1}}              # tuinnummer: vakken zonder advies (tuin 3 vak 1: waterteelt, proef)
 IJK_DAGEN = 28                      # dagen voor het omrekenen van Open-Meteo naar de Priva-stralingssom
 IJK_STANDAARD = (200.0, 60.0)       # J/cm² = a + b × MJ/m² als er te weinig dagen zijn om te ijken
+PRIVA_IJK_DAGEN = 14                # dagen voor het ijken van de Priva-verwachting op de gemeten stralingssom
+PRIVA_MIN_DAGEN = 5                 # minder dagen met verwachting én meting: Open-Meteo
 OPMERKING_DAGEN = 7
 MIN_RIJEN_FASE = 50                 # minder rijen of geen giften in een fase: alleen het gemiddelde van de fase
 L2 = 1.0                            # regularisatie van de logistische regressie
-ADVIEZEN = ("water", "twijfel", "niet nodig", "gegeven")
+# Streefwater per teelt (l/m², van planten tot de Florgib; bedrijfsomschrijving 2026): ± 75 in de winter en ± 150
+# in de zomer. Daartussen naar de straling over de teelt (het water volgt de straling: r = 0,83 over 365
+# teelten): een winterteelt krijgt tot de Florgib ± 13.000 J/cm², een zomerteelt ± 35.000.
+STREEF_WINTER = (13000.0, 75.0)     # (J/cm² van planten tot Florgib, l/m²)
+STREEF_ZOMER = (35000.0, 150.0)
+# Hoe het water over de teelt verdeeld wordt (historie, mediaan): (deel van de tijd tot de Florgib, deel van het
+# water). Het begin weegt zwaar: het inregenen.
+VERLOOP = ((0.0, 0.0), (0.1, 0.19), (0.25, 0.38), (0.5, 0.64), (0.75, 0.87), (1.0, 1.0))
+FLORGIB_STANDAARD = 35              # dagen na planten als er geen eerdere teelten zijn om op te schatten
+FLORGIB_VENSTER = 21                # dagen rond dezelfde plantdatum (elk jaar) voor de schatting van de Florgib
+KLIMAAT_VENSTER = 7                 # dagen rond dezelfde datum (elk jaar) voor de gemiddelde straling
+SCHEMA_MARGE = 5.0                  # l/m²: kleiner verschil met het schema heet "op schema"
+STREEF_ACHTER = 20.0                # l/m² achter op schema: "niet nodig" wordt "twijfel"
+ADVIEZEN = ("water", "twijfel", "niet nodig", "gegeven", "na florgib")
 DAG = ["ma", "di", "wo", "do", "vr", "za", "zo"]
 
 
@@ -96,22 +125,108 @@ def verwachting_reeks(gemeten, openmeteo, dagen=IJK_DAGEN):
             if mj is not None}
 
 
+# --- Straling: de verwachting van Priva ---
+
+def ijk_priva(gemeten, priva, tot, dagen=PRIVA_IJK_DAGEN):
+    """
+    Factor f zodat stralingssom (binnen, J/cm²) ≈ f × de Priva-verwachting (buiten, J/cm²), met de kleinste
+    kwadraten door 0 over de laatste `dagen` dagen vóór `tot` waarop beide bekend zijn; None bij te weinig dagen.
+    De verwachting is buiten en ligt hoger dan de binnenstraling (glas, schermen): ruw zit hij er ± 100 J/cm²
+    naast, geijkt ± 50 (oktober–november 2026, tegen ± 115 voor Open-Meteo).
+    """
+    paren = [(gemeten[d], priva[d]) for d in priva
+             if tot - timedelta(days=dagen) <= d < tot and priva[d] and gemeten.get(d) is not None]
+    if len(paren) < PRIVA_MIN_DAGEN:
+        return None
+    noemer = sum(p * p for _g, p in paren)
+    return sum(g * p for g, p in paren) / noemer if noemer else None
+
+
+# --- Streefwater en Florgib ---
+
+def streef(lichtsom):
+    """Streefwater (l/m²) tot de Florgib bij de straling over de teelt (J/cm²): tussen winter en zomer recht."""
+    (l_w, w_w), (l_z, w_z) = STREEF_WINTER, STREEF_ZOMER
+    deel = min(1.0, max(0.0, (lichtsom - l_w) / (l_z - l_w)))
+    return w_w + deel * (w_z - w_w)
+
+
+def verloop(deel):
+    """Welk deel van het streefwater er bij `deel` van de tijd tot de Florgib gegeven is (VERLOOP)."""
+    deel = min(1.0, max(0.0, deel))
+    for (x0, y0), (x1, y1) in zip(VERLOOP, VERLOOP[1:]):
+        if deel <= x1:
+            return y0 + (y1 - y0) * (deel - x0) / (x1 - x0)
+    return 1.0
+
+
+def _dag_van_jaar(d):
+    return min(d.timetuple().tm_yday, 365)
+
+
+def klimatologie(straling, venster=KLIMAAT_VENSTER):
+    """{dag van het jaar: gemiddelde stralingssom} over alle jaren, met `venster` dagen ervoor en erna."""
+    per_dag = {}
+    for d, s in straling.items():
+        if s is not None:
+            per_dag.setdefault(_dag_van_jaar(d), []).append(s)
+    uit = {}
+    for n in range(1, 366):
+        waarden = [s for i in range(n - venster, n + venster + 1) for s in per_dag.get((i - 1) % 365 + 1, ())]
+        if waarden:
+            uit[n] = sum(waarden) / len(waarden)
+    return uit
+
+
+def florgib_schattingen(teelten, venster=FLORGIB_VENSTER):
+    """
+    {teelt-id: verwachte Florgib in dagen na planten}, zoals bekend bij het planten: de mediaan van de teelten
+    die rond dezelfde plantdatum (elk jaar, ± `venster` dagen) geplant zijn en vóór dit planten hun Florgib
+    hadden; zonder zulke teelten FLORGIB_STANDAARD.
+    """
+    klaar = [(t["start"], (t["florgib"] - t["start"]).days) for t in teelten
+             if t.get("start") and t.get("florgib") and t["florgib"] > t["start"]]
+    uit = {}
+    for t in teelten:
+        if not t.get("start"):
+            continue
+        n = _dag_van_jaar(t["start"])
+        dagen = sorted(f for s, f in klaar if s + timedelta(days=f) < t["start"]
+                       and min(abs(_dag_van_jaar(s) - n), 365 - abs(_dag_van_jaar(s) - n)) <= venster)
+        uit[t["id"]] = dagen[len(dagen) // 2] if dagen else FLORGIB_STANDAARD
+    return uit
+
+
+def achterstand(k):
+    """Hoeveel l/m² de teelt achter loopt op het schema naar het streefwater (negatief: voor), of None."""
+    if not k.get("streef") or not k.get("florgib_dag"):
+        return None
+    return k["streef"] * verloop(k["leeftijd"] / k["florgib_dag"]) - k["gegeven"]
+
+
 # --- Kenmerken per vak-dag ---
 
-def kenmerken(teelten, gift, straling, van, tot, verwachting=None, eerste_emmer=None):
+def kenmerken(teelten, gift, straling, van, tot, verwachting=None, eerste_emmer=None, klimaat=None,
+              florgib_dagen=None):
     """
     Een dict per vak per dag van..tot waarop er een teelt loopt, met wat er die ochtend bekend is:
     vak, teelt, datum, leeftijd (dagen na planten), sinds (dagen sinds de vorige gift, None als er sinds het
     planten nog geen gift was), vorige_dag en vorige (l/m²) van die gift, S (straling sinds de dag na de vorige
-    gift, of het planten, t/m gisteren), S_vandaag (verwachte straling vandaag), in_oogst (al emmers) en gift
-    (l/m² die dag, 0 als er geen gift was).
-    teelten: dicts met id, vak, start en eind (afgerond, of None); een teelt loopt tot de dag vóór de volgende
-    start op hetzelfde vak. gift: {(vak, datum): l/m²} (giften()); straling: {datum: gemeten J/cm²};
-    verwachting: {datum: verwachte J/cm²} voor S_vandaag (zonder: de gemeten straling van die dag) en voor dagen
-    zonder meting; eerste_emmer: {teelt-id: eerste oogstdag}.
+    gift, of het planten, t/m gisteren), S_vandaag (verwachte straling vandaag), in_oogst (al emmers), gift
+    (l/m² die dag, 0 als er geen gift was), gegeven (l/m² sinds het planten t/m gisteren), florgib (datum als die
+    al geweest is), na_florgib (vanaf de dag van de Florgib: niet meer gieten), florgib_dag (de Florgib in dagen
+    na planten: geregistreerd of geschat), lichtsom (straling van planten tot de Florgib: gemeten t/m gisteren,
+    daarna het gemiddelde van andere jaren) en streef (l/m² tot de Florgib, streef()).
+    teelten: dicts met id, vak, start, florgib (datum of None) en eind (afgerond, of None); een teelt loopt tot de
+    dag vóór de volgende start op hetzelfde vak. gift: {(vak, datum): l/m²} (giften()); straling: {datum: gemeten
+    J/cm²}; verwachting: {datum: verwachte J/cm²} voor S_vandaag (zonder: de gemeten straling van die dag) en voor
+    dagen zonder meting; eerste_emmer: {teelt-id: eerste oogstdag}; klimaat: {dag van het jaar: J/cm²}
+    (klimatologie(); zonder: geen streef); florgib_dagen: {teelt-id: geschatte Florgib in dagen}
+    (florgib_schattingen(); zonder: FLORGIB_STANDAARD).
     """
     verwachting = verwachting or {}
     eerste_emmer = eerste_emmer or {}
+    florgib_dagen = florgib_dagen or {}
     per_vak = {}
     for t in teelten:
         if t.get("start"):
@@ -125,19 +240,33 @@ def kenmerken(teelten, gift, straling, van, tot, verwachting=None, eerste_emmer=
                 eind = min(eind, lijst[i + 1]["start"] - timedelta(days=1))
             eind = min(eind, tot)
             emmer = eerste_emmer.get(t["id"])
-            vorige_dag, vorige, som = None, None, 0.0
+            florgib = t.get("florgib")
+            vorige_dag, vorige, som, gegeven, licht = None, None, 0.0, 0.0, 0.0
             dag = t["start"]
             while dag <= eind:
                 gemeten = straling.get(dag)
                 if dag >= van:
+                    leeftijd = (dag - t["start"]).days
+                    bekend = florgib if florgib and florgib <= dag else None
+                    f_dag = ((bekend - t["start"]).days if bekend
+                             else max(florgib_dagen.get(t["id"], FLORGIB_STANDAARD), leeftijd + 1))
+                    lichtsom = streefwater = None
+                    if klimaat:
+                        lichtsom = licht + sum(klimaat.get(_dag_van_jaar(dag + timedelta(days=j)), 0.0)
+                                               for j in range(max(0, f_dag - leeftijd)))
+                        streefwater = streef(lichtsom)
                     uit.append({
-                        "vak": vak, "teelt": t["id"], "datum": dag, "leeftijd": (dag - t["start"]).days,
+                        "vak": vak, "teelt": t["id"], "datum": dag, "leeftijd": leeftijd,
                         "sinds": (dag - vorige_dag).days if vorige_dag else None, "vorige_dag": vorige_dag,
                         "vorige": vorige, "S": som,
                         "S_vandaag": verwachting.get(dag) if verwachting.get(dag) is not None else gemeten,
-                        "in_oogst": bool(emmer and emmer < dag), "gift": gift.get((vak, dag), 0.0)})
+                        "in_oogst": bool(emmer and emmer < dag), "gift": gift.get((vak, dag), 0.0),
+                        "gegeven": gegeven, "florgib": bekend, "na_florgib": bekend is not None,
+                        "florgib_dag": f_dag, "lichtsom": lichtsom, "streef": streefwater})
+                licht += (gemeten if gemeten is not None else verwachting.get(dag)) or 0.0
                 if (vak, dag) in gift:
                     vorige_dag, vorige, som = dag, gift[(vak, dag)], 0.0
+                    gegeven += gift[(vak, dag)]
                 else:
                     som += (gemeten if gemeten is not None else verwachting.get(dag)) or 0.0
                 dag += timedelta(days=1)
@@ -151,7 +280,8 @@ def straling_tot_nu(k):
 
 def kenmerk_vector(k):
     """Invoer van de regressie: straling (en kwadraat), dagen sinds de gift (en kwadraat), grootte van de vorige
-    gift, geen gift sinds planten, leeftijd in weken."""
+    gift, geen gift sinds planten, leeftijd in weken. (De achterstand op het streefwater als extra kenmerk
+    toetste niet beter; die werkt via de regels in adviezen().)"""
     s = straling_tot_nu(k) / 1000
     sinds = k["sinds"] if k["sinds"] is not None else k["leeftijd"]
     return [s, s * s, sinds, sinds * sinds / 10, (k["vorige"] or 0.0) / 10, 1.0 if k["sinds"] is None else 0.0,
@@ -179,7 +309,8 @@ def train(rijen):
     """
     Model uit vak-dagen met een bekende uitkomst (kenmerken()): per fase {"w": gewichten} of, met te weinig
     rijen of zonder giften/zonder droge dagen, {"kans": gemiddelde van de fase}; met "liter": de mediaan van de
-    giften in die fase (hoeveel er meestal gegeven wordt).
+    giften in die fase (hoeveel er meestal gegeven wordt). De vak-dagen na de Florgib tellen mee: zonder die dagen
+    toetste vooral tuin 1 slechter (ze leren het model dat er laat in de teelt weinig gegoten wordt).
     """
     model = {}
     totaal = [1.0 if r["gift"] >= MIN_GIFT else 0.0 for r in rijen]
@@ -233,10 +364,28 @@ def liter(x):
     return f"{x:.0f}" if abs(x - round(x)) < 0.05 else f"{x:.1f}".replace(".", ",")
 
 
+def streef_tekst(ks):
+    """'62 van ± 110 l/m² gegeven (streef tot de Florgib ± do 19-11) · 8 l/m² achter op schema' voor de
+    vak-dagen van één planting (gemiddeld)."""
+    n = len(ks)
+    gegeven, doel = sum(k["gegeven"] for k in ks) / n, sum(k["streef"] for k in ks) / n
+    achter = sum(achterstand(k) for k in ks) / n
+    florgib = ks[0]["datum"] + timedelta(days=round(sum(k["florgib_dag"] - k["leeftijd"] for k in ks) / n))
+    tekst = f"{liter(round(gegeven))} van ± {liter(round(doel / 5) * 5)} l/m² gegeven (streef tot de Florgib ± {_dagtekst(florgib)})"
+    if achter >= SCHEMA_MARGE:
+        return tekst + f" · {liter(round(achter))} l/m² achter op schema"
+    if achter <= -SCHEMA_MARGE:
+        return tekst + f" · {liter(round(-achter))} l/m² voor op schema"
+    return tekst + " · op schema"
+
+
 def reden(k, p, opmerkingen=(), morgen_kans=None, vandaag_gegeven=None):
     """Korte reden, bijv. 'Vak 27 · 9 dagen na planten · 2.800 J/cm² straling sinds de gift van ma 02-11
-    (15 l/m²) · kans 64 %'."""
+    (15 l/m²) · 62 van ± 110 l/m² gegeven (…) · kans 64 %'."""
     delen = [f"Vak {k['vak']}", f"{k['leeftijd']} {'dag' if k['leeftijd'] == 1 else 'dagen'} na planten"]
+    if k.get("na_florgib"):
+        delen.append(f"Florgib op {_dagtekst(k['florgib'])}: daarna niet meer gieten")
+        return " · ".join(delen)
     if vandaag_gegeven:
         delen.append(f"vandaag al {liter(vandaag_gegeven)} l/m² gegeven")
         return " · ".join(delen)
@@ -248,6 +397,8 @@ def reden(k, p, opmerkingen=(), morgen_kans=None, vandaag_gegeven=None):
         delen.append(f"nog geen gift sinds het planten, {getal(straling_tot_nu(k))} J/cm² straling")
     if k.get("in_oogst"):
         delen.append("in de oogst")
+    if k.get("streef"):
+        delen.append(streef_tekst([k]))
     delen.append(f"kans {p * 100:.0f} %")
     if morgen_kans is not None and p < DREMPEL_WATER <= morgen_kans:
         delen.append("morgen waarschijnlijk wel")
@@ -301,7 +452,11 @@ def adviezen(model, vandaag_rijen, verwacht_morgen=None, opmerkingen=None, vanda
     ook "kans_morgen"); de eigen kans van het vak staat in "kans_vak" en in de reden. "liter": hoeveel er in die
     teeltfase meestal gegeven wordt. opmerkingen: {teelt-id: [(datum, tekst)]} met water-opmerkingen (één bij
     een vak maakt van "niet nodig" voor de hele planting een "twijfel"); vandaag_gegeven: {vak: l/m²} wat er
-    vandaag al gegeven is (Priva): die vakken krijgen "gegeven".
+    vandaag al gegeven is (Priva): die vakken krijgen "gegeven". Vakken vanaf de dag van de Florgib krijgen
+    "na florgib": daarna wordt er niet meer gegoten.
+    Streefwater (per planting, gemiddeld over de vakken): is het streefwater tot de Florgib al gegeven, dan wordt
+    "water" een "twijfel"; loopt de planting STREEF_ACHTER l/m² of meer achter op het schema, dan wordt "niet
+    nodig" een "twijfel". De reden staat in "streef_regel".
     """
     opmerkingen = opmerkingen or {}
     vandaag_gegeven = vandaag_gegeven or {}
@@ -315,21 +470,34 @@ def adviezen(model, vandaag_rijen, verwacht_morgen=None, opmerkingen=None, vanda
         gegeven = vandaag_gegeven.get(k["vak"])
         gegeven = gegeven if gegeven and gegeven >= MIN_GIFT else None
         uit.append({"vak": k["vak"], "teelt": k["teelt"], "planting": namen[k["vak"]],
-                    "advies": "gegeven" if gegeven else None, "kans": p, "kans_vak": p,
+                    "advies": "na florgib" if k.get("na_florgib") else "gegeven" if gegeven else None, "kans": p, "kans_vak": p,
                     "kans_morgen": p_morgen, "kans_morgen_vak": p_morgen, "opmerking": bool(recent),
                     "liter": model[fase(k["leeftijd"])].get("liter"),
                     "reden": reden(k, p, recent, p_morgen, gegeven), "kenmerken": k})
     for naam in dict.fromkeys(a["planting"] for a in uit):
-        groep = [a for a in uit if a["planting"] == naam and a["advies"] != "gegeven"]
+        groep = [a for a in uit if a["planting"] == naam and a["advies"] is None]
         if not groep:
             continue
         p = sum(a["kans_vak"] for a in groep) / len(groep)
         morgens = [a["kans_morgen_vak"] for a in groep if a["kans_morgen_vak"] is not None]
         p_morgen = sum(morgens) / len(morgens) if morgens else None
         a_pl = advies(p, any(a["opmerking"] for a in groep))
+        a_pl, regel = streef_regel(a_pl, [a["kenmerken"] for a in groep])
         for a in groep:
-            a.update(advies=a_pl, kans=p, kans_morgen=p_morgen)
+            a.update(advies=a_pl, kans=p, kans_morgen=p_morgen, streef_regel=regel)
     return uit
+
+
+def streef_regel(adv, ks):
+    """(advies, reden of None) na de regels voor het streefwater, voor de vak-dagen van één planting."""
+    if not ks or not all(k.get("streef") for k in ks):
+        return adv, None
+    n = len(ks)
+    if adv == "water" and sum(k["gegeven"] for k in ks) / n >= sum(k["streef"] for k in ks) / n:
+        return "twijfel", "streefwater al gegeven"
+    if adv == "niet nodig" and sum(achterstand(k) for k in ks) / n >= STREEF_ACHTER:
+        return "twijfel", "ver achter op het schema naar het streefwater"
+    return adv, None
 
 
 def _bereik(waarden, eenheid=""):
@@ -358,6 +526,11 @@ def groepen(lijst):
             delen.append("vandaag al gegeven")
             regels.append(" · ".join(delen))
             continue
+        if adv == "na florgib":
+            data = sorted({k["florgib"] for k in ks})
+            delen.append(f"Florgib op {' en '.join(_dagtekst(d) for d in data)}: daarna niet meer gieten")
+            regels.append(" · ".join(delen))
+            continue
         straling = [straling_tot_nu(k) for k in ks]
         st = (getal(min(straling)) if max(straling) - min(straling) < 50
               else f"{getal(min(straling))}–{getal(max(straling))}")
@@ -371,9 +544,14 @@ def groepen(lijst):
                 delen.append("deels nog geen gift sinds het planten")
         else:
             delen.append(f"nog geen gift sinds het planten ({st} J/cm²)")
+        if all(k.get("streef") for k in ks):
+            delen.append(streef_tekst(ks))
         kans_vak = [round(a.get("kans_vak", a["kans"]) * 100) for a in g]
         delen.append(f"kans {g[0]['kans'] * 100:.0f} %"
                      + (f" (per vak {_bereik(kans_vak, ' %')})" if len(set(kans_vak)) > 1 else ""))
+        regel = next((a.get("streef_regel") for a in g if a.get("streef_regel")), None)
+        if regel:
+            delen.append(f"{regel}, daarom {adv}")
         if adv in ("water", "twijfel"):
             maat = sorted(a["liter"] for a in g if a.get("liter"))
             if maat:
@@ -477,15 +655,20 @@ def terugtoets(rijen, splits, extra=()):
     vakken; "water gekregen" = minstens de helft van de vakken) het aantal toetsdagen en giften, per advies het
     aantal en hoeveel daarvan water kregen, welk deel van de giften "water" / "water of twijfel" kreeg, en de
     vergelijking met blind gokken: dezelfde hoeveelheid "water" willekeurig verdeeld (raak = het giftpercentage)
-    en "nooit water" (juist = de droge dagen). Per fase hetzelfde in "fasen", en per vak in "per_vak".
+    en "nooit water" (juist = de droge dagen). Per fase hetzelfde in "fasen", en per vak in "per_vak". De regels
+    voor het streefwater (adviezen()) zitten er niet in. "na_florgib": vak-dagen vanaf de Florgib in de toetsperiode
+    (niet getoetst) en hoeveel daarvan toch water kregen.
     """
     oud = [r for r in rijen if r["datum"] < splits]
-    nieuw = [r for r in rijen if r["datum"] >= splits]
+    # Getoetst zonder de dagen vanaf de Florgib: die krijgen vast "na florgib" (in de historie 1 gift op ± 3.200).
+    nieuw = [r for r in rijen if r["datum"] >= splits and not r.get("na_florgib")]
     model = train(oud + [r for r in extra if r["datum"] < splits])
     kansen = [kans(model, r) for r in nieuw]
     per_planting = planting_dagen(nieuw, kansen)
     uit = _tel([(p, y) for p, y, _l in per_planting])
-    uit.update(oud_dagen=len(oud), van=min((r["datum"] for r in nieuw), default=None),
+    na = [r for r in rijen if r["datum"] >= splits and r.get("na_florgib")]
+    uit.update(na_florgib={"dagen": len(na), "giften": sum(r["gift"] >= MIN_GIFT for r in na)},
+               oud_dagen=len(oud), van=min((r["datum"] for r in nieuw), default=None),
                tot=max((r["datum"] for r in nieuw), default=None),
                fasen={FASEN[i][2]: _tel([(p, y) for p, y, l in per_planting if fase(l) == i])
                       for i in range(len(FASEN))},

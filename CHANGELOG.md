@@ -3,6 +3,25 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
+## [2.32.0] - 2026-11-11
+
+### Toegevoegd
+- **Watervoorspelling: na de Florgib niet meer gieten.** Vakken vanaf de dag van de (geregistreerde) Florgib krijgen
+  "na florgib" en geen water- of twijfeladvies (historie: 1 gift op ± 3.200 vak-dagen na de Florgib).
+  `database.get_watervoorspelling_data` geeft daarvoor ook `datum_half`.
+- **Streefwater per teelt**: ± 75 l/m² in de winter en ± 150 in de zomer tot de Florgib (bedrijfsomschrijving),
+  daartussen naar de straling over de teelt; de Florgib geregistreerd of geschat uit eerdere teelten rond dezelfde
+  plantdatum. Per planting staat in het advies hoeveel er gegeven is, het streefwater en of de planting op, voor of
+  achter op schema loopt. Regels: al op het streefwater → water wordt twijfel; 20 l/m² of meer achter → niet nodig
+  wordt twijfel.
+- **Stralingsverwachting van Priva** (M4.1, `integrations/priva_meteo.py`): uit de Priva-bestanden in `PRIVA_MAP`
+  (standaard `\\192.168.0.197\Priva` op Windows, `/priva` in de container), geijkt op de gemeten stralingssom van
+  de laatste 14 dagen. Zat er in oktober–november 2026 half zo ver naast als Open-Meteo; Open-Meteo blijft de
+  terugval (en de bron voor de terugtoets).
+
+### Gewijzigd
+- De terugtoets toetst zonder de dagen vanaf de Florgib en meldt die apart.
+
 ## [2.31.3] - 2026-11-13
 
 ### Opgelost

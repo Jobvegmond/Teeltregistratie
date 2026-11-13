@@ -4209,7 +4209,7 @@ def get_standaard_tuin_van_gebruiker(username):
 def get_watervoorspelling_data(tuin_id):
     """
     Alles voor de watervoorspelling van één tuin (watervoorspelling.py), in vijf query's, alleen lezen:
-    - teelten: id, vaknummer, datum_teelt_start, datum_oogst
+    - teelten: id, vaknummer, datum_teelt_start, datum_half (Florgib), datum_oogst
     - water: vaknummer, datum, liter_per_m2, bron (watergift_dag, alle bronnen)
     - straling: {datum: stralingssom van de tuin} (gemiddeld over de afdelingen)
     - eerste_emmer: {teelt_id: eerste oogstdag}
@@ -4222,7 +4222,7 @@ def get_watervoorspelling_data(tuin_id):
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT t.id, v.vaknummer, t.datum_teelt_start, t.datum_oogst
+            SELECT t.id, v.vaknummer, t.datum_teelt_start, t.datum_half, t.datum_oogst
             FROM teelten t JOIN teeltvakken v ON v.id = t.teeltvak_id
             WHERE v.tuin_id = %s AND v.vaknummer IS NOT NULL AND t.datum_teelt_start IS NOT NULL
         """, (tuin_id,))
