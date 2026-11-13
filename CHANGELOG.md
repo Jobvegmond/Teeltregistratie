@@ -3,7 +3,7 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
-## [2.31.2] - 2026-11-11
+## [2.31.3] - 2026-11-13
 
 ### Opgelost
 - **"deadlock detected" bij het opstarten van de taken op de NAS** (de API-taak om 06:00, `prognose_loggen.py` om 08:00
@@ -13,6 +13,24 @@ inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
   veranderd is: de vingerafdruk (broncode plus alle `*_TABEL`-teksten) staat in de nieuwe tabel `schema_versie`; is
   die gelijk, dan is het één leesquery. Een volledige run houdt een advisory lock per transactie vast, zodat nooit twee
   processen tegelijk het schema aanpassen. Na een update draait het volledige schema dus één keer.
+## [2.31.2] - 2026-11-12
+
+### Toegevoegd
+- **Werkplanning: onkruid controleren** (alleen voor de Takenlijst, `werkplanning.py --json`): elke week de vakken
+  van de planting van drie weken eerder (plantweek 43 → week 46), als één taak op de maandag met een veld `tot`
+  (de zondag), zodat de Takenlijst hem laat doorschuiven tot hij is afgevinkt. Niet voor vak 1 (waterteelt). De
+  app, de meldingen en het dagrapport krijgen deze taak niet (`taken(..., onkruid=False)`). Op de teler zijn
+  verzoek, 12 november 2026.
+
+### Gewijzigd
+- **Kans in de titel van het wateradvies**: de items van `watervoorspelling.py --json` heten nu
+  "Water · vak 22–24 · 87 %" en "Twijfel · vak 17–21 · 45 %": de kans van de planting (gemiddelde van de vakken),
+  dezelfde als in de note. Zo zie je in de Takenlijst meteen hoe zeker het advies is. Id's blijven gelijk.
+- **Werkplanning: eerste CXDS op de tweede vrijdag na het planten** (was 14 dagen na het planten): planten op
+  di 10-11 → vr 20-11; een vrijdag als plantdag telt niet mee (`logic/werkplanning.eerste_cxds`).
+- **Werkplanning: niet spuiten op zaterdag en zondag** (was alleen zondag): een CXDS-blok of Florgib op zaterdag
+  gaat naar vrijdag (is die al voorbij, naar maandag), op zondag naar maandag (`spuitdag`). Op de teler zijn
+  verzoek, 9 november 2026.
 
 ## [2.31.1] - 2026-11-11
 

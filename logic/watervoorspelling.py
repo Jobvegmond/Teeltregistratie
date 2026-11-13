@@ -396,7 +396,8 @@ def feed_items(lijst, datum, tuin_naam):
     """
     Items voor de Takenlijst ({id, date, title, area, note, soort, vakken}): één los item per planting met water
     of twijfel, eerst water, dan op vak; geen item voor "niet nodig" of "gegeven". Bijv. title "Water · vak
-    22–24", note "8–10 dagen na planten · 2.362 J/cm² sinds de gift van vr 30-10 (10 l/m²) · kans 87 % · …".
+    22–24 · 87 %" (de kans van de planting: het gemiddelde van de vakken), note "8–10 dagen na planten · 2.362
+    J/cm² sinds de gift van vr 30-10 (10 l/m²) · kans 87 % · …".
     De id is per tuin, dag en planting vast ("water-tuin3-2026-11-05-22-24"), zodat vinkjes en feedback bij het
     item blijven als het advies die dag opnieuw wordt gezet.
     """
@@ -414,7 +415,7 @@ def feed_items(lijst, datum, tuin_naam):
                 note += " · " + " · ".join(dict.fromkeys(opm))
             vakken = [a["vak"] for a in groep]
             uit.append({"id": f"water-{tuin}-{datum}-{min(vakken)}-{max(vakken)}", "date": str(datum),
-                        "title": f"{kop} · vak {naam}", "area": "werk", "note": f"{tuin_naam} · {note}",
+                        "title": f"{kop} · vak {naam} · {groep[0]['kans'] * 100:.0f} %", "area": "werk", "note": f"{tuin_naam} · {note}",
                         "soort": soort, "vakken": vakken})
     return uit
 

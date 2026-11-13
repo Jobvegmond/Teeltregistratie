@@ -1,5 +1,6 @@
 """Tests voor logic/watervoorspelling.py: kenmerken per vak-dag, straling ijken, model, advies, tekst en terugtoets."""
 import random
+import re
 import unittest
 from datetime import date, timedelta
 
@@ -159,9 +160,13 @@ class TestAdviezen(unittest.TestCase):
                          {17: "twijfel", 25: "water", 26: "water", 30: "niet nodig", 31: "gegeven"})
         items = wv.feed_items(lijst, date(2026, 11, 5), "Tuin 3")
         # Eén los item per planting, eerst water, dan twijfel; geen item voor niet nodig of gegeven.
-        self.assertEqual([(i["id"], i["title"], i["soort"], i["vakken"]) for i in items],
+        self.assertEqual([(i["id"], re.sub(r" · \d+ %$", "", i["title"]), i["soort"], i["vakken"]) for i in items],
                          [("water-tuin3-2026-11-05-25-26", "Water · vak 25–26", "water", [25, 26]),
                           ("water-tuin3-2026-11-05-17-17", "Twijfel · vak 17", "twijfel", [17])])
+        # De titel eindigt op de kans van de planting, zoals in de note.
+        for i, a in zip(items, (lijst[1], lijst[0])):
+            self.assertTrue(i["title"].endswith(f" · {a['kans'] * 100:.0f} %"), i["title"])
+            self.assertIn(f"kans {a['kans'] * 100:.0f} %", i["note"])
         self.assertTrue(all((i["date"], i["area"]) == ("2026-11-05", "werk") for i in items))
         self.assertTrue(items[0]["note"].startswith("Tuin 3 · 10 dagen na planten · "))
         self.assertIn("meestal ± 15 l/m²", items[0]["note"])
