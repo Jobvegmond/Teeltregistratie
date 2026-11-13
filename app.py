@@ -100,6 +100,9 @@ from database import (
     get_prognose_log,
     get_oogst_emmers,
     voeg_opmerking_toe,
+    voeg_foto_toe,
+    get_fotos,
+    get_foto_beeld,
     get_opmerkingen,
     get_alle_opmerkingen,
     wijzig_opmerking,
@@ -120,6 +123,7 @@ from logic import perioden
 from logic import planning_editor
 from logic import prognoselog
 from logic import opmerkingen as opm_logic
+from logic import plaagherkenning as plaag
 from logic import opzoeken
 from logic import selectie
 from logic import watergift as wg
@@ -803,11 +807,12 @@ def toon_oogstregistraties_beheer(teelt_id, teelt_info):
 # of één waarde voor alle aangevinkte vakken. Rechts wat er nog te doen is en de laatste registraties.
 # Rekenwerk in logic/registreren.py. Een nieuwe teelt begint niet hier maar op Overzicht: daar staat het
 # concept al klaar in de tijdlijn en zet je het met één knop om in een lopende teelt.
-INV_STEK, INV_FLORGIB, INV_EMMERS, INV_LENGTE, INV_OPMERKING, INV_WIJZIGEN = (
-    "Stek", "Florgib", "Emmers", "Lengte en gewicht", "Opmerking", "Wijzigen")
+INV_STEK, INV_FLORGIB, INV_EMMERS, INV_LENGTE, INV_OPMERKING, INV_FOTO, INV_WIJZIGEN = (
+    "Stek", "Florgib", "Emmers", "Lengte en gewicht", "Opmerking", "Foto", "Wijzigen")
 # In de volgorde van de teelt: stek bij het poten, Florgib halverwege, emmers en lengte/gewicht bij de oogst.
-INV_ACTIES = [INV_STEK, INV_FLORGIB, INV_EMMERS, INV_LENGTE, INV_OPMERKING, INV_WIJZIGEN]
-INV_SOORT = {INV_FLORGIB: "florgib", INV_EMMERS: "emmers", INV_LENGTE: "lengte", INV_OPMERKING: "opmerking"}
+INV_ACTIES = [INV_STEK, INV_FLORGIB, INV_EMMERS, INV_LENGTE, INV_OPMERKING, INV_FOTO, INV_WIJZIGEN]
+INV_SOORT = {INV_FLORGIB: "florgib", INV_EMMERS: "emmers", INV_LENGTE: "lengte", INV_OPMERKING: "opmerking",
+             INV_FOTO: "opmerking"}
 WIJZIG_ONDERDELEN = ["Startdatum en planten", "Florgib", "Oogst", "Opmerkingen"]
 RIJPHEID_TEKSTEN = ["1", "2", "3", "4", "1-2", "2-3", "3-4", "1-3", "2-4", "1-4"]
 
@@ -818,7 +823,7 @@ def _pagina_registreren():
         "Registreren",
         wat="Invullen wat er in de kas gebeurd is, in de tuin die bovenaan gekozen is: het stek per pootweek (met "
             "het weekrapport voor de stekleverancier), de Florgib (lengte en gram), de emmers, de oogstlengte en het "
-            "oogstgewicht, een opmerking, of iets wijzigen of verwijderen. "
+            "oogstgewicht, een opmerking, een foto laten beoordelen op plagen, of iets wijzigen of verwijderen. "
             "Een nieuwe teelt start je op Overzicht (klik op een concept in de tijdlijn).",
         lezen=[
             "Kies bovenaan wat je registreert. Bij Florgib, Emmers en Lengte en gewicht staat elk lopend vak op "
@@ -829,6 +834,11 @@ def _pagina_registreren():
             "**Emmers**: 100 stelen per emmer. Vink *Afronden* aan bij de laatste emmers van een vak (ook "
             "zonder emmers: dan wordt het vak alleen afgerond).",
             "**Rijpheid**: 1 = rauw, 4 = rijp; een bereik als 1-3 voor een mengsel.",
+            "**Foto**: maak of kies een foto van het gewas of een vangplaat, kies de vakken en druk op "
+            "*Insturen*. Binnen ± 2 uur (overdag) staat onder *Ingestuurde foto's* wat erop zit (trips, luis, "
+            "wittevlieg, mineervlieg, spint, ziekten, en ook nuttige bestrijders) en hoe zeker dat is. *Mogelijk* = "
+            "niet goed te zien: kijk zelf met een loep. Met vakken erbij komt de uitslag ook als opmerking "
+            "(Ziekte/plagen) bij die vakken.",
             "**Wijzigen**: kies de plantweek; het jaar springt op het laatste jaar met die week en de teelt op de "
             "laatst geplante van die week (allebei aan te passen). Daaronder per onderdeel een tabblad.",
             "**Stek**: kies de pootweek met ◀ ▶ of klik op het label (standaard de huidige week; is daar nog niets "
@@ -840,7 +850,11 @@ def _pagina_registreren():
         ],
         bron="Alles wat je hier opslaat komt in het logboek (Meer), met jouw naam; *Laatst geregistreerd* komt "
              "daaruit. Stek: te poten komt uit de teeltregistratie; de stekuitval rekent de app zelf uit (bakjes × "
-             "600 stekken). De pootweek is de plantweek van het vak (ma t/m zo, zoals de teeltcode).",
+             "600 stekken). De pootweek is de plantweek van het vak (ma t/m zo, zoals de teeltcode). Foto: een "
+             "geplande Claude-taak op de werklaptop beoordeelt de wachtende foto's elk uur van 7 tot 19 uur (geen "
+             "extra kosten; staat de laptop uit, dan wacht de foto); de NAS zet de uitslag daarna elk uur in de "
+             "app. De foto blijft 60 dagen na de beoordeling bewaard, de uitslag altijd. Het blijft een "
+             "hulpmiddel: twijfel je, kijk dan zelf.",
     )
     if st.session_state.get("inv_melding"):
         st.success(st.session_state.pop("inv_melding"))
@@ -868,7 +882,8 @@ def _pagina_registreren():
         else:
             datum = st.date_input("Datum", key="inv_datum", format="DD-MM-YYYY", width=180)
             st.caption(f"Week {kalender.weeknummer(datum)} · {_DAGEN_KORT[datum.weekday()]} {format_datum(datum)}")
-            {INV_FLORGIB: _inv_florgib, INV_EMMERS: _inv_emmers, INV_OPMERKING: _inv_opmerking}[actie](vakken, datum)
+            {INV_FLORGIB: _inv_florgib, INV_EMMERS: _inv_emmers, INV_OPMERKING: _inv_opmerking,
+             INV_FOTO: _inv_foto}[actie](vakken, datum)
     with rechts:
         soort = INV_SOORT[actie]
         layout.sectie("Laatst geregistreerd")
@@ -1059,6 +1074,88 @@ def _inv_opmerking(vakken, datum):
                 voeg_opmerking_toe([keuzes[l] for l in labels], datum, categorie, tekst.strip(),
                                    gebruiker=huidige_gebruiker())
                 _inv_klaar(f"Opmerking opgeslagen bij {len(labels)} {'vak' if len(labels) == 1 else 'vakken'}.")
+
+
+FOTO_TONEN = 10                 # zoveel ingestuurde foto's (nieuwste eerst) onder Registreren → Foto
+FOTO_TONEN_DAGEN = 30
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _foto_beeld(foto_id):
+    """Het beeld van één ingestuurde foto (verandert niet; alleen weg na FOTO_BEWAREN_DAGEN)."""
+    return get_foto_beeld(foto_id)
+
+
+def _inv_foto_kaart(foto):
+    """Eén ingestuurde foto: links de foto, rechts wat Claude zag (of dat hij nog wacht)."""
+    links, rechts = st.columns([1, 2], gap="medium")
+    beeld = _foto_beeld(foto["id"])
+    if beeld:
+        links.image(beeld, width=300)
+    else:
+        links.caption("De foto zelf is niet meer bewaard.")
+    with rechts:
+        wie = " · ".join(x for x in (format_datum(date.fromisoformat(foto["datum"])),
+                                     f"vak {foto['vakken']}" if foto["vakken"] else "geen vak",
+                                     foto["gebruiker"] or "", foto["toelichting"] or "") if x)
+        st.caption(wie)
+        uitslag = foto["uitslag"]
+        if foto["status"] == "wacht" or not uitslag:
+            st.info("Wacht op beoordeling (elk uur van 7 tot 19 uur, als de werklaptop aan staat).")
+            return
+        kop = plaag.kort(uitslag)
+        st.markdown(f"**{html.escape(kop[:1].upper() + kop[1:])}**")
+        if uitslag.get("samenvatting"):
+            st.write(uitslag["samenvatting"])
+        if uitslag["bevindingen"]:
+            st.dataframe(pd.DataFrame([{
+                "Wat": b["naam"], "Soort": plaag.SOORT_LABEL.get(b["soort"], b["soort"]),
+                "Zekerheid": b["zekerheid"], "Aantal": b["aantal"], "Stadium": b["stadium"],
+                "Kenmerken": b["kenmerken"]} for b in uitslag["bevindingen"]]), hide_index=True)
+        if uitslag.get("advies"):
+            st.markdown(f"**Advies:** {html.escape(uitslag['advies'])}")
+        if uitslag.get("fotokwaliteit") != "goed" and uitslag.get("kwaliteit_tip"):
+            st.caption(f"Foto {uitslag['fotokwaliteit']}: {uitslag['kwaliteit_tip']}")
+
+
+def _inv_foto(vakken, datum):
+    """Foto's insturen voor de plaagherkenning (geplande Claude-taak) en de uitslagen van eerdere foto's."""
+    versie = st.session_state.get("inv_versie", 0)
+    op_label = {f"Vak {r['vak']} · pw {r['plantweek']}": r for r in sorted(vakken, key=lambda r: r["vak"])}
+    with st.form(f"inv_foto_{versie}", border=False):
+        fotos = st.file_uploader("Foto's", type=["jpg", "jpeg", "png", "webp"], accept_multiple_files=True,
+                                 help="Op een telefoon kun je hier ook direct een foto maken. Een scherpe close-up "
+                                      "(onderkant blad, kop, of een stuk vangplaat) werkt het best.")
+        labels = st.multiselect("Vakken (mag leeg)", list(op_label),
+                                help="Met vakken erbij komt de uitslag ook als opmerking bij die vakken.")
+        toelichting = st.text_input("Toelichting (mag leeg)",
+                                    placeholder="Bijv. onderkant blad, gele vangplaat, vlekjes op de kop")
+        if st.form_submit_button("Insturen", type="primary"):
+            if not fotos:
+                st.warning("Maak of kies eerst een foto.")
+            else:
+                try:
+                    klaar = [(f.name, plaag.voorbereiden(f.getvalue())) for f in fotos]
+                except plaag.FotoFout as fout:
+                    st.error(str(fout))
+                else:
+                    gekozen = [op_label[l] for l in labels]
+                    for naam, jpeg in klaar:
+                        voeg_foto_toe(TUIN_ID, [r["id"] for r in gekozen], ", ".join(str(r["vak"]) for r in gekozen),
+                                      datum, toelichting.strip(), naam, jpeg, gebruiker=huidige_gebruiker())
+                    aantal = "1 foto" if len(klaar) == 1 else f"{len(klaar)} foto's"
+                    _inv_klaar(f"{aantal} ingestuurd. De uitslag staat hieronder, meestal binnen 2 uur (overdag).")
+    ingestuurd = get_fotos(TUIN_ID, sinds=datetime.now(_NL_TIJD) - timedelta(days=FOTO_TONEN_DAGEN), met_foto=False)
+    layout.sectie("Ingestuurde foto's", aantal=len(ingestuurd) or None)
+    if not ingestuurd:
+        st.caption(f"Nog geen foto's ingestuurd in de laatste {FOTO_TONEN_DAGEN} dagen.")
+        return
+    for foto in ingestuurd[:FOTO_TONEN]:
+        with st.container(border=True):
+            _inv_foto_kaart(foto)
+    if len(ingestuurd) > FOTO_TONEN:
+        uitleg_help.voetnoot(f"De {FOTO_TONEN} nieuwste van {len(ingestuurd)}; oudere uitslagen staan als "
+                             "opmerking bij het vak.")
 
 
 def _inv_wijzigen():
