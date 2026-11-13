@@ -3,7 +3,8 @@ Koppeling met PATS (pats-c.com): vangplaattellingen van de Trap-Eyes en insecten
 
 API v2 (OpenAPI: <server>/api/v2/openapi.yaml, docs: <server>/api/v2/docs). Inloggen met de gewone PATS-
 gebruikersnaam en -wachtwoord (PATS_USER en PATS_PASSW in .env / .env.taak); dat geeft een toegangstoken van
-2 uur. Wij gebruiken alleen de leesfuncties (sections, spots, detection_classes, counts); de API kan ook
+2 uur. Wij gebruiken alleen de leesfuncties (sections, spots, detection_classes, counts, de Trap-Eye-foto's); de
+foto's met de kaders van PATS mogen wij niet ophalen (daarvoor is een extra recht nodig). De API kan ook
 apparaten verplaatsen en sections stoppen, dat doen we nooit.
 
 Versie 2 staat sinds oktober 2026 op de testserver (beta.pats-c.com) en komt daarna op pats-c.com.
@@ -71,6 +72,21 @@ class Pats:
             model = PATS_MODEL
         return self._get("counts", section_id=section_id, start_date=f"{van:%Y%m%d}", end_date=f"{tot:%Y%m%d}",
                          bin_mode=bin_mode, model=model)
+
+    def fotomomenten(self, section_id, rij, paal, van, tot):
+        """De fotomomenten van een Trap-Eye van..tot (date) als "YYYYMMDD_HHMMSS", oud → nieuw."""
+        antwoord = self._get("trapeye_photo_list", section_id=section_id, row_id=rij, post_id=paal,
+                             start_date=f"{van:%Y%m%d}", end_date=f"{tot:%Y%m%d}")
+        return sorted(antwoord.get("photos") or [])
+
+    def foto(self, section_id, rij, paal, moment):
+        """De foto (JPEG-bytes) van een Trap-Eye op een fotomoment uit fotomomenten(), zonder kaders."""
+        r = requests.get(f"{self.basis}/api/v2/download_trapeye_photo", timeout=TIMEOUT,
+                         params={"section_id": section_id, "row_id": rij, "post_id": paal, "datetime": moment},
+                         headers={"Authorization": f"Bearer {self.token}"})
+        if not r.ok:
+            raise PatsFout(f"foto {rij}/{paal} {moment}: HTTP {r.status_code} {_melding(r)}")
+        return r.content
 
 
 def _melding(r):
