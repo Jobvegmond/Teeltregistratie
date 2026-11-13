@@ -1,32 +1,29 @@
 """
-Plaagherkenning op een foto: Claude (Anthropic API) bekijkt een foto van het gewas of een vangplaat en zegt of
-er trips, luis, wittevlieg of iets anders op zit.
+Plaagherkenning op een foto, zonder Anthropic-API: de teler stuurt in de app (Registreren → Foto) een foto in, die
+komt in de wachtrij (tabel foto_beoordeling). De geplande Claude-taak "Foto's beoordelen" op de werklaptop bekijkt
+de foto's en schrijft per foto een uitslag; de uurtaak op de NAS zet die terug in de app (fotobeoordeling.py).
 
-- `voorbereiden()` maakt van een upload een JPEG die de API aanneemt (rechtop, hooguit 2576 px, < 5 MB).
-- `analyseer()` stuurt de foto naar Claude en geeft een dict met de uitslag (vaste velden, zie SCHEMA).
-- `opmerking_tekst()` maakt van een uitslag de tekst voor een opmerking bij een vak.
-
-De API-sleutel komt uit de omgevingsvariabele ANTHROPIC_API_KEY (op de NAS in .env). Zonder sleutel geeft
-`beschikbaar()` False en toont de app alleen uitleg.
+Hier staat wat beide kanten delen:
+- `voorbereiden()` maakt van een upload een kleine JPEG voor de database (rechtop, hooguit MAX_PIXELS).
+- `INSTRUCTIES` en `SCHEMA`: wat Claude moet doen en de vorm van de uitslag (`opdracht()` zet ze samen).
+- `controleer()` keurt een uitslag van Claude voordat die naar de NAS gaat.
+- `kort()` en `opmerking_tekst()` maken er tekst van voor de app en de opmerking bij het vak.
 """
-import base64
 import hashlib
 import io
 import json
-import os
 
-MODEL = "claude-opus-5-5"
-# Herkennen van kleine insecten is precisiewerk: niet op de laagste stand. Hoger kost vooral wachttijd.
-INSPANNING = "high"
-MAX_PIXELS = 2576               # lange zijde; groter rekent Claude toch niet mee
-MAX_BYTES = 4_500_000           # de API neemt tot 5 MB per afbeelding aan (na base64 iets meer: ruim blijven)
+MAX_PIXELS = 2000               # lange zijde in de database; scherp genoeg voor trips en luis, ± 0,3–0,6 MB
+KWALITEIT = 85
 
 SOORTEN = ("plaag", "ziekte", "nuttig", "schade", "anders")
 ZEKERHEDEN = ("zeker", "waarschijnlijk", "mogelijk")
+FOTOTYPES = ("gewas", "vangplaat", "anders")
+FOTOKWALITEIT = ("goed", "matig", "slecht")
 SOORT_LABEL = {"plaag": "Plaag", "ziekte": "Ziekte", "nuttig": "Nuttig (bestrijder)", "schade": "Schade",
                "anders": "Anders"}
 
-SYSTEEM = """Je bent een ervaren gewasbeschermingsadviseur in de Nederlandse glastuinbouw. Je bekijkt foto's van \
+INSTRUCTIES = """Je bent een ervaren gewasbeschermingsadviseur in de Nederlandse glastuinbouw. Je bekijkt foto's van \
 een kwekerij van matricaria (Tanacetum parthenium, snijbloem, grondteelt onder glas, LED-belichting, biologische \
 bestrijding met roofmijten en sluipwespen naast chemie). De foto is van het gewas (blad, kop, stengel, bloem) of \
 van een gele of blauwe vangplaat.
@@ -55,8 +52,6 @@ zekerheid "mogelijk" en zeg wat de teler moet doen om het zeker te weten (loep, 
 
 Schrijf alles in het Nederlands, kort en zakelijk."""
 
-VRAAG = "Wat zie je op deze foto? Zit er trips, luis, wittevlieg of iets anders op?"
-
 _BEVINDING = {
     "type": "object",
     "properties": {
@@ -73,8 +68,8 @@ _BEVINDING = {
 SCHEMA = {
     "type": "object",
     "properties": {
-        "fototype": {"type": "string", "enum": ["gewas", "vangplaat", "anders"]},
-        "fotokwaliteit": {"type": "string", "enum": ["goed", "matig", "slecht"]},
+        "fototype": {"type": "string", "enum": list(FOTOTYPES)},
+        "fotokwaliteit": {"type": "string", "enum": list(FOTOKWALITEIT)},
         "kwaliteit_tip": {"type": "string", "description": "hoe een betere foto te maken; leeg als goed"},
         "bevindingen": {"type": "array", "items": _BEVINDING},
         "samenvatting": {"type": "string", "description": "één of twee zinnen"},
@@ -85,24 +80,19 @@ SCHEMA = {
 }
 
 
-class AnalyseFout(Exception):
-    """Iets ging mis bij de analyse; de tekst is voor de teler bedoeld."""
-
-
-def beschikbaar():
-    """True als er een API-sleutel is."""
-    return bool(os.environ.get("ANTHROPIC_API_KEY"))
+class FotoFout(Exception):
+    """Iets ging mis met de foto; de tekst is voor de teler bedoeld."""
 
 
 def sleutel(data):
-    """Vaste sleutel per foto, om een uitslag niet twee keer te betalen."""
+    """Vaste sleutel per foto (om dezelfde foto niet twee keer in te sturen)."""
     return hashlib.sha1(data).hexdigest()
 
 
 def voorbereiden(data):
     """
-    Upload (bytes) → JPEG-bytes: rechtop gezet volgens de EXIF, RGB, lange zijde hooguit MAX_PIXELS en kleiner dan
-    MAX_BYTES. Geeft AnalyseFout als het geen leesbare afbeelding is.
+    Upload (bytes) → JPEG-bytes: rechtop gezet volgens de EXIF, RGB, lange zijde hooguit MAX_PIXELS.
+    Geeft FotoFout als het geen leesbare afbeelding is.
     """
     from PIL import Image, ImageOps, UnidentifiedImageError
 
@@ -110,82 +100,57 @@ def voorbereiden(data):
         beeld = Image.open(io.BytesIO(data))
         beeld = ImageOps.exif_transpose(beeld)
     except (UnidentifiedImageError, OSError) as fout:
-        raise AnalyseFout("Dit bestand is geen foto die de app kan lezen (gebruik JPG of PNG).") from fout
+        raise FotoFout("Dit bestand is geen foto die de app kan lezen (gebruik JPG of PNG).") from fout
     beeld = beeld.convert("RGB")
     beeld.thumbnail((MAX_PIXELS, MAX_PIXELS))
-    for kwaliteit in (90, 80, 70, 60):
-        uit = io.BytesIO()
-        beeld.save(uit, format="JPEG", quality=kwaliteit)
-        if uit.tell() <= MAX_BYTES:
-            return uit.getvalue()
-    beeld.thumbnail((MAX_PIXELS // 2, MAX_PIXELS // 2))
     uit = io.BytesIO()
-    beeld.save(uit, format="JPEG", quality=80)
+    beeld.save(uit, format="JPEG", quality=KWALITEIT)
     return uit.getvalue()
 
 
-def _client():
-    import anthropic
-    return anthropic.Anthropic()
+def opdracht():
+    """De opdracht voor de geplande taak: instructies en de vorm van de uitslag (Markdown)."""
+    return (f"# Foto's beoordelen\n\n{INSTRUCTIES}\n\n"
+            "## Vorm van de uitslag\n\nSchrijf per foto `<id>.json` (UTF-8) met precies dit JSON-schema:\n\n"
+            f"```json\n{json.dumps(SCHEMA, ensure_ascii=False, indent=2)}\n```\n")
 
 
-def _bericht(jpeg, toelichting=""):
-    tekst = VRAAG + (f"\n\nToelichting van de teler: {toelichting.strip()}" if toelichting.strip() else "")
-    return [{"role": "user", "content": [
-        {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
-                                     "data": base64.standard_b64encode(jpeg).decode("ascii")}},
-        {"type": "text", "text": tekst},
-    ]}]
-
-
-def lees_antwoord(antwoord):
-    """Het API-antwoord → dict volgens SCHEMA (AnalyseFout bij een weigering of een afgebroken antwoord)."""
-    if antwoord.stop_reason == "refusal":
-        raise AnalyseFout("Claude wilde deze foto niet beoordelen. Probeer een andere foto.")
-    if antwoord.stop_reason == "max_tokens":
-        raise AnalyseFout("Het antwoord van Claude was te lang en is afgebroken. Probeer het nog eens.")
-    teksten = [b.text for b in antwoord.content if getattr(b, "type", None) == "text"]
-    if not teksten:
-        raise AnalyseFout("Claude gaf geen antwoord. Probeer het nog eens.")
-    try:
-        uitslag = json.loads(teksten[-1])
-    except json.JSONDecodeError as fout:
-        raise AnalyseFout("Het antwoord van Claude was onleesbaar. Probeer het nog eens.") from fout
-    uitslag.setdefault("bevindingen", [])
-    return uitslag
-
-
-def analyseer(jpeg, toelichting="", client=None):
-    """
-    Stuur een voorbereide foto (JPEG-bytes) naar Claude en geef de uitslag (dict volgens SCHEMA).
-    Weigert het model, dan probeert de API het zelf opnieuw op een ander model (server-side fallback).
-    """
-    import anthropic
-
-    client = client or _client()
-    try:
-        antwoord = client.beta.messages.create(
-            model=MODEL,
-            max_tokens=16000,
-            system=SYSTEEM,
-            messages=_bericht(jpeg, toelichting),
-            output_config={"effort": INSPANNING, "format": {"type": "json_schema", "schema": SCHEMA}},
-            betas=["server-side-fallback-2026-07-01"],
-            fallbacks="default",
-        )
-    except anthropic.AuthenticationError as fout:
-        raise AnalyseFout("De API-sleutel (ANTHROPIC_API_KEY) klopt niet.") from fout
-    except anthropic.PermissionDeniedError as fout:
-        raise AnalyseFout("De API-sleutel mag dit model niet gebruiken (of het tegoed is op).") from fout
-    except anthropic.RateLimitError as fout:
-        raise AnalyseFout("Even te veel aanvragen tegelijk. Probeer het over een minuut opnieuw.") from fout
-    except anthropic.BadRequestError as fout:
-        raise AnalyseFout(f"Claude kon deze foto niet aannemen: {fout.message}") from fout
-    except anthropic.APIStatusError as fout:
-        raise AnalyseFout(f"Claude is even niet bereikbaar (fout {fout.status_code}). Probeer het later.") from fout
-    except anthropic.APIConnectionError as fout:
-        raise AnalyseFout("Geen verbinding met Claude. Is er internet?") from fout
-    return lees_antwoord(antwoord)
+def controleer(uitslag):
+    """Lijst met fouten in een uitslag (leeg = goed); volgt SCHEMA zonder extra bibliotheek."""
+    if not isinstance(uitslag, dict):
+        return ["de uitslag is geen JSON-object"]
+    fouten = []
+    velden = SCHEMA["properties"]
+    for veld in SCHEMA["required"]:
+        if veld not in uitslag:
+            fouten.append(f"veld '{veld}' ontbreekt")
+    for veld in uitslag:
+        if veld not in velden:
+            fouten.append(f"onbekend veld '{veld}'")
+    for veld, opties in (("fototype", FOTOTYPES), ("fotokwaliteit", FOTOKWALITEIT)):
+        if veld in uitslag and uitslag[veld] not in opties:
+            fouten.append(f"'{veld}' moet een van {', '.join(opties)} zijn")
+    for veld in ("kwaliteit_tip", "samenvatting", "advies"):
+        if veld in uitslag and not isinstance(uitslag[veld], str):
+            fouten.append(f"'{veld}' moet tekst zijn")
+    bevindingen = uitslag.get("bevindingen", [])
+    if not isinstance(bevindingen, list):
+        return fouten + ["'bevindingen' moet een lijst zijn"]
+    for nr, b in enumerate(bevindingen, 1):
+        if not isinstance(b, dict):
+            fouten.append(f"bevinding {nr} is geen object")
+            continue
+        for veld in _BEVINDING["required"]:
+            if not isinstance(b.get(veld), str):
+                fouten.append(f"bevinding {nr}: '{veld}' ontbreekt of is geen tekst")
+        if b.get("soort") not in SOORTEN:
+            fouten.append(f"bevinding {nr}: 'soort' moet een van {', '.join(SOORTEN)} zijn")
+        if b.get("zekerheid") not in ZEKERHEDEN:
+            fouten.append(f"bevinding {nr}: 'zekerheid' moet een van {', '.join(ZEKERHEDEN)} zijn")
+        for veld in b:
+            if veld not in _BEVINDING["properties"]:
+                fouten.append(f"bevinding {nr}: onbekend veld '{veld}'")
+    return fouten
 
 
 def kort(uitslag):
@@ -197,17 +162,12 @@ def kort(uitslag):
     return ", ".join(delen) if delen else "niets gevonden"
 
 
-def opmerking_tekst(uitslagen):
-    """
-    Tekst voor een opmerking bij een vak, uit één of meer uitslagen (lijst van (bestandsnaam, uitslag)).
-    """
-    regels = []
-    for naam, uitslag in uitslagen:
-        kop = f"Foto {naam}: {kort(uitslag)}." if len(uitslagen) > 1 else f"Fotoherkenning: {kort(uitslag)}."
-        regels.append(kop)
-        for b in uitslag.get("bevindingen", []):
-            details = "; ".join(x for x in (b.get("aantal"), b.get("stadium")) if x)
-            regels.append(f"- {b.get('naam')}: {b.get('zekerheid')}{' · ' + details if details else ''}")
-        if uitslag.get("advies"):
-            regels.append(f"Advies: {uitslag['advies']}")
+def opmerking_tekst(uitslag):
+    """Tekst voor de opmerking (Ziekte/plagen) bij de vakken van een beoordeelde foto."""
+    regels = [f"Fotoherkenning: {kort(uitslag)}."]
+    for b in uitslag.get("bevindingen", []):
+        details = "; ".join(x for x in (b.get("aantal"), b.get("stadium")) if x)
+        regels.append(f"- {b.get('naam')}: {b.get('zekerheid')}{' · ' + details if details else ''}")
+    if uitslag.get("advies"):
+        regels.append(f"Advies: {uitslag['advies']}")
     return "\n".join(regels)

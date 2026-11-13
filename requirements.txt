@@ -3,6 +3,5 @@ pandas
 psycopg2-binary
 streamlit-authenticator
 requests
-anthropic>=2.8
 openpyxl
 tzdata

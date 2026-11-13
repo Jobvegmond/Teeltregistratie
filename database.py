@@ -1,4 +1,5 @@
 import os
+import json
 import threading
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta
@@ -617,6 +618,8 @@ def init_db():
         # Dag- en weekrapporten met de duiding van Claude, en de feedback daarop (dagrapport.py, sinds 2.26.0).
         cursor.execute(RAPPORT_TABEL)
         cursor.execute(RAPPORT_FEEDBACK_TABEL)
+        # Foto's die op plagen beoordeeld worden (Registreren → Foto, fotobeoordeling.py).
+        cursor.execute(FOTO_TABEL)
         # Gewasbescherming, biologie en voeding per vak (sinds 2.14.0 uit Agro4all, agro4all_import.py).
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS middel (
@@ -1605,6 +1608,114 @@ RAPPORT_FEEDBACK_TABEL = """
         tijdstip TIMESTAMPTZ DEFAULT now()
     )
 """
+
+
+FOTO_TABEL = """
+    CREATE TABLE IF NOT EXISTS foto_beoordeling (
+        id SERIAL PRIMARY KEY,
+        tuin_id INTEGER,
+        teelt_ids TEXT NOT NULL DEFAULT '[]',
+        vakken TEXT,
+        datum TEXT NOT NULL,
+        toelichting TEXT,
+        bestandsnaam TEXT,
+        foto BYTEA,
+        gebruiker TEXT,
+        aangemaakt TIMESTAMPTZ DEFAULT now(),
+        status TEXT NOT NULL DEFAULT 'wacht' CHECK (status IN ('wacht', 'klaar')),
+        uitslag TEXT,
+        beoordeeld_op TIMESTAMPTZ
+    )
+"""
+_FOTO_KOLOMMEN = ("id", "tuin_id", "teelt_ids", "vakken", "datum", "toelichting", "bestandsnaam", "gebruiker",
+                  "aangemaakt", "status", "uitslag", "beoordeeld_op")
+
+
+def maak_foto_tabel():
+    """De tabel foto_beoordeling als die er nog niet is (voor fotobeoordeling.py, dat geen init_db draait)."""
+    with get_connection() as conn:
+        conn.cursor().execute(FOTO_TABEL)
+        conn.commit()
+
+
+def _foto_regel(r, met_foto):
+    regel = dict(zip(_FOTO_KOLOMMEN, r))
+    regel["teelt_ids"] = json.loads(regel["teelt_ids"] or "[]")
+    regel["uitslag"] = json.loads(regel["uitslag"]) if regel["uitslag"] else None
+    if met_foto:
+        regel["foto"] = bytes(r[len(_FOTO_KOLOMMEN)]) if r[len(_FOTO_KOLOMMEN)] is not None else None
+    return regel
+
+
+def voeg_foto_toe(tuin_id, teelt_ids, vakken, datum, toelichting, bestandsnaam, jpeg, gebruiker=None):
+    """Een foto in de wachtrij voor de beoordeling; geeft het id."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO foto_beoordeling (tuin_id, teelt_ids, vakken, datum, toelichting, bestandsnaam, foto,
+                                          gebruiker)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id
+        """, (tuin_id, json.dumps([int(i) for i in teelt_ids]), vakken, str(datum), toelichting or None,
+              bestandsnaam, psycopg2.Binary(jpeg), gebruiker))
+        nieuw_id = cursor.fetchone()[0]
+        conn.commit()
+    return nieuw_id
+
+
+def get_fotos(tuin_id=None, sinds=None, status=None, met_foto=True):
+    """Foto's (nieuwste eerst) als dicts; teelt_ids en uitslag al uit JSON gelezen."""
+    voorwaarden, waarden = [], []
+    if tuin_id is not None:
+        voorwaarden.append("tuin_id = %s")
+        waarden.append(tuin_id)
+    if sinds is not None:
+        voorwaarden.append("aangemaakt >= %s")
+        waarden.append(sinds)
+    if status is not None:
+        voorwaarden.append("status = %s")
+        waarden.append(status)
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(f"""
+            SELECT {', '.join(_FOTO_KOLOMMEN)}{', foto' if met_foto else ''} FROM foto_beoordeling
+            {'WHERE ' + ' AND '.join(voorwaarden) if voorwaarden else ''} ORDER BY aangemaakt DESC, id DESC
+        """, waarden)
+        return [_foto_regel(r, met_foto) for r in cursor.fetchall()]
+
+
+def get_foto_beeld(foto_id):
+    """Het beeld (JPEG-bytes) van één foto, of None als het al opgeruimd is."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT foto FROM foto_beoordeling WHERE id = %s", (foto_id,))
+        r = cursor.fetchone()
+    return bytes(r[0]) if r and r[0] is not None else None
+
+
+def zet_foto_uitslag(foto_id, uitslag):
+    """Uitslag bij een wachtende foto zetten; geeft de foto (dict, zonder beeld) of None als die niet (meer) wacht."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(f"""
+            UPDATE foto_beoordeling SET status = 'klaar', uitslag = %s, beoordeeld_op = now()
+            WHERE id = %s AND status = 'wacht' RETURNING {', '.join(_FOTO_KOLOMMEN)}
+        """, (json.dumps(uitslag, ensure_ascii=False), foto_id))
+        r = cursor.fetchone()
+        conn.commit()
+    return _foto_regel(r, False) if r else None
+
+
+def ruim_fotos_op(dagen):
+    """Het beeld weggooien van foto's die langer dan `dagen` geleden beoordeeld zijn (de uitslag blijft)."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE foto_beoordeling SET foto = NULL
+            WHERE foto IS NOT NULL AND status = 'klaar' AND beoordeeld_op < now() - %s * interval '1 day'
+        """, (dagen,))
+        aantal = cursor.rowcount
+        conn.commit()
+    return aantal
 
 
 def bewaar_rapport(sleutel, soort, van, tot, bundel, duiding, aan):
