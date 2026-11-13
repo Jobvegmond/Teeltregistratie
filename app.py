@@ -1847,6 +1847,12 @@ def _pagina_overzicht():
             "op de Trap-Eye(s) naast dat vak (een plaat hangt tussen twee vakken en telt voor allebei). In de balk "
             "de gewasmetingen: de lengte bij de Florgib en de eindmeting (lengte · gewicht · rijpheid) op de dag "
             "dat ze geregistreerd is. Klik op een getal voor de telling per plaat, op een meting voor het vak.",
+            "*Foto's van de vangplaat*: klik op het getal in de regel *plaat*. Onder de tabel staat per plaat met "
+            "nieuwe trips wat er sinds de vorige foto op de plaat bij kwam: genummerde uitsneden, de kleinste plek "
+            "eerst (daar zitten de trips tussen), met boven de vorige foto en onder de nieuwe. In *Hele foto met de "
+            "nieuwe plekken* staat om elke plek een rode ring met hetzelfde nummer. Het is alles wat erbij kwam, ook "
+            "insecten die PATS niet telt; welke plek de getelde trips is, geeft PATS niet door. Bij een nieuwe "
+            "plaat of een heel andere belichting zegt de vergelijking weinig.",
             "Klik op een balk voor het vak, op een driehoekje voor de middelen, op een watergift voor alle "
             "gietbeurten van die dag, op een concept om het te verschuiven, te starten als teelt of te verwijderen, "
             "en op een lege plek in een vakregel (vanaf deze week) om daar een concept te plannen.",
@@ -1857,7 +1863,7 @@ def _pagina_overzicht():
             "In het register opent een klik op een regel het vak.",
         ],
         bron="Watergift: Priva (API), elke ochtend opgehaald. Behandelingen: Agro4all, daarvoor de "
-             "klimaatregistratie. Insectentellingen: PATS, elk uur opgehaald (tuin 1: nog alleen de twee PATS-C's). Het teeltmodel telt per dag een deel van de teelt af, afhankelijk van de "
+             "klimaatregistratie. Insectentellingen: PATS, elk uur opgehaald (tuin 1: nog alleen de twee PATS-C's). Foto's van de vangplaten: rechtstreeks van PATS, opgehaald als je het venster opent; de nieuwe plekken berekent de app zelf door de foto met de vorige te vergelijken. Het teeltmodel telt per dag een deel van de teelt af, afhankelijk van de "
              "lichtsom binnen en de "
              f"afwijking van de lichtlijn ({formule_tekst()}), met een correctie per tuin. Het leert van alle "
              "afgeronde vakken (historie uit de klimaatregistratie plus wat in de app is afgerond). Na de Florgib "
