@@ -117,7 +117,9 @@ def maak_bundel(soort, vandaag):
     from utils.format import fmt_kort
 
     sleutel, van, tot, week = periode(soort, vandaag)
+    week_rapport = soort == "week"
     lengte = (tot - van).days + 1
+    dagen = dr.dagenlijst(tot, dr.REEKS_DAGEN[soort])         # voor de grafiekjes
     v_van, v_tot = van - timedelta(days=lengte), tot - timedelta(days=lengte)
 
     def plandatum(start):
@@ -170,6 +172,8 @@ def maak_bundel(soort, vandaag):
         behandelingen = [{"vak": int(b["vaknummer"]), "datum": _datum(b["datum"]), "middel": b["middel"],
                           "type": b["type"], "doel": b.get("doel")}
                          for b in database.get_behandelingen(tid, vandaag - timedelta(days=28), vandaag)]
+        if week_rapport:                # het weekrapport gaat niet over Agro4all
+            behandelingen = []
         # Werkplanning (CXDS, Florgib, planten): alleen voor een tuin die in Agro4all registreert.
         taken = []
         if behandelingen:
@@ -207,8 +211,15 @@ def maak_bundel(soort, vandaag):
                    "datum": _datum(w.datum), "liter": float(w.liter_per_m2)}
                   for w in water.itertuples() if (w.liter_per_m2 or 0) > 0]
 
-        tellingen = database.get_pats_tellingen(tid, min(v_van, vandaag - timedelta(days=17)), vandaag)
+        tellingen = database.get_pats_tellingen(tid, min(v_van, dagen[0], vandaag - timedelta(days=17)), vandaag)
         dagtotalen = pats.dagtotalen(tellingen)
+        afd_m2 = {a: m2 for (t_id, a), m2 in g.afd_m2.items() if t_id == tid}
+        uur_reeks, _meteo = database.get_klimaat_uur(tid, dagen[0], tot)
+        reeksen = {"dagen": [str(d) for d in dagen],
+                   "afwijking": dr.reeks_afwijking(g.klimaat[g.klimaat["tuin_id"] == tid], afd_m2, dagen),
+                   "temp": dr.reeks_temp(g.klimaat[g.klimaat["tuin_id"] == tid], afd_m2, dagen),
+                   "rv_uren": dr.reeks_rv_uren(uur_reeks, afd_m2, dagen),
+                   "pats": dr.reeks_pats(dagtotalen, dagen)}
         pats_feit = []
         for insect in dict.fromkeys(r["insect"] for r in dagtotalen):
             pats_feit.append({"insect": insect,
@@ -222,9 +233,11 @@ def maak_bundel(soort, vandaag):
             verwacht.pop("pats", None)
 
         signalen += dr.data_actueel(nr, database.get_laatste_data(tid), verwacht, vandaag)
-        signalen += dr.registraties(nr, teelten, [(v, s) for v, s in planning if s < vandaag], vandaag)
-        signalen += dr.bespuitingen(nr, list(lopend.values()), behandelingen, taken, bezetting, van, tot, vandaag)
-        signalen += dr.klimaat(nr, {k: nu["waarden"].get(k, {}) for k in volgorde}, advies)
+        if not week_rapport:            # registraties en bespuitingen komen uit Agro4all
+            signalen += dr.registraties(nr, teelten, [(v, s) for v, s in planning if s < vandaag], vandaag)
+            signalen += dr.bespuitingen(nr, list(lopend.values()), behandelingen, taken, bezetting, van, tot, vandaag)
+        # Het stookadvies (afwijking van de strategie) hoort bij het dagrapport.
+        signalen += dr.klimaat(nr, {k: nu["waarden"].get(k, {}) for k in volgorde}, {} if week_rapport else advies)
         signalen += dr.water(nr, {k: nu["waarden"].get(k, {}) for k in volgorde}, giften, bezetting)
         signalen += dr.plagen(nr, dagtotalen, vandaag)
 
@@ -239,10 +252,10 @@ def maak_bundel(soort, vandaag):
                         for r in gebeurd],
             "behandelingen": [{"datum": d, "middel": m, "vakken": ", ".join(str(v) for v in sorted(set(vakken)))}
                               for (d, m), vakken in sorted(per_middel.items())],
-            "pats": pats_feit, "kolommen": kolommen,
+            "pats": pats_feit, "reeksen": reeksen, "kolommen": kolommen,
             "kengetallen": {k: nu["waarden"].get(k, {}) for k in kolommen},
             "kengetallen_vorige": {k: toen["waarden"].get(k, {}) for k in kolommen},
-            "stookadvies": {f"Afd. {a}": v for a, v in sorted(advies.items())},
+            "stookadvies": {} if week_rapport else {f"Afd. {a}": v for a, v in sorted(advies.items())},
             "lopende_vakken": len(lopend),
             "werkplanning": [{"datum": t["datum"], "titel": t["titel"], "toelichting": t["toelichting"]}
                              for t in taken],
@@ -301,6 +314,8 @@ def controleer_duiding(duiding, bundel):
         if c.get("id") in ids:
             fouten.append(f"conclusie {i}: id {c.get('id')} komt dubbel voor")
         ids.add(c.get("id"))
+        if c.get("actie") is not None and not isinstance(c["actie"], str):
+            fouten.append(f"conclusie {i}: actie moet tekst zijn")
         if c.get("soort") not in ("opvallend", "fout", "advies"):
             fouten.append(f"conclusie {i}: soort moet opvallend, fout of advies zijn")
         if c.get("tuin") not in (None, 1, 3):
@@ -328,13 +343,47 @@ def verstuur_rapport(database, mail, bundel, duiding, args, stempel):
               f"{len(bundel['signalen'])} signalen) aan {', '.join(aan)}")
         return
     sleutel = bundel["sleutel"]
-    mail.verstuur_en_log("dagrapport", sleutel + (" (proef)" if args.test else ""), onderwerp, html_tekst, aan,
-                         log=database.log_mail)
+    logsleutel = getattr(args, "proef_sleutel", None) or sleutel + (" (proef)" if args.test else "")
+    mail.verstuur_en_log("dagrapport", logsleutel, onderwerp, html_tekst, aan,
+                         tekst=dr.tekst_bericht(bundel, duiding, APP_URL), log=database.log_mail)
     if not args.test:
         database.bewaar_rapport(sleutel, bundel["soort"], bundel["van"], bundel["tot"], als_json(bundel),
                                 als_json(duiding) if duiding else None, ", ".join(aan))
     print(f"[{stempel}] {'Proefmail' if args.test else 'Gemaild'}: '{onderwerp}' "
           f"({'met' if duiding else 'zonder'} duiding) aan {', '.join(aan)}")
+
+
+PROEF_DOMEIN = "@tanacetum.nl"
+
+
+def verstuur_proeven(database, mail, args, stempel, map_):
+    """
+    Proefbestanden proef-*.json in de rapportenmap ({bundel, duiding, aan}): één proefmail naar `aan` (alleen een adres
+    van het eigen domein), zonder het rapport te bewaren of mee te tellen. De rapportenmap is op de NAS alleen-lezen
+    aangekoppeld, dus het bestand blijft staan; dat een proef (bestandsnaam + wijzigingstijd) al verstuurd is, staat in
+    de mail-log. Kan dat niet worden nagegaan, dan gaat er niets uit. True bij een fout.
+    """
+    fout = False
+    for bestand in sorted(map_.glob("proef-*.json")) if map_.is_dir() else []:
+        try:
+            proef = json.loads(bestand.read_text(encoding="utf-8"))
+            bundel, aan = proef["bundel"], proef["aan"].strip()
+            if not aan.lower().endswith(PROEF_DOMEIN) or "," in aan:
+                raise ValueError(f"een proefmail gaat naar één adres @tanacetum.nl, niet naar '{aan}'")
+            merk = f"proef {bestand.name} {int(bestand.stat().st_mtime)}"
+            if database.mail_log_bestaat("dagrapport", merk):
+                continue
+        except Exception as e:
+            print(f"[{stempel}] FOUT: proefbestand {bestand.name} niet verstuurd ({e})", file=sys.stderr)
+            fout = True
+            continue
+        try:
+            verstuur_rapport(database, mail, bundel, proef.get("duiding"),
+                             argparse.Namespace(**{**vars(args), "test": aan, "proef_sleutel": merk}), stempel)
+        except mail.MailFout as e:
+            print(f"[{stempel}] FOUT bij de proefmail {bestand.name}: {e}", file=sys.stderr)
+            fout = True
+    return fout
 
 
 def verstuur(args):
@@ -351,9 +400,9 @@ def verstuur(args):
     if not mail.verzendweg() and not args.droog:
         print(f"[{stempel}] Het versturen is nog niet ingesteld (GRAPH_… of SMTP_… in .env.taak); niets gedaan.")
         return
-    fout = False
     gedaan = set()
     map_ = Path(args.rapporten)
+    fout = verstuur_proeven(database, mail, args, stempel, map_)
     for bestand in sorted(map_.glob("rapport-*.json")) if map_.is_dir() else []:
         try:
             rapport = json.loads(bestand.read_text(encoding="utf-8"))

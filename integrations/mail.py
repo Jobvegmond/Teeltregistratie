@@ -112,8 +112,10 @@ def smtp_bericht(onderwerp, tekst, html_tekst, aan, bijlagen=()):
     bericht["Subject"] = onderwerp
     bericht["From"] = afzender()
     bericht["To"] = ", ".join(aan)
-    bericht.set_content(tekst)
-    bericht.add_alternative(html_tekst, subtype="html")
+    # Vaste transportcodering: de automatische keuze (quoted-printable) kwam via Graph's MIME-route verminkt aan
+    # (losse "=", "=B0C" voor "°C"); base64 is overal veilig.
+    bericht.set_content(tekst, cte="base64")
+    bericht.add_alternative(html_tekst, subtype="html", cte="base64")
     html_deel = bericht.get_payload()[1]
     for b in bijlagen:
         if b.cid:
@@ -124,8 +126,17 @@ def smtp_bericht(onderwerp, tekst, html_tekst, aan, bijlagen=()):
     return bericht
 
 
-def _graph(onderwerp, html_tekst, aan, bijlagen):
-    """Versturen via Microsoft Graph (client credentials, Mail.Send) namens de mailbox RAPPORT_VAN."""
+def graph_mime(onderwerp, tekst, html_tekst, aan, bijlagen=()):
+    """Het bericht als MIME (tekst + HTML, multipart/alternative), base64 voor Graph /sendMail met text/plain."""
+    return base64.b64encode(smtp_bericht(onderwerp, tekst, html_tekst, aan, bijlagen).as_bytes()).decode("ascii")
+
+
+def _graph(onderwerp, html_tekst, aan, bijlagen, tekst=None):
+    """
+    Versturen via Microsoft Graph (client credentials, Mail.Send) namens de mailbox RAPPORT_VAN. Met een `tekst` gaat
+    het als MIME, zodat de mail ook een tekstversie heeft (multipart/alternative); weigert Graph dat, dan volgt het
+    gewone JSON-bericht met alleen HTML.
+    """
     import requests
     token = requests.post(
         f"https://login.microsoftonline.com/{instelling('GRAPH_TENANT_ID')}/oauth2/v2.0/token", timeout=TIMEOUT,
@@ -133,10 +144,17 @@ def _graph(onderwerp, html_tekst, aan, bijlagen):
               "scope": "https://graph.microsoft.com/.default", "grant_type": "client_credentials"})
     if not token.ok:
         raise MailFout(f"aanmelden bij Microsoft mislukt ({token.status_code}): {token.text[:300]}")
-    r = requests.post(
-        f"https://graph.microsoft.com/v1.0/users/{instelling('RAPPORT_VAN')}/sendMail", timeout=TIMEOUT,
-        headers={"Authorization": f"Bearer {token.json()['access_token']}"},
-        json=graph_bericht(onderwerp, html_tekst, aan, bijlagen))
+    url = f"https://graph.microsoft.com/v1.0/users/{instelling('RAPPORT_VAN')}/sendMail"
+    kop = {"Authorization": f"Bearer {token.json()['access_token']}"}
+    r = None
+    if tekst:
+        r = requests.post(url, timeout=TIMEOUT, headers={**kop, "Content-Type": "text/plain"},
+                          data=graph_mime(onderwerp, tekst, html_tekst, aan, bijlagen))
+        if r.status_code != 202:
+            print(f"Graph weigerde de MIME-versie ({r.status_code}: {r.text[:200]}); opnieuw als alleen HTML.")
+            r = None
+    if r is None:
+        r = requests.post(url, timeout=TIMEOUT, headers=kop, json=graph_bericht(onderwerp, html_tekst, aan, bijlagen))
     if r.status_code != 202:
         raise MailFout(f"versturen mislukt ({r.status_code}): {r.text[:300]}")
 
@@ -162,7 +180,7 @@ def verstuur(onderwerp, html_tekst, aan, tekst=None, bijlagen=()):
         raise MailFout("geen ontvangers")
     try:
         if weg == "graph":
-            _graph(onderwerp, html_tekst, aan, bijlagen)
+            _graph(onderwerp, html_tekst, aan, bijlagen, tekst)
         else:
             _smtp(onderwerp, tekst or platte_tekst(html_tekst), html_tekst, aan, bijlagen)
     except MailFout:

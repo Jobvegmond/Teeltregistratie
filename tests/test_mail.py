@@ -94,6 +94,18 @@ class TestBerichten(unittest.TestCase):
         self.assertIn("multipart/related", delen)
         self.assertEqual([a.get_filename() for a in b.iter_attachments()], ["data.xlsx"])
 
+    def test_mime_gebruikt_base64_en_blijft_heel(self):
+        """Lange HTML met ▲ en °C mag niet als quoted-printable verstuurd worden (kwam via Graph verminkt aan)."""
+        html = '<div class="grijs" style="font-size:12px;color:#6B7280;padding-top:2px">▲ +0,3 °C t.o.v. vorige dag</div>' * 20
+        with omgeving(DIRECT):
+            b = mail.smtp_bericht("O", "tekst ▲ °C", html, ["a@x.nl"])
+            ruw = mail.graph_mime("O", "tekst ▲ °C", html, ["a@x.nl"])
+        self.assertEqual(b.get_content_type(), "multipart/alternative")
+        for deel in b.iter_parts():
+            self.assertEqual(deel["Content-Transfer-Encoding"], "base64")
+        self.assertEqual(b.get_body(("html",)).get_content().strip(), html)
+        self.assertNotIn(b"quoted-printable", base64.b64decode(ruw).lower())
+
     def test_platte_tekst(self):
         self.assertEqual(mail.platte_tekst("<p>Kas</p><table><tr><td>1</td></tr></table>"), "Kas\n1")
 
