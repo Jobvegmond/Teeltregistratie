@@ -13,6 +13,7 @@ inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
   veranderd is: de vingerafdruk (broncode plus alle `*_TABEL`-teksten) staat in de nieuwe tabel `schema_versie`; is
   die gelijk, dan is het één leesquery. Een volledige run houdt een advisory lock per transactie vast, zodat nooit twee
   processen tegelijk het schema aanpassen. Na een update draait het volledige schema dus één keer.
+
 ## [2.31.2] - 2026-11-12
 
 ### Toegevoegd
