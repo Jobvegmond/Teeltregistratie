@@ -124,6 +124,8 @@ from logic import opzoeken
 from logic import selectie
 from logic import watergift as wg
 from logic import pats as pats_logic
+from logic import pats_foto
+from integrations import pats as pats_api
 from logic import dagrapport as rap_logic
 from logic import weken as kalender
 from logic import tuinvergelijking as tuinvgl
@@ -139,6 +141,7 @@ from ui import filters, layout, legend, styles, vergelijkingstabel
 from ui import help as uitleg_help
 from ui.vergelijkingstabel import Kengetal, verloop_frame
 from config import (
+    PATS_SECTIONS,
     PATS_TRAPEYE_VAKKEN,
     AFDELING_VOLGORDE, AFWIJKING_VENSTER_DAGEN, C_GRENZEN, FLORGIB_ACHTERSTAND_DAGEN,
     OP_KOERS_MARGE, OPMERKING_CATEGORIEEN, APP_VERSIE, WATERSYSTEMEN,
@@ -1844,6 +1847,12 @@ def _pagina_overzicht():
             "op de Trap-Eye(s) naast dat vak (een plaat hangt tussen twee vakken en telt voor allebei). In de balk "
             "de gewasmetingen: de lengte bij de Florgib en de eindmeting (lengte · gewicht · rijpheid) op de dag "
             "dat ze geregistreerd is. Klik op een getal voor de telling per plaat, op een meting voor het vak.",
+            "*Foto's van de vangplaat*: klik op het getal in de regel *plaat*. Onder de tabel staat per plaat met "
+            "nieuwe trips wat er sinds de vorige foto op de plaat bij kwam: genummerde uitsneden, de kleinste plek "
+            "eerst (daar zitten de trips tussen), met boven de vorige foto en onder de nieuwe. In *Hele foto met de "
+            "nieuwe plekken* staat om elke plek een rode ring met hetzelfde nummer. Het is alles wat erbij kwam, ook "
+            "insecten die PATS niet telt; welke plek de getelde trips is, geeft PATS niet door. Bij een nieuwe "
+            "plaat of een heel andere belichting zegt de vergelijking weinig.",
             "Klik op een balk voor het vak, op een driehoekje voor de middelen, op een watergift voor alle "
             "gietbeurten van die dag, op een concept om het te verschuiven, te starten als teelt of te verwijderen, "
             "en op een lege plek in een vakregel (vanaf deze week) om daar een concept te plannen.",
@@ -1854,7 +1863,7 @@ def _pagina_overzicht():
             "In het register opent een klik op een regel het vak.",
         ],
         bron="Watergift: Priva (API), elke ochtend opgehaald. Behandelingen: Agro4all, daarvoor de "
-             "klimaatregistratie. Insectentellingen: PATS, elk uur opgehaald (tuin 1: nog alleen de twee PATS-C's). Het teeltmodel telt per dag een deel van de teelt af, afhankelijk van de "
+             "klimaatregistratie. Insectentellingen: PATS, elk uur opgehaald (tuin 1: nog alleen de twee PATS-C's). Foto's van de vangplaten: rechtstreeks van PATS, opgehaald als je het venster opent; de nieuwe plekken berekent de app zelf door de foto met de vorige te vergelijken. Het teeltmodel telt per dag een deel van de teelt af, afhankelijk van de "
              "lichtsom binnen en de "
              f"afwijking van de lichtlijn ({formule_tekst()}), met een correctie per tuin. Het leert van alle "
              "afgeronde vakken (historie uit de klimaatregistratie plus wat in de app is afgerond). Na de Florgib "
@@ -2181,6 +2190,83 @@ def _tl_behandelingen(tuin_id, volgorde, van, tot):
 def _pats_tellingen(tuin_id, van, tot):
     """PATS-tellingen van een tuin over van..tot; tien minuten bewaard (de import draait elk uur)."""
     return get_pats_tellingen(tuin_id, van, tot)
+
+
+PLAAT_MAX_VLEKKEN = 12      # zoveel nieuwe plekken per plaat tonen (de kleinste)
+
+
+@st.cache_resource(ttl=5400, show_spinner=False)
+def _pats_api():
+    """Ingelogde PATS-client (token 2 uur geldig; anderhalf uur bewaard), of None zonder inloggegevens."""
+    login = pats_api.inloggegevens()
+    return pats_api.Pats(*login) if login else None
+
+
+def _pats_section(tuin_nummer):
+    return next((s for s, t in PATS_SECTIONS.items() if t == tuin_nummer), None)
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _pats_fotomomenten(section_id, rij, paal, van, tot):
+    return _pats_api().fotomomenten(section_id, rij, paal, van, tot)
+
+
+@st.cache_data(max_entries=40, show_spinner=False)
+def _pats_foto(section_id, rij, paal, moment):
+    """Een Trap-Eye-foto (JPEG-bytes); een foto verandert niet, dus zonder vervaltijd."""
+    return _pats_api().foto(section_id, rij, paal, moment)
+
+
+@st.cache_data(max_entries=40, show_spinner=False)
+def _pats_nieuw(section_id, rij, paal, voor, deze):
+    """Wat er tussen twee foto's van een plaat bij kwam (logic/pats_foto.nieuwe_vlekken)."""
+    return pats_foto.nieuwe_vlekken(_pats_foto(section_id, rij, paal, voor), _pats_foto(section_id, rij, paal, deze))
+
+
+def _moment_tekst(moment):
+    """'20261112_110131' → 'do 12-11 11:01'."""
+    d = datetime.strptime(moment, "%Y%m%d_%H%M%S")
+    return f"{DAGEN_KORT_WG[d.weekday()]} {d:%d-%m %H:%M}"
+
+
+def _plaat_fotos(tuin, rij, paal, dag, nieuw_tekst):
+    """
+    De foto van een vangplaat op een teldag naast de vorige foto: wat er nieuw bij kwam, klein → groot, als
+    uitsneden (boven de vorige foto, onder de nieuwe) en de hele foto met genummerde ringen.
+    """
+    section = _pats_section(tuin["nummer"])
+    st.markdown(f"**Plaat rij {rij} paal {paal}** · {nieuw_tekst}")
+    if section is None or _pats_api() is None:
+        st.caption("Foto's niet beschikbaar: geen PATS-inloggegevens of geen PATS-section voor deze tuin.")
+        return
+    try:
+        with st.spinner("Foto's ophalen bij PATS…"):
+            momenten = _pats_fotomomenten(section, rij, paal, dag - timedelta(days=14), dag)
+            paar = pats_foto.vorig_moment(momenten, dag)
+            if paar is None:
+                st.caption("Geen foto van deze plaat op deze dag.")
+                return
+            voor, deze = paar
+            if voor is None:
+                st.image(_pats_foto(section, rij, paal, deze), caption=f"Foto {_moment_tekst(deze)}")
+                st.caption("Geen eerdere foto om mee te vergelijken.")
+                return
+            vlekken = _pats_nieuw(section, rij, paal, voor, deze)
+            foto_voor, foto_na = _pats_foto(section, rij, paal, voor), _pats_foto(section, rij, paal, deze)
+    except pats_api.PatsFout as fout:
+        st.caption(f"Foto's niet op te halen bij PATS: {fout}")
+        return
+    st.caption(f"Vorige foto {_moment_tekst(voor)} → deze foto {_moment_tekst(deze)}: "
+               f"{len(vlekken)} {'plek' if len(vlekken) == 1 else 'plekken'} nieuw.")
+    if len(vlekken) > PLAAT_MAX_VLEKKEN * 2:
+        st.caption("Zoveel nieuw dat het waarschijnlijk een nieuwe plaat of een andere belichting is; "
+                   "de vergelijking zegt hier weinig.")
+    getoond = vlekken[:PLAAT_MAX_VLEKKEN]
+    if getoond:
+        st.image([pats_foto.uitsnede(foto_voor, foto_na, v) for v in getoond],
+                 caption=[str(i) for i in range(1, len(getoond) + 1)], width=110)
+    with layout.uitklap("Hele foto met de nieuwe plekken"):
+        st.image(pats_foto.gemarkeerd(foto_na, getoond), width="stretch")
 
 
 def _tl_plagen(tuin_id, van, tot):
@@ -2726,6 +2812,18 @@ def _tl_plaat_venster(tuin, vak, dag):
         buren = ", ".join(str(v) for v in pats_logic.vakken_van_rij(tellingen[0]["rij"], verschuiving))
         uitleg_help.voetnoot(f"Rij en paal zoals bij PATS; een plaat hangt tussen twee vakken (deze: vak {buren}). "
                              "Nieuw = sinds de vorige foto; op plaat = de stand op de vangplaat.")
+
+        # Foto's: alleen van de platen met nieuwe vangst (elke plaat = twee foto's ophalen bij PATS).
+        met_vangst = [k for k in sorted(platen) if any(platen[k].get(n) for n in namen)]
+        if not met_vangst:
+            return
+        layout.sectie("Wat is er nieuw op de plaat", len(met_vangst))
+        for rij, paal in met_vangst:
+            p = platen[(rij, paal)]
+            _plaat_fotos(tuin, rij, paal, dag, ", ".join(f"{fmt_kort(p[n], 1)} {n.lower()} nieuw"
+                                                         for n in namen if p.get(n)))
+        uitleg_help.voetnoot("Alles wat sinds de vorige foto op de plaat kwam, kleinste eerst (daar zitten de trips "
+                             "tussen); boven de vorige foto, onder de nieuwe. Ook insecten die PATS niet telt.")
 
     _venster()
 
