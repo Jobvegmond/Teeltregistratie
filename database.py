@@ -1632,9 +1632,15 @@ _FOTO_KOLOMMEN = ("id", "tuin_id", "teelt_ids", "vakken", "datum", "toelichting"
 
 
 def maak_foto_tabel():
-    """De tabel foto_beoordeling als die er nog niet is (voor fotobeoordeling.py, dat geen init_db draait)."""
+    """
+    De tabel foto_beoordeling als die er nog niet is (voor fotobeoordeling.py, dat geen init_db draait). Eerst kijken
+    of hij bestaat: een DDL-opdracht vraagt een slot dat elk uur met de andere NAS-taken kan botsen (deadlocks).
+    """
     with get_connection() as conn:
-        conn.cursor().execute(FOTO_TABEL)
+        cursor = conn.cursor()
+        cursor.execute("SELECT to_regclass('foto_beoordeling')")
+        if cursor.fetchone()[0] is None:
+            cursor.execute(FOTO_TABEL)
         conn.commit()
 
 
