@@ -46,6 +46,8 @@ services:
       AUTH_COOKIE_KEY: ${AUTH_COOKIE_KEY:?zet AUTH_COOKIE_KEY in .env}
       PRIVA_CLIENT_ID: ${PRIVA_CLIENT_ID}
       PRIVA_CLIENT_SECRET: ${PRIVA_CLIENT_SECRET}
+      # Fotoherkenning (Registreren → Foto): sleutel van de Anthropic-API. Leeg = die keuze toont alleen uitleg.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     ports:
       # De reverse proxy van DSM praat hiermee; niet rechtstreeks doorzetten.
       - "8501:8501"

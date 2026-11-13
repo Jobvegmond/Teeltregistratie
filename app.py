@@ -7,6 +7,7 @@ import os
 import re
 import secrets
 import urllib.parse
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 import streamlit as st
@@ -120,6 +121,7 @@ from logic import perioden
 from logic import planning_editor
 from logic import prognoselog
 from logic import opmerkingen as opm_logic
+from logic import plaagherkenning as plaag
 from logic import opzoeken
 from logic import selectie
 from logic import watergift as wg
@@ -800,11 +802,12 @@ def toon_oogstregistraties_beheer(teelt_id, teelt_info):
 # of één waarde voor alle aangevinkte vakken. Rechts wat er nog te doen is en de laatste registraties.
 # Rekenwerk in logic/registreren.py. Een nieuwe teelt begint niet hier maar op Overzicht: daar staat het
 # concept al klaar in de tijdlijn en zet je het met één knop om in een lopende teelt.
-INV_STEK, INV_FLORGIB, INV_EMMERS, INV_LENGTE, INV_OPMERKING, INV_WIJZIGEN = (
-    "Stek", "Florgib", "Emmers", "Lengte en gewicht", "Opmerking", "Wijzigen")
+INV_STEK, INV_FLORGIB, INV_EMMERS, INV_LENGTE, INV_OPMERKING, INV_FOTO, INV_WIJZIGEN = (
+    "Stek", "Florgib", "Emmers", "Lengte en gewicht", "Opmerking", "Foto", "Wijzigen")
 # In de volgorde van de teelt: stek bij het poten, Florgib halverwege, emmers en lengte/gewicht bij de oogst.
-INV_ACTIES = [INV_STEK, INV_FLORGIB, INV_EMMERS, INV_LENGTE, INV_OPMERKING, INV_WIJZIGEN]
-INV_SOORT = {INV_FLORGIB: "florgib", INV_EMMERS: "emmers", INV_LENGTE: "lengte", INV_OPMERKING: "opmerking"}
+INV_ACTIES = [INV_STEK, INV_FLORGIB, INV_EMMERS, INV_LENGTE, INV_OPMERKING, INV_FOTO, INV_WIJZIGEN]
+INV_SOORT = {INV_FLORGIB: "florgib", INV_EMMERS: "emmers", INV_LENGTE: "lengte", INV_OPMERKING: "opmerking",
+             INV_FOTO: "opmerking"}
 WIJZIG_ONDERDELEN = ["Startdatum en planten", "Florgib", "Oogst", "Opmerkingen"]
 RIJPHEID_TEKSTEN = ["1", "2", "3", "4", "1-2", "2-3", "3-4", "1-3", "2-4", "1-4"]
 
@@ -815,7 +818,7 @@ def _pagina_registreren():
         "Registreren",
         wat="Invullen wat er in de kas gebeurd is, in de tuin die bovenaan gekozen is: het stek per pootweek (met "
             "het weekrapport voor de stekleverancier), de Florgib (lengte en gram), de emmers, de oogstlengte en het "
-            "oogstgewicht, een opmerking, of iets wijzigen of verwijderen. "
+            "oogstgewicht, een opmerking, een foto laten beoordelen op plagen, of iets wijzigen of verwijderen. "
             "Een nieuwe teelt start je op Overzicht (klik op een concept in de tijdlijn).",
         lezen=[
             "Kies bovenaan wat je registreert. Bij Florgib, Emmers en Lengte en gewicht staat elk lopend vak op "
@@ -826,6 +829,10 @@ def _pagina_registreren():
             "**Emmers**: 100 stelen per emmer. Vink *Afronden* aan bij de laatste emmers van een vak (ook "
             "zonder emmers: dan wordt het vak alleen afgerond).",
             "**Rijpheid**: 1 = rauw, 4 = rijp; een bereik als 1-3 voor een mengsel.",
+            "**Foto**: maak of kies een foto van het gewas of een vangplaat en druk op *Beoordelen*. Claude zegt "
+            "per foto wat erop zit (trips, luis, wittevlieg, mineervlieg, spint, ziekten, en ook nuttige "
+            "bestrijders) en hoe zeker dat is. *Mogelijk* = niet goed te zien: kijk zelf met een loep. De uitslag "
+            "kun je als opmerking (Ziekte/plagen) bij één of meer vakken opslaan; de foto zelf wordt niet bewaard.",
             "**Wijzigen**: kies de plantweek; het jaar springt op het laatste jaar met die week en de teelt op de "
             "laatst geplante van die week (allebei aan te passen). Daaronder per onderdeel een tabblad.",
             "**Stek**: kies de pootweek met ◀ ▶ of klik op het label (standaard de huidige week; is daar nog niets "
@@ -837,7 +844,9 @@ def _pagina_registreren():
         ],
         bron="Alles wat je hier opslaat komt in het logboek (Meer), met jouw naam; *Laatst geregistreerd* komt "
              "daaruit. Stek: te poten komt uit de teeltregistratie; de stekuitval rekent de app zelf uit (bakjes × "
-             "600 stekken). De pootweek is de plantweek van het vak (ma t/m zo, zoals de teeltcode).",
+             "600 stekken). De pootweek is de plantweek van het vak (ma t/m zo, zoals de teeltcode). Foto: de "
+             f"beoordeling is van Claude ({plaag.MODEL}, via de API van Anthropic); de foto gaat daarvoor naar "
+             "Anthropic en wordt in de app niet bewaard. Het blijft een hulpmiddel: twijfel je, kijk dan zelf.",
     )
     if st.session_state.get("inv_melding"):
         st.success(st.session_state.pop("inv_melding"))
@@ -865,7 +874,8 @@ def _pagina_registreren():
         else:
             datum = st.date_input("Datum", key="inv_datum", format="DD-MM-YYYY", width=180)
             st.caption(f"Week {kalender.weeknummer(datum)} · {_DAGEN_KORT[datum.weekday()]} {format_datum(datum)}")
-            {INV_FLORGIB: _inv_florgib, INV_EMMERS: _inv_emmers, INV_OPMERKING: _inv_opmerking}[actie](vakken, datum)
+            {INV_FLORGIB: _inv_florgib, INV_EMMERS: _inv_emmers, INV_OPMERKING: _inv_opmerking,
+             INV_FOTO: _inv_foto}[actie](vakken, datum)
     with rechts:
         soort = INV_SOORT[actie]
         layout.sectie("Laatst geregistreerd")
@@ -1056,6 +1066,93 @@ def _inv_opmerking(vakken, datum):
                 voeg_opmerking_toe([keuzes[l] for l in labels], datum, categorie, tekst.strip(),
                                    gebruiker=huidige_gebruiker())
                 _inv_klaar(f"Opmerking opgeslagen bij {len(labels)} {'vak' if len(labels) == 1 else 'vakken'}.")
+
+
+def _inv_foto_beoordelen(items, toelichting):
+    """Beoordeel de foto's tegelijk (elk een eigen aanvraag bij Claude); geeft {naam: uitslag of AnalyseFout}."""
+    def een(data):
+        try:
+            return plaag.analyseer(plaag.voorbereiden(data), toelichting)
+        except plaag.AnalyseFout as fout:
+            return fout
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        return dict(zip([naam for naam, _d in items], pool.map(een, [d for _n, d in items])))
+
+
+def _inv_foto_uitslag(naam, data, uitslag):
+    """Eén beoordeelde foto: links de foto, rechts wat Claude zag."""
+    links, rechts = st.columns([1, 2], gap="medium")
+    links.image(data, width=300)
+    with rechts:
+        kop = plaag.kort(uitslag)
+        st.markdown(f"**{html.escape(kop[:1].upper() + kop[1:])}**")
+        if uitslag.get("samenvatting"):
+            st.write(uitslag["samenvatting"])
+        if uitslag["bevindingen"]:
+            st.dataframe(pd.DataFrame([{
+                "Wat": b["naam"], "Soort": plaag.SOORT_LABEL.get(b["soort"], b["soort"]),
+                "Zekerheid": b["zekerheid"], "Aantal": b["aantal"], "Stadium": b["stadium"],
+                "Kenmerken": b["kenmerken"]} for b in uitslag["bevindingen"]]), hide_index=True)
+        if uitslag.get("advies"):
+            st.markdown(f"**Advies:** {html.escape(uitslag['advies'])}")
+        if uitslag.get("fotokwaliteit") != "goed" and uitslag.get("kwaliteit_tip"):
+            st.caption(f"Foto {uitslag['fotokwaliteit']}: {uitslag['kwaliteit_tip']}")
+
+
+def _inv_foto(vakken, datum):
+    """Foto's laten beoordelen door Claude op plagen en ziekten; de uitslag kan als opmerking bij vakken."""
+    if not plaag.beschikbaar():
+        st.info("De fotoherkenning heeft een API-sleutel van Anthropic nodig: zet ANTHROPIC_API_KEY in het "
+                ".env-bestand op de NAS (of in de omgeving van de laptop) en start de app opnieuw.")
+        return
+    versie = st.session_state.get("inv_versie", 0)
+    fotos = st.file_uploader("Foto's", type=["jpg", "jpeg", "png", "webp"], accept_multiple_files=True,
+                             key=f"inv_foto_{versie}",
+                             help="Op een telefoon kun je hier ook direct een foto maken. Een scherpe close-up "
+                                  "(onderkant blad, kop, of een stuk vangplaat) werkt het best.")
+    toelichting = st.text_input("Toelichting (mag leeg)", key=f"inv_foto_toelichting_{versie}",
+                                placeholder="Bijv. onderkant blad, gele vangplaat, vlekjes op de kop")
+    if not fotos:
+        st.caption("Maak of kies één of meer foto's van het gewas of een vangplaat.")
+        return
+    uitslagen = st.session_state.setdefault("inv_foto_uitslagen", {})
+    items = [(f.name, f.getvalue()) for f in fotos]
+    sleutels = {naam: plaag.sleutel(data + toelichting.encode()) for naam, data in items}
+    nieuw = [(naam, data) for naam, data in items if sleutels[naam] not in uitslagen]
+    if nieuw and st.button("Beoordelen" + (f" ({len(nieuw)} foto's)" if len(nieuw) > 1 else ""),
+                           type="primary", key=f"inv_foto_knop_{versie}"):
+        with st.spinner("Claude bekijkt de foto's … (± een halve minuut)"):
+            uitkomsten = _inv_foto_beoordelen(nieuw, toelichting)
+        fouten = [(naam, u) for naam, u in uitkomsten.items() if isinstance(u, plaag.AnalyseFout)]
+        for naam, uitkomst in uitkomsten.items():
+            if not isinstance(uitkomst, plaag.AnalyseFout):
+                uitslagen[sleutels[naam]] = uitkomst
+        if not fouten:
+            st.rerun()                     # opnieuw tekenen zonder de knop Beoordelen
+        for naam, fout in fouten:
+            st.error(f"{naam}: {fout}")
+    klaar = [(naam, data, uitslagen[sleutels[naam]]) for naam, data in items if sleutels[naam] in uitslagen]
+    for nr, (naam, data, uitslag) in enumerate(klaar, 1):
+        layout.sectie(f"Foto {nr} · {naam}")
+        _inv_foto_uitslag(naam, data, uitslag)
+    if not klaar:
+        return
+    layout.sectie("Opslaan als opmerking")
+    keuzes = {f"Vak {r['vak']} · pw {r['plantweek']}": r["id"] for r in sorted(vakken, key=lambda r: r["vak"])}
+    tekst = plaag.opmerking_tekst([(naam, uitslag) for naam, _d, uitslag in klaar])
+    with st.form(f"inv_foto_opslaan_{versie}_{plaag.sleutel(tekst.encode())[:8]}", border=False):
+        labels = st.multiselect("Vakken", list(keuzes))
+        tekst = st.text_area("Opmerking (Ziekte/plagen)", value=tekst, height=200)
+        if st.form_submit_button("Opslaan", type="primary"):
+            if not labels:
+                st.warning("Kies minstens één vak.")
+            elif not tekst.strip():
+                st.warning("De opmerking is leeg.")
+            else:
+                voeg_opmerking_toe([keuzes[l] for l in labels], datum, "Ziekte/plagen", tekst.strip(),
+                                   gebruiker=huidige_gebruiker())
+                st.session_state.pop("inv_foto_uitslagen", None)
+                _inv_klaar(f"Fotoherkenning opgeslagen bij {len(labels)} {'vak' if len(labels) == 1 else 'vakken'}.")
 
 
 def _inv_wijzigen():
