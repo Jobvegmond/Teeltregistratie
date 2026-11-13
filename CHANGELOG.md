@@ -3,21 +3,6 @@
 Alle belangrijke wijzigingen aan de Teeltregistratie-app worden hier bijgehouden,
 inclusief de reden erachter. Nieuwste wijzigingen staan bovenaan.
 
-## [2.32.0] - 2026-11-13
-
-### Toegevoegd
-- **Fotoherkenning van plagen** (Registreren → *Foto*): maak of kies één of meer foto's van het gewas of een
-  vangplaat; Claude (Opus 5.5, via de Anthropic-API) zegt per foto wat erop zit (trips, luis, wittevlieg,
-  mineervlieg, spint, ziekten, en ook nuttige bestrijders zoals roofmijten en luismummies), met zekerheid, aantal,
-  stadium, kenmerken en een kort advies. De uitslag kun je als opmerking (Ziekte/plagen) bij één of meer vakken
-  opslaan; de foto zelf wordt niet bewaard. Een foto wordt per sessie maar één keer beoordeeld (geen dubbele
-  kosten). Nieuw: `logic/plaagherkenning.py` en `tests/test_plaagherkenning.py`. Weigert het model een foto, dan
-  probeert de API het zelf op een ander model (server-side fallback). Op de teler zijn verzoek, 13 november 2026.
-
-### Op de NAS
-- `ANTHROPIC_API_KEY` in `.env` zetten (staat al in `docker-compose.yml`); zonder sleutel toont de keuze *Foto*
-  alleen uitleg. Nieuwe afhankelijkheid `anthropic` in `requirements.txt`: de container opnieuw bouwen.
-
 ## [2.31.2] - 2026-11-12
 
 ### Toegevoegd
